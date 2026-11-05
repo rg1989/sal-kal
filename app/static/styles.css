@@ -417,11 +417,11 @@ a.brand { color: inherit; text-decoration: none; }
 .cat-he { font-size: 12.5px; opacity: .65; text-align: start; }
 
 .shelf {
-  list-style: none; margin: 0; padding: 2px 2px 12px; display: grid; grid-auto-flow: column; grid-auto-columns: 178px; gap: 12px;
+  list-style: none; margin: 0; padding: 2px 2px 12px; display: grid; grid-auto-flow: column; grid-auto-columns: 196px; gap: 12px;
   overflow-x: auto; scroll-snap-type: x proximity; overscroll-behavior-x: contain;
 }
 .shelf > * { scroll-snap-align: start; }
-.cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 12px; }
+.cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 12px; }
 .cards > .note, .cards > .cat { grid-column: 1 / -1; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); display: flex; flex-direction: column; min-width: 0; }
 .card:hover { border-color: var(--line-strong); box-shadow: var(--shadow); }
@@ -450,12 +450,21 @@ a.brand { color: inherit; text-decoration: none; }
   display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%;
   background: var(--ink); color: var(--paper); font: 700 19px/1 var(--num); letter-spacing: -.02em; white-space: nowrap;
 }
-.add[data-qty] { font-size: 17px; }
-.add:not([data-qty]) { font-size: 24px; font-weight: 600; }  /* a lone + reads small at the same size */
+.add bdi { display: inline-flex; align-items: center; }
+.add .plus { width: 20px; height: 20px; flex: none; }             /* a big, crisp + ... */
+.add[data-qty] .plus { width: 14px; height: 14px; margin-inline-end: 1px; }
+.add .n { font-size: 17px; }                                       /* ... and the number at its usual size */
 .add:hover { opacity: .88; }
 .qty-ctl { display: inline-flex; align-items: center; background: var(--accent); color: var(--tag-ink); border-radius: 999px; }
 .qty-ctl button { width: 30px; height: 30px; border: 0; background: none; color: inherit; font-size: 17px; border-radius: 50%; }
 .qty-ctl .num { min-width: 28px; text-align: center; font-size: 16px; font-weight: 700; }
+/* on a card, in the cart: a compact − n + beside the price (cards are a little wider for it); the number grows with its
+   digits, so 1 and 125 both sit well; if a long price leaves no room it moves under, at the end */
+.c-foot { flex-wrap: wrap; row-gap: 8px; }
+.card .c-ctl { flex: none; margin-inline-start: auto; }
+.card .qty-ctl { height: 38px; padding: 0 2px; white-space: nowrap; }
+.card .qty-ctl button { width: 30px; height: 38px; font-size: 19px; }
+.card .qty-ctl .num { min-width: 22px; padding: 0 1px; font: 700 18px/1 var(--num); font-variant-numeric: tabular-nums; }
 .card.skel { min-height: 250px; }
 .card.skel .c-thumb {
   margin: 10px; border: 0; background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
@@ -524,7 +533,7 @@ a.brand { color: inherit; text-decoration: none; }
 @media (max-width: 520px) {
   .basket-btn .label { display: none; }
   .near > span { max-width: 130px; }
-  .shelf { grid-auto-columns: 152px; }
+  .shelf { grid-auto-columns: 172px; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .cats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cat-icon { font-size: 26px; }
@@ -1561,9 +1570,6 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
 /* seven distance buttons in one row down to 340px wide */
 @media (max-width: 400px) { .radius-picker { grid-template-columns: repeat(auto-fit, minmax(38px, 1fr)); gap: 5px; } .radius-picker button { padding-inline: 2px; min-height: 56px; } .radius-picker b { font-size: 20px; } }
 
-.price-pin.tucked { padding: 0; width: 14px; height: 14px; border-radius: 50%; overflow: hidden; color: transparent; font-size: 0; }
-.price-pin.tucked > * { display: none; }
-.price-pin.tucked::after { display: none; }
 .sheet-inner:focus { outline: none; }
 
 /* phones: the header row never grows past the screen; the address pill gives way (ellipsis), the buttons keep their size */
@@ -1622,12 +1628,13 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
   }
   .sort select { min-height: 40px; min-width: 0; max-width: 100%; }
 
-  /* product cards: the price, then a full-width Add (or − n +) the thumb can't miss */
-  .c-foot { flex-direction: column; align-items: stretch; gap: 8px; }
-  .c-ctl { margin: 0; display: flex; }
-  .c-foot:has(.add) { flex-direction: row; align-items: flex-end; }  /* the round + fits beside the price */
+  /* product cards: the price, and beside it the round Add or the compact − n +, finger-height */
+  .c-foot { flex-direction: row; align-items: flex-end; gap: 4px; padding-inline: 8px; }
+  .c-ctl { display: flex; }
   .c-ctl .add { width: 44px; height: 44px; }
-  .c-ctl .qty-ctl { flex: 1; justify-content: space-between; }
+  .card .qty-ctl { height: 42px; padding: 0; }
+  .card .qty-ctl button { width: 27px; height: 42px; }  /* slim, so even "125" sits beside the price on a phone */
+  @media (max-width: 380px) { .card .qty-ctl button { width: 23px; } .card .qty-ctl .num { font-size: 17px; } }
   .qty-ctl button { width: 44px; height: 40px; }
 
   /* the cart's rows: the name gets the width, the stepper sits under the price */

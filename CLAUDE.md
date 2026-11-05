@@ -289,7 +289,11 @@ the yellow on dark). --promo stays for errors, price rises, "closed", danger. A 
 (INFO_I, the usual info mark, in --deal-text) beside a cart line's price (dealTip) and before a card's name (cardDealTip; the green
 description line on cards is gone): ux.js [data-tip] tooltip on hover, focus or tap. Any text cut by an ellipsis or a
 line clamp shows in full in the same tooltip on hover (clipped()). Card discount badge: big "69%", no minus (saveBadge).
-Card Add is a round "+", or "+2"/"+3" for a deal's quantity (addBtn), beside the price on phones too. "Go to comparison"
+Card Add is a round "+" (an SVG plus; "+2"/"+3" keep the number at text size) for a deal's quantity (addBtn), beside the
+price on phones too; in the cart it's a compact − n + beside the price (cards 196px, 172px on phone shelves; slim buttons
+so "125" fits at 360px wide; it wraps under only if a long price leaves no room). Map price pins (drawPins) never shrink
+to dots: overlapping pins stack, the picked store on top, then cheapest to dearest; the picked store always has a pin
+even outside the top four. "Go to comparison"
 (מעבר להשוואה, cart icon, yellow) in the cart and at the home map's cart-side bottom corner (#map-go, hidden when empty).
 The home map's extra dark strip (--map-ext) is measured by sizeMapExt() to end where the first list (shelf, or category
 tiles) starts; the button sits in that corner beside the first heading; the sections over the map let clicks through

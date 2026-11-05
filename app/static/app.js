@@ -487,7 +487,8 @@ const catIcon = c => c.line
 // Add: a round "+", or "+2" / "+3" for a deal's quantity, small enough to sit beside the price
 function addBtn(key, n = 1) {
   const say = n > 1 ? t('Add {n}', { n }) : t('Add');
-  return `<button class="add" type="button" data-add="${esc(key)}"${n > 1 ? ` data-qty="${n}"` : ''} aria-label="${esc(say)}" title="${esc(say)}"><bdi dir="ltr">+${n > 1 ? n : ''}</bdi></button>`;
+  const plus = '<svg class="plus" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5v13M3.5 10h13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
+  return `<button class="add" type="button" data-add="${esc(key)}"${n > 1 ? ` data-qty="${n}"` : ''} aria-label="${esc(say)}" title="${esc(say)}"><bdi dir="ltr">${plus}${n > 1 ? `<span class="n">${n}</span>` : ''}</bdi></button>`;
 }
 // a discount, big enough to see at a glance: "69%" (green already says it's off, so no minus)
 const saveBadge = d => `<span class="c-badge"><bdi dir="ltr">${Math.round(d.save_pct * 100)}%</bdi></span>`;
@@ -736,7 +737,6 @@ async function initMap() {
   pin.title = t('Home');
   homeMarker = new maplibregl.Marker({ element: pin }).setLngLat([34.83, 32.07]).addTo(map);
   map.on('style.load', addOverlays);  // every style load (first one and theme switches) gets the overlays back
-  map.on('moveend', () => requestAnimationFrame(tuckPins));
   updateMap();  // data doesn't wait for the map; it's drawn as soon as the overlays exist
   drawPins();
   const pop = new maplibregl.Popup({ closeButton: false, offset: 10, className: 'sal-pop' });
@@ -762,29 +762,21 @@ function drawPins() {
   pins.forEach(m => m.remove());
   pins = [];
   if (delivery() || !S.cart.items.length || !nCompared()) return;
-  const ch = (S.result?.chains || []).filter(counted).slice(0, 4), p = pinned(), n = nCompared();
-  [...ch].reverse().forEach(c => {  // the cheapest last, so it's drawn on top
+  const top = (S.result?.chains || []).filter(counted).slice(0, 4), p = pinned(), n = nCompared();
+  const ch = !p || top.includes(p) ? top : [...top, p];  // the store you picked always has its pin
+  // every pin stays a full price pin; where they overlap, the one you picked is on top, then cheapest to dearest
+  const byPrice = [...ch].sort((a, b) => (a.in_store?.total ?? Infinity) - (b.in_store?.total ?? Infinity));
+  ch.forEach(c => {
     const v = c.in_store;
     if (v?.lat == null) return;
-    const best = c === ch[0] && full(c), el = document.createElement('button');
+    const best = c === top[0] && full(c), el = document.createElement('button');
     el.type = 'button';
     el.className = `price-pin${best ? ' best' : ''}${c === p ? ' on' : ''}`;
+    el.style.zIndex = c === p ? 60 : 50 - byPrice.indexOf(c);
     el.innerHTML = `${best ? `<em>${t('Cheapest')}</em>` : ''}<b class="num">${money(v.total)}</b><span>${esc(cn(c.name))}${full(c) ? '' : ` · ${v.covered}/${n}`}</span>`;
     el.title = `${cn(c.name)} · ${storeName(v)}${v.distance_km != null ? ' · ' + kmText(v.distance_km) : ''} — ${t('price the cart here')}`;
     el.addEventListener('click', e => { e.stopPropagation(); pin(String(c.chain_id)); });
     pins.push(new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] }).setLngLat([v.lon, v.lat]).addTo(map));
-  });
-  requestAnimationFrame(tuckPins);
-}
-// pins are added pricey-first; walking them cheapest-first, any pin that would cover a kept one becomes a dot
-function tuckPins() {
-  const kept = [];
-  [...pins].reverse().forEach(m => {
-    const el = m.getElement();
-    el.classList.remove('tucked');
-    const r = el.getBoundingClientRect();
-    if (kept.some(k => r.left < k.right - 2 && r.right > k.left + 2 && r.top < k.bottom - 2 && r.bottom > k.top + 2)) el.classList.add('tucked');
-    else kept.push(r);
   });
 }
 // ---------------------------------------------------------------- the selected store: route, address, hours, directions
