@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter, deque
 
@@ -95,6 +96,11 @@ async def who(request: Request, call_next):
     path = request.url.path
     u = None
     public = _from_internet(request)
+    base = auth.config().get("base_url")
+    if public and base:  # www.sal-kal.com and any other name -> the one address sign-in returns to (its cookies live there)
+        want, host = urllib.parse.urlsplit(base).netloc, request.headers.get("host", "")
+        if host and host != want:
+            return RedirectResponse(base + path + (f"?{request.url.query}" if request.url.query else ""), status_code=301)
     if path.startswith("/api/") or path.startswith("/auth/"):
         c = con()
         if auth.accounts_on():
