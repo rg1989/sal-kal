@@ -136,7 +136,7 @@ function AddressPicker(root, { home, onPick, compact }) {
     const el = $r('.addr-result');
     el.className = `addr-result ${state || ''}`;
     el.innerHTML = state === 'busy' ? `<span class="spin" aria-hidden="true"></span>${t('Finding it on the map…')}`
-      : state === 'ok' ? `<span class="loc-pin" aria-hidden="true"></span><bdi>${esc(st.home.label)}</bdi>${st.home.precision === 'street' ? `<small>${t('Placed on the street')}</small>` : st.home.precision === 'town' ? `<small>${t('Placed in the town centre')}</small>` : ''}`
+      : state === 'ok' ? `<span class="loc-pin" aria-hidden="true"></span><bdi>${esc(st.home.label)}</bdi>${pinNote(st.home)}`
       : state === 'err' ? esc(text) : '';
   }
   // list boxes: type to filter, arrows + Enter, tap to choose; what you type is only a filter, never the value
@@ -165,7 +165,7 @@ function AddressPicker(root, { home, onPick, compact }) {
     };
     const debounced = debounce(show, 120);
     input.addEventListener('focus', () => { input.select(); show(); });
-    input.addEventListener('input', () => { if (field === 'town') st.town = null; else st.street = null; debounced(); });
+    input.addEventListener('input', () => { if (field === 'town') st.town = null; else st.street = null; unpick(); debounced(); });
     input.addEventListener('keydown', e => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -186,7 +186,7 @@ function AddressPicker(root, { home, onPick, compact }) {
     input.addEventListener('blur', () => { setTimeout(hide, 120); setTimeout(paint, 130); });  // typed text that wasn't chosen goes away
     input.closest('.combo').querySelector('.combo-clear').addEventListener('click', () => {
       if (field === 'town') { st.town = st.street = null; st.number = null; } else { st.street = null; st.number = null; }
-      paint(); input.focus();
+      unpick(); paint(); input.focus();
     });
     return { show, hide };
   }
@@ -221,6 +221,7 @@ function AddressPicker(root, { home, onPick, compact }) {
     if (b) {
       haptic('tap');
       st.number = Math.max(1, Math.min(9999, (st.number || 0) + +b.dataset.num));
+      unpick();
       paint();
       relocate();
     }
@@ -229,12 +230,21 @@ function AddressPicker(root, { home, onPick, compact }) {
   numIn.addEventListener('input', () => {
     numIn.value = numIn.value.replace(/\D+/g, '').replace(/^0+/, '').slice(0, 4);
     st.number = numIn.value ? +numIn.value : null;
+    unpick();
     relocate();
   });
 
+  // the address shown changed: what was picked before no longer counts (Save / Continue wait for the new one)
+  function unpick() {
+    if (!st.home) return;
+    st.home = null;
+    result('');
+    onPick?.(null);
+  }
   async function locate() {
     if (!st.town) return;
     const my = ++st.seq;
+    unpick();
     result('busy');
     const qs = new URLSearchParams({ town: st.town.code });
     if (st.street) qs.set('street', st.street.code);
@@ -242,6 +252,11 @@ function AddressPicker(root, { home, onPick, compact }) {
     try {
       const h = await api('/api/places/locate?' + qs);
       if (my !== st.seq) return;
+      if (h.precision === 'town' && st.street) {  // never a town-centre point standing in for a street: it looks real on the map
+        result('err', t('Couldn’t find this street on the map. Use your current location instead.'));
+        haptic('error');
+        return;
+      }
       st.home = { ...h, town_name: st.town.name, street_name: st.street?.name || null };
       result('ok');
       haptic('success');
@@ -273,6 +288,15 @@ function AddressPicker(root, { home, onPick, compact }) {
   return { get home() { return st.home; } };
 }
 
+// How exact a located address is, said plainly when it isn't the house itself.
+const roughPin = h => h && (h.precision === 'street' || (h.precision === 'town' && h.street));
+function pinNote(h) {
+  if (h.precision === 'near') return `<small>${h.near ? t('No. {n} isn’t on the map: placed at no. {m}', { n: h.number, m: h.near }) : t('Placed a few doors away')}</small>`;
+  if (h.precision === 'street') return `<small class="warn">${h.number ? t('This number isn’t on the map: the pin is somewhere on the street') : t('Add the house number: the pin is somewhere on the street')}</small>`;
+  if (h.precision === 'town') return `<small class="warn">${h.street ? t('Not the exact address — edit it') : t('Placed in the town centre')}</small>`;
+  return '';
+}
+
 function radiusPicker(el, value, onChange, withAny = true) {
   const opts = withAny ? RADII : RADII.filter(Boolean);
   el.innerHTML = opts.map(r => `<button role="radio" type="button" data-km="${r ?? ''}" aria-checked="${(value ?? null) === r}" aria-label="${r ? t('{n} km', { n: r }) : t('Any distance')}">
@@ -289,7 +313,7 @@ function radiusPicker(el, value, onChange, withAny = true) {
 // Named places (home, work, a parent's, the gym): the stores around one of them, or along the way between two.
 const MAX_PLACES = 12;
 const LOC = { edit: null, draft: null };  // edit: a place's id, 'new' or null; draft: the address picked in the editor
-const ADDR = ['label', 'lat', 'lon', 'town', 'street', 'number', 'town_name', 'street_name', 'precision'];
+const ADDR = ['label', 'lat', 'lon', 'town', 'street', 'number', 'town_name', 'street_name', 'precision', 'near'];
 const addrOnly = h => Object.fromEntries(ADDR.filter(k => h[k] != null).map(k => [k, h[k]]));
 const newPlaceId = () => 'p' + Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1296).toString(36);
 const PLUS = '<span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>';
@@ -325,7 +349,7 @@ function renderLoc() {
           <b class="num">${km < 1 ? km * 1000 : km}</b><small>${km < 1 ? t('m') : t('km')}</small></button>`).join('')}</div>`;
   else if (pl.length) pick = `<button type="button" class="pill new-btn" data-add>${PLUS}${t('Add a second place')}</button>`;
   const rows = pl.map(x => LOC.edit === x.id ? `<li>${placeEditor(x)}</li>` : `<li class="pl-row">
-      <span class="pl-dot" aria-hidden="true"></span><span class="pl-text"><b dir="auto">${esc(placeLabel(x))}</b><small><bdi>${esc(x.label)}</bdi></small></span>
+      <span class="pl-dot" aria-hidden="true"></span><span class="pl-text"><b dir="auto">${esc(placeLabel(x))}</b><small><bdi>${esc(x.label)}</bdi></small>${roughPin(x) ? `<small class="pl-warn">${x.precision === 'street' ? t('Pin is on the street, not at the house') : t('Not the exact address — edit it')}</small>` : ''}</span>
       <button type="button" class="pl-btn" data-edit="${esc(x.id)}">${t('Edit')}</button>
       ${pl.length > 1 ? `<button type="button" class="pl-btn pl-del" data-del="${esc(x.id)}" aria-label="${esc(t('Remove {x}', { x: placeLabel(x) }))}">${SVG.trash}</button>` : ''}</li>`).join('');
   el.innerHTML = (pl.length ? `<div class="seg area-seg" role="radiogroup" aria-label="${esc(t('Where to look'))}">
@@ -339,7 +363,7 @@ function renderLoc() {
   if (ed) {
     const save = ed.querySelector('[data-save]');
     AddressPicker(ed.querySelector('.addr'), { home: LOC.edit === 'new' ? null : placeById(LOC.edit),
-                                               onPick: h => { LOC.draft = h; save.disabled = false; } });
+                                               onPick: h => { LOC.draft = h; LOC.touched = true; save.disabled = !h; } });
     ed.querySelector('#pl-name').addEventListener('keydown', e => { if (e.key === 'Enter' && !save.disabled) { e.preventDefault(); savePlace(); } });
   }
 }
@@ -353,11 +377,12 @@ function savePlace() {
     setPrefs(patch);
   } else {
     const i = pl.findIndex(x => x.id === LOC.edit);
-    if (i < 0) return;
+    if (i < 0 || (LOC.touched && !LOC.draft)) return;  // the address was changed and isn't on the map yet
     pl[i] = { ...pl[i], name, ...(LOC.draft ? addrOnly(LOC.draft) : {}) };
     setPrefs({ places: pl });
   }
   LOC.edit = LOC.draft = null;
+  LOC.touched = false;
   renderLoc();
   toast(t('Place saved'), null, null, 'none');
 }
@@ -368,8 +393,8 @@ $('#loc-body').addEventListener('click', e => {
   if (d.pick) { haptic('select'); pickPlace(d.pick, d.id); renderLoc(); return; }
   if (d.travel) { if (d.travel !== S.prefs.travel) { haptic('select'); setPrefs({ travel: d.travel, detour_km: null }); renderLoc(); } return; }
   if (d.detour) { haptic('select'); setPrefs({ detour_km: +d.detour }); renderLoc(); return; }
-  if ('add' in d) { haptic('tap'); LOC.edit = 'new'; LOC.draft = null; renderLoc(); setTimeout(() => $('#loc-body .place-edit')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30); return; }
-  if (d.edit) { haptic('tap'); LOC.edit = d.edit; LOC.draft = null; renderLoc(); return; }
+  if ('add' in d) { haptic('tap'); LOC.edit = 'new'; LOC.draft = null; LOC.touched = false; renderLoc(); setTimeout(() => $('#loc-body .place-edit')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30); return; }
+  if (d.edit) { haptic('tap'); LOC.edit = d.edit; LOC.draft = null; LOC.touched = false; renderLoc(); return; }
   if ('cancel' in d) { LOC.edit = LOC.draft = null; renderLoc(); return; }
   if ('save' in d) { haptic('success'); savePlace(); return; }
   if (d.del) {

@@ -197,6 +197,14 @@ names, any word order, קרית/קריית folded, English matched by consonant 
 location (reverse-geocoded, matched to the lists). `app/places.py` locates the pick once via Nominatim (1 req/s server-wide,
 official name → OSM spellings, surname-first swap, then street, then town centre) and caches it. Endpoints
 /api/places/{towns,streets,locate,reverse}. Prefs.home keeps label, lat, lon, town, street, number, precision.
+Street names (2026-11-05, after "דרך בגין" couldn't be found as "מנחם בגין" and was saved at the town centre): the list
+drops first names and abbreviates types (שד, רח, דרך), so a loose second pass (`_loose`) matches the name's distinctive
+words, one left-over typed word allowed only when nothing fits exactly; locate() also tries the name without its type
+word (the road found must carry its words), then the nearest number on the same side (precision "near", `near`: n).
+The town centre (`centre:<town>`) and the spelling that found each street (`via:<town>:<street>`) are cached, so a new
+number costs 1-2 requests. A town-centre point for a picked street is an error in the picker (never saved); "street"
+and "near" pins say so in red, and saved places that aren't exact are flagged. Map pins: the house is the Home place,
+the briefcase any other, whichever end of the trip. Tests: tests/test_places.py.
 First run (account not onboarded): 3 steps — address, distance (map + live branch count), what carts are + name the
 first cart. Hebrew is the default language (he/en): `app/static/i18n.js` (`t('English text', vars)`, `tn(n, noun)`,
 `cn(chain)` Hebrew chain names, `serverText` for engine/chains notes, data-i18n* attributes in index.html), the account's

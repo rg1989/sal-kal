@@ -152,7 +152,7 @@ assert places.streets(2620, "יגאל אלון")["streets"] == [{"code": 259, "n
 assert places.streets(2620)["total"] == 2
 assert places.streets(1)["no_streets"] is True
 assert places.streets(8600, "תל אביב")["streets"] == []
-assert places._street_names("אלון יגאל") == ["אלון יגאל", "יגאל אלון"]
+assert places._street_names("אלון יגאל") == [("אלון יגאל", None), ("יגאל אלון", None)]
 assert "קריית אונו" in places._city_names("קרית אונו") and "תל אביב-יפו" in places._city_names("תל אביב - יפו")
 
 calls = []

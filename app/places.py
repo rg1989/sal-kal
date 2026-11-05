@@ -81,6 +81,41 @@ def _match(qwords, name_words):
     return all(any(w.startswith(q) for w in name_words) for q in qwords)
 
 
+# Street-type words and titles (after norm()). The official list writes "שד", "רח", "דרכ" and often drops first names
+# ("דרך בגין" is Menachem Begin Road), while people type "שדרות", "רחוב" and full names.
+STREET_WORDS = {"דרכ", "שד", "שדרות", "שדרת", "רח", "רחוב", "סמ", "סמטת", "סמטה", "כיכר", "ככר",
+                "הרב", "רבי", "דר", "פרופ"}
+KIND = {"שד": "שדרות", "שדרת": "שדרות", "רח": "רחוב", "סמ": "סמטה", "סמטת": "סמטה", "ככר": "כיכר"}
+
+
+def _kind(words):
+    """The street type in a name: שדרות / רחוב / סמטה / כיכר / דרכ, a plain name being a רחוב."""
+    for w in words:
+        k = KIND.get(w, w)
+        if k in ("שדרות", "רחוב", "סמטה", "כיכר", "דרכ"):
+            return k
+    return "רחוב"
+
+
+def _loose(qwords, name_words):
+    """The second pass when the exact one misses: every distinctive word of the name (no street type, no title) is
+    started by a typed word of 2+ letters, and at most one typed word is left over (a first name the list drops).
+    "מנחם בגין" finds "דרך בגין"; "שדרות רוטשילד" finds "שד רוטשילד"; "רחוב הרצל" finds "הרצל".
+    Returns a sort key (left-over words, other street type than typed, fewer letters matched) or None."""
+    core = [w for w in name_words if len(w) > 1 and w not in STREET_WORDS]
+    typed = [q for q in qwords if q not in STREET_WORDS]
+    if not core or not typed:
+        return None
+    if not all(any(w.startswith(q) for q in typed if len(q) > 1) for w in core):
+        return None
+    hit = [q for q in typed if any(w.startswith(q) for w in name_words)]
+    left = len(typed) - len(hit)
+    if left > 1:
+        return None
+    other = len(typed) < len(qwords) and _kind(qwords) != _kind(name_words)
+    return (left, other, -sum(map(len, hit)))
+
+
 def title(s):
     return " ".join(w[:1].upper() + w[1:].lower() if not w.startswith("'") else w for w in (s or "").split())
 
@@ -163,8 +198,15 @@ def streets(town_code, q="", limit=60):
     named = [r for r in rows if not (t and r[1] == t["name"])] or rows
     hq = norm(q)
     if hq:
-        named = [r for r in named if _match(hq.split(), r[2].split())]
-        named.sort(key=lambda r: (not r[2].startswith(hq), r[1]))
+        qw = hq.split()
+        exact = [r for r in named if _match(qw, r[2].split())]
+        exact.sort(key=lambda r: (not r[2].startswith(hq), r[1]))
+        seen = {r[0] for r in exact}
+        loose = [(k, r) for r in named if r[0] not in seen for k in [_loose(qw, r[2].split())] if k]
+        loose.sort(key=lambda x: (x[0], x[1][1]))
+        # a left-over word (a first name) only when nothing fits better: "יגאל אלון" shouldn't add "סמ אלון"
+        most = 0 if exact or (loose and loose[0][0][0] == 0) else 1
+        named = exact + [r for k, r in loose if k[0] <= most]
     return {"total": len(named), "streets": [{"code": r[0], "name": r[1]} for r in named[:limit]],
             "no_streets": len(rows) > 0 and all(t and r[1] == t["name"] for r in rows)}
 
@@ -202,15 +244,36 @@ def _city_names(name):
     return list(dict.fromkeys(o for o in out if o))
 
 
+STRIP = {"דרך", "שד", "שד'", "שדרות", "רח", "רח'", "רחוב"}  # the same street with or without the type word (not סמ: an alley)
+
+
 def _street_names(name):
-    """Official names put a person's surname first ("אלון יגאל"); street signs and OpenStreetMap don't."""
-    out = [name]
+    """Spellings to look the street up by, as (name, words the hit's road must have or None). Official names put a
+    person's surname first ("אלון יגאל"); street signs and OpenStreetMap don't. They also abbreviate the street type and
+    drop first names: OpenStreetMap only finds "דרך בגין" as "מנחם בגין", so the name without "דרך" is tried too (and
+    then the road found must carry its words)."""
+    out = [(name, None)]
     w = name.split()
-    if len(w) == 2:
-        out.append(f"{w[1]} {w[0]}")
-    if len(w) == 3 and w[0] in ("שד", "שדרות"):
-        out.append(f"שדרות {w[2]} {w[1]}")
+    if len(w) == 2 and norm(w[0]) not in STREET_WORDS:
+        out.append((f"{w[1]} {w[0]}", None))
+    if len(w) >= 2 and w[0] in STRIP and not "".join(w[1:]).isdigit():
+        rest, must = w[1:], norm(" ".join(w[1:])).split()
+        if w[0] in ("שד", "שד'"):
+            out.append((" ".join(["שדרות", *rest]), None))
+            if len(rest) == 2:
+                out.append((f"שדרות {rest[1]} {rest[0]}", None))
+        out.append((" ".join(rest), must))
+        if len(rest) == 2:
+            out.append((f"{rest[1]} {rest[0]}", must))
     return out
+
+
+def _road_has(hit, must):
+    if not must:
+        return True
+    a = hit.get("address") or {}
+    words = set(norm(" ".join(str(x) for x in (a.get("road"), a.get("pedestrian"), a.get("square"), hit.get("name")) if x)).split())
+    return all(m in words for m in must)
 
 
 def _near(hit, centre, km=20):
@@ -227,39 +290,87 @@ def locate(town_code, street_code=None, number=None):
     number = int(number) if number else None
     key = f"{town_code}:{street_code or ''}:{number or ''}"
     c = con()
-    row = c.execute("SELECT v FROM located WHERE k=?", (key,)).fetchone()
-    if row:
-        return json.loads(row[0])
-    cities = _city_names(t["name"])
-    centre, hit, precision = None, None, "town"
-    for city in cities:  # the town centre: to check street hits are in the right town, and the last resort
-        res = _nominatim("search", {"city": city, "countrycodes": "il", "limit": 1})
-        if res:
-            centre = (float(res[0]["lat"]), float(res[0]["lon"]))
-            hit = res[0]
-            break
-    if s:
-        tries = []
-        for city in cities[:2]:
-            for name in _street_names(s["name"]):
-                if number:
-                    tries.append(({"street": f"{number} {name}", "city": city}, "house"))
-                tries.append(({"street": name, "city": city}, "street"))
-        tries.sort(key=lambda x: x[1] != "house")  # every spelling with the number before any without
-        for params, prec in tries[:6]:
-            res = [h for h in _nominatim("search", {**params, "countrycodes": "il", "limit": 3}) if _near(h, centre)]
+    got = _memo(c, key)
+    # a street that wasn't found is asked again the next day (OpenStreetMap gets fixed; so do the spellings here)
+    if got and not (got["v"]["precision"] == "town" and s and time.time() - got["at"] > 86400):
+        return got["v"]
+    # the town centre: to check street hits are in the right town, and the last resort. Kept, with the spelling of the
+    # town OpenStreetMap knows, so each new address costs only the street lookups (Nominatim: 1 request/second)
+    centre = (_memo(c, f"centre:{town_code}") or {}).get("v")
+    if not centre:
+        for city in _city_names(t["name"]):
+            res = _nominatim("search", {"city": city, "countrycodes": "il", "limit": 1})
             if res:
-                h = res[0]
-                hit, precision = h, ("house" if (h.get("address") or {}).get("house_number") else "street")
+                centre = {"lat": float(res[0]["lat"]), "lon": float(res[0]["lon"]), "city": city}
+                _keep(c, f"centre:{town_code}", centre)
                 break
+    hit, precision, near = (centre, "town", None)
+    at = (centre["lat"], centre["lon"]) if centre else None
+    if s:
+        # the spelling and town name that found this street before: one request for a new house number, not eight
+        via = (_memo(c, f"via:{town_code}:{s['code']}") or {}).get("v")
+        found = None  # (point on the street, spelling, city, words the road must have) when the house isn't on the map
+        if via:
+            found = ({"lat": via["lat"], "lon": via["lon"]}, via["name"], via["city"], via["must"])
+            tries = [({"street": f"{number} {via['name']}", "city": via["city"]}, "house", via["must"], via["name"])] if number else []
+        else:
+            cities = _city_names(t["name"])
+            if centre:
+                cities = [centre["city"]] + [x for x in cities if x != centre["city"]]
+            tries = []
+            for city in cities[:2]:
+                for name, must in _street_names(s["name"]):
+                    if number:
+                        tries.append(({"street": f"{number} {name}", "city": city}, "house", must, name))
+                    tries.append(({"street": name, "city": city}, "street", must, name))
+            tries.sort(key=lambda x: x[1] != "house")  # every spelling with the number before any without
+        for params, prec, must, name in tries[:8]:
+            if found and (prec == "street" or params["city"] != found[2]):
+                break
+            res = [h for h in _nominatim("search", {**params, "countrycodes": "il", "limit": 3})
+                   if _near(h, at) and _road_has(h, must)]
+            house = [h for h in res if (h.get("address") or {}).get("house_number")]
+            if house:
+                hit, precision = house[0], "house"
+                if not via:
+                    _keep(c, f"via:{town_code}:{s['code']}", {"name": name, "city": params["city"], "must": must,
+                                                               "lat": float(hit["lat"]), "lon": float(hit["lon"])})
+                found = None
+                break
+            if res and not found:
+                found = (res[0], name, params["city"], must)
+                _keep(c, f"via:{town_code}:{s['code']}", {"name": name, "city": params["city"], "must": must,
+                                                           "lat": float(res[0]["lat"]), "lon": float(res[0]["lon"])})
+        if found:
+            hit, precision = found[0], "street"
+            # the house isn't on the map: the nearest number on the same side of the street that is, a few doors off
+            # (a long road's "street" point can be kilometres away: Begin Road is 3 km)
+            for m in [number + d for d in (-2, 2, -4, 4) if number and number + d > 0]:
+                res = [h for h in _nominatim("search", {"street": f"{m} {found[1]}", "city": found[2], "countrycodes": "il", "limit": 3})
+                       if _near(h, at) and _road_has(h, found[3])
+                       and re.match(rf"{m}(\D|$)", str((h.get("address") or {}).get("house_number") or ""))]
+                if res:
+                    hit, precision, near = res[0], "near", m
+                    break
     if not hit:
         raise LookupError("not found")
     label = ", ".join(p for p in (" ".join(str(x) for x in (s["name"] if s else "", number or "") if x), t["name"]) if p)
     out = {"label": label, "lat": float(hit["lat"]), "lon": float(hit["lon"]), "precision": precision,
            "town": t["code"], "street": s["code"] if s else None, "number": number}
-    with c:
-        c.execute("INSERT OR REPLACE INTO located VALUES(?,?,?)", (key, json.dumps(out, ensure_ascii=False), int(time.time())))
+    if near:
+        out["near"] = near
+    _keep(c, key, out)
     return out
+
+
+def _memo(c, k):
+    row = c.execute("SELECT v, at FROM located WHERE k=?", (k,)).fetchone()
+    return {"v": json.loads(row[0]), "at": row[1]} if row else None
+
+
+def _keep(c, k, v):
+    with c:
+        c.execute("INSERT OR REPLACE INTO located VALUES(?,?,?)", (k, json.dumps(v, ensure_ascii=False), int(time.time())))
 
 
 def reverse(lat, lon):

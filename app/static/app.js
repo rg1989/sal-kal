@@ -799,9 +799,23 @@ function drawMapData(animate = true) {
   }
   drawDots();
   homeMarker.setLngLat([home.lon, home.lat]);
-  if (way && mapData.work) workMarker.setLngLat([mapData.work.lon, mapData.work.lat]).addTo(map);
-  else workMarker.remove();
+  dressPin(homeMarker.getElement(), way ? S.prefs.from : S.prefs.at);
+  if (way && mapData.work) {
+    workMarker.setLngLat([mapData.work.lon, mapData.work.lat]).addTo(map);
+    dressPin(workMarker.getElement(), S.prefs.to);
+  } else workMarker.remove();
   fitMap(animate);
+}
+// a pin shows which place it is, not which end of the trip: home is the house, any other place the briefcase
+// (a trip from work to home starts at the briefcase)
+const PIN_SVG = {
+  home: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 9.2 10 4l6.5 5.2M5.5 8v7.5h9V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  other: '<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="6.5" width="13" height="9" rx="1.6"/><path d="M7.5 6.5V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M3.5 10.5h13"/></g></svg>',
+};
+function dressPin(el, id) {
+  const x = placeById(id), k = !x || x.id === 'home' ? 'home' : 'other';
+  if (el.dataset.k !== k) { el.innerHTML = PIN_SVG[k]; el.dataset.k = k; el.classList.toggle('work-pin', k === 'other'); }
+  el.title = x ? placeLabel(x) : t('Home');
 }
 const boundsOf = pts => [[Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1]))], [Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))]];
 // home shows the whole distance circle (a new radius zooms in or out); checkout shows the route to the selected store
