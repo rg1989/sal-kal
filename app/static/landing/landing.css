@@ -65,11 +65,14 @@ html[lang="he"] span[lang="en"], html[lang="en"] span[lang="he"] { display: none
   position: relative; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); align-items: center; gap: clamp(24px, 5vw, 72px);
   max-width: 1200px; margin: 0 auto; padding: clamp(32px, 6vw, 80px) clamp(16px, 4vw, 40px) clamp(40px, 6vw, 90px);
 }
+/* the glow spans the whole window (the hero itself is capped at 1200px, which cut it off in a straight line on wide
+   screens); its centre stays where it was: 20% of the hero's width off-centre, towards the phone */
 .hero::before {
-  content: ""; position: absolute; inset: -120px 0 auto; height: 620px; z-index: -1; pointer-events: none;
-  background: radial-gradient(700px 360px at 70% 20%, color-mix(in srgb, var(--tag) 30%, transparent), transparent 70%);
+  content: ""; position: absolute; top: -120px; left: 50%; width: 100vw; height: 620px; transform: translateX(-50%);
+  z-index: -1; pointer-events: none;
+  background: radial-gradient(700px 360px at calc(50% + min(240px, 20vw)) 20%, color-mix(in srgb, var(--tag) 30%, transparent), transparent 70%);
 }
-[dir="rtl"] .hero::before { background: radial-gradient(700px 360px at 30% 20%, color-mix(in srgb, var(--tag) 30%, transparent), transparent 70%); }
+[dir="rtl"] .hero::before { background: radial-gradient(700px 360px at calc(50% - min(240px, 20vw)) 20%, color-mix(in srgb, var(--tag) 30%, transparent), transparent 70%); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
 .chips > span { font-size: 13.5px; font-weight: 600; padding: 5px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--ink-2); }
 .chips > span:first-child { background: var(--tag); border-color: var(--tag-edge); color: var(--tag-ink); }
