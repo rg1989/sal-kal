@@ -119,10 +119,9 @@ product cards with Add/−qty+, slide-in cart, "Checkout" = the comparison page 
 (savings vs TYPICAL avg price; no club/staff/"spend ₪X"), run in sal-index after geo. Photos: Open Food Facts by
 barcode via `/api/img/{code}` (in-memory cache). User data (carts, snapshots, settings) lives in `user.db`, attached
 as `u`, so saves never wait on the indexer's write locks (backup of the pre-split tables: /srv/sal/data/user-backup-20261104.sql).
-Photos (2026-11-05): Rami Levy catalogue shots by barcode (img.rami-levy.co.il/product/<code>/medium.jpg),
-white background flood-filled to transparent, saved as /srv/sal/data/photos/<code>.webp, served at /photos/. `app.images`
-runs nightly (sal-photos.timer), deal products first then by popularity; misses remembered 30 days (missing.json).
-Open Food Facts was tried and dropped (crowd phone photos; API throttles). Photos are for private household use only.
+Photos (2026-11-05, multi-source): app.images runs every catalogue at once, one worker per source at its own adaptive pace (several for CDNs): Pricez CDN (m.pricez.co.il/ProductPictures/<bc>.jpg, best coverage), GS1 photos (d226b0iufwcjmj.cloudfront.net/gs1-products/1062/large/<bc>.jpg), Super-Pharm blob store, Rami Levy, Tiv Taam stor.ai API (4 s crawl delay, rests at the first 403: its Radware WAF blocked this IP at Yochananof), Shufersal search JSON (1 req/10 s per robots.txt) and chp.co.il (140 px, fallback only after general sources miss). Each source starts with its own chain's products; one photo per product; misses per source in photos/missing.json; bot checks are never worked around (Carrefour, Victory, Super Sapir, Keshet, Mahsanei HaShuk, Quik are Cloudflare-blocked). Runs last 50 min (hourly timer); cart products first; the web server fetches photos at once for products you open or add to a cart. ~7,900 photos/hour. Fresh Market API (robots Disallow), Savy (private backend) and Open Food Facts (crowd photos) are deliberately not used.
+White backgrounds are flood-filled to transparent; saved as /srv/sal/data/photos/<code>.webp, served at /photos/.
+Photos are for private household use only.
 Category icons: duotone line art generated with Gemini (one 4x4 grid), cut by tests/slice_icons.py into <slug>-line.png +
 <slug>-accent.png masks in app/static/cat, painted via CSS masks (ink + --tag) so they follow light/dark.
 Browse/filter: /api/browse?terms=a|b&cat=&size=&deal=&sort= — each word is a separate AND filter chip; "narrow down"
