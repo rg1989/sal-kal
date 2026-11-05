@@ -11,8 +11,11 @@ A premium web UI, self-hosted on their always-on **Omarchy (Arch Linux) home ser
 - The user is reachable from their MacBook Air, which already has SSH access to the server. They use Hebrew product names; UI copy is English.
 
 ## Data source (no API — legally mandated XML files)
-Israel's Food Act (2014, in force since 2015) requires chains with 3+ stores to publish Stores, PriceFull/Price
-and PromoFull/Promo files publicly, updated through the day. Portals differ (Shufersal's own site, Cerberus/
+Israel's Food Act (חוק קידום התחרות בענפי המזון והפארם, 2014; price publishing in force since May 2015, chapter 3,
+§30) requires a "large retailer" (3+ stores with combined yearly sales over ₪250M, indexed: ₪294.3M in 2026, or an
+online store over that figure) to publish Stores, PriceFull/Price and PromoFull/Promo files publicly, each price
+updated within 1 h of the till. §30(ה): anyone may use the data, free, privately or commercially. The files don't
+bind the till price; the shelf tag does (Consumer Protection Law §17ב(ד)). Portals differ (Shufersal's own site, Cerberus/
 publishedprices for Rami Levy & others, Carrefour/publishprice, Bina, Laibcatalog API for Victory/H. Cohen/Mahsanei HaShuk).
 Some portals block non-Israeli IPs — that's why everything runs on the home server.
 
