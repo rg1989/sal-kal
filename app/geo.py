@@ -109,6 +109,30 @@ def store_coords(con):
     return out
 
 
+def exact_stores(con):
+    """The branches placed at their own address (a street address, or the shop itself found by name), not at the
+    centre of their town. Many chains publish only a town, and a town-level point is a few km off: fine for "within
+    5 km of home", wrong for "on the route". A point counts as a town when a town's own query found it, or when 3+
+    branches at different addresses share it."""
+    cache = {r[0]: (r[1], r[2]) for r in con.execute("SELECT q, lat, lon FROM geocache WHERE lat IS NOT NULL")}
+    tn = {r[0]: r[1] for r in con.execute("SELECT code, name FROM towns")} if _has_towns(con) else {}
+    towns_at, found, shared = set(), {}, {}
+    for s in con.execute("SELECT chain_id, store_id, name, address, city FROM stores"):
+        qs = queries(s, tn)
+        name = (s["name"] or "").strip()
+        for q, kind in qs:
+            if kind != "street" and q != name and q in cache:  # the town itself, or a tail of the name that is one
+                towns_at.add(cache[q])
+        for q, _ in qs:
+            if q in cache:  # the most precise query that found something (as store_coords)
+                found[(s["chain_id"], s["store_id"])] = cache[q]
+                shared.setdefault(cache[q], set()).add(((s["address"] or "").strip(), s["city"]))
+                break
+    # (a street the map service doesn't know comes back as its town: the same point as the town's own query)
+    towns_at |= {pt for pt, addrs in shared.items() if len(addrs) >= 3}
+    return {sk for sk, pt in found.items() if pt not in towns_at}
+
+
 def _has_towns(con):
     return con.execute("SELECT 1 FROM sqlite_master WHERE name='towns'").fetchone() is not None
 

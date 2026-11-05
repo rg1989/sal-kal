@@ -298,5 +298,22 @@ even outside the top four. "Go to comparison"
 The home map's extra dark strip (--map-ext) is measured by sizeMapExt() to end where the first list (shelf, or category
 tiles) starts; the button sits in that corner beside the first heading; the sections over the map let clicks through
 their empty parts (pointer-events) so the button and the map still take them.
+Places + on the way (2026-11-05, per user): an account has named places (prefs.places [{id, name, address}], up to 12;
+older accounts' single `home` becomes place "home", and the first-run setup's `home` sets the place you're around).
+Two modes, a bar above the map on home and checkout (#where): "Around a place" (prefs.at + max_km) and "On the way"
+(prefs.area "route", from -> to, travel car/bike/foot, detour_km 0.2-3, default by travel 1/0.5/0.2). server.effective()
+(and derive() in app.js, the same rules) works out `home` (the place you're around, or where the trip starts) and
+`work` (where it ends), so all the older code reads prefs.home. app/commute.py: OSRM route (project-osrm.org for cars,
+routing.openstreetmap.de routed-bike/routed-foot), cached a week; down = straight line, not cached. corridor() = branches
+within the detour of the route ({sk: (off_km, at_km)}), only branches geo.exact_stores() places at their own address (a
+town-centre point is a few km off: ~1,260 of 2,300 qualify; better address cleanup in geo.queries would add more).
+engine.compare(way=...) prices those instead of the radius (distance_km = off the route) and returns way.plans:
+commute.plans() = the cheapest split of the cart over 1..5 stops, each product at its cheapest stop, confirmed lines
+only, each extra stop must save >= ₪1 (exact for 1-2 stops, a beam search beyond; shortlist of 60 branches). Cards'
+"near" price, deals, the map's stores and opening hours (per branch area) follow the same corridor. POST /api/way/trip
+= the trip through the stops and what it adds over going straight. Checkout: #way-plan (stop counts, stops in order with
+what to buy, +min/+km, Google Maps through the stops); the map draws the band, the trip and numbered stop pins.
+Landing: the "On the way" section right after the hero (phone-way-*.webp, demo account at Tel Aviv City Hall -> the
+Ramat Gan diamond exchange towers by bike). Tests: tests/test_commute.py, tests/test_way_server.py.
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

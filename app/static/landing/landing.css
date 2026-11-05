@@ -233,3 +233,49 @@ section h2 { font-size: clamp(30px, 4vw, 46px); line-height: 1.1; letter-spacing
   .langs button { min-height: 40px; }
   .logo { min-height: 44px; }
 }
+
+/* ---------------------------------------------------------------- on my way (new): right after the hero */
+.chips > a.chip-new {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; padding: 4px 12px 4px 5px;
+  border-radius: 999px; background: var(--ink); color: var(--paper); text-decoration: none; border: 1px solid var(--ink);
+}
+[dir="rtl"] .chips > a.chip-new { padding: 4px 5px 4px 12px; }
+.chip-new b { background: var(--tag); color: var(--tag-ink); border-radius: 999px; padding: 1px 8px; font-size: 12px; letter-spacing: .04em; }
+.chip-new:hover { background: var(--ink-2); }
+.way {
+  position: relative; scroll-margin-top: 70px;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--tag) 13%, transparent) 22%, color-mix(in srgb, var(--tag) 13%, transparent) 78%, transparent);
+}
+.way-in {
+  max-width: 1200px; margin: 0 auto; padding: clamp(48px, 7vw, 100px) clamp(16px, 4vw, 40px);
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: clamp(28px, 5vw, 72px); align-items: center;
+}
+.kicker { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; font-weight: 700; font-size: 15px; color: var(--ink-2); }
+.kicker .new { background: var(--ink); color: var(--paper); font-size: 12px; letter-spacing: .06em; padding: 4px 11px; border-radius: 999px; }
+.way h2 { font-size: clamp(32px, 4.4vw, 52px); }
+.way h2 mark { background: none; color: inherit; background-image: linear-gradient(transparent 62%, color-mix(in srgb, var(--tag) 85%, transparent) 62%, color-mix(in srgb, var(--tag) 85%, transparent) 92%, transparent 92%); }
+.way .lead { margin-bottom: 28px; }
+.way-points { list-style: none; margin: 0 0 32px; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 28px; }
+.way-points li { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 13px; align-items: start; }
+.way-points .ico { width: 42px; height: 42px; border-radius: 12px; background: var(--tag); color: var(--tag-ink); display: grid; place-items: center; box-shadow: 0 10px 22px -12px var(--tag-edge); }
+.way-points .ico svg { width: 23px; height: 23px; }
+.way-points h3 { margin: 1px 0 4px; font-size: 17.5px; line-height: 1.25; }
+.way-points p { margin: 0; font-size: 15px; line-height: 1.5; color: var(--ink-2); }
+.way-visual { position: relative; display: grid; place-items: center; min-height: 620px; }
+.way-visual .device { --w: min(270px, 60vw); grid-area: 1 / 1; }
+.way-visual .device.front { z-index: 2; transform: translateX(-22%) rotate(-3deg); }
+.way-visual .device.back { transform: translateX(26%) translateY(-4%) rotate(4deg) scale(.9); filter: saturate(.92); }
+[dir="rtl"] .way-visual .device.front { transform: translateX(22%) rotate(3deg); }
+[dir="rtl"] .way-visual .device.back { transform: translateX(-26%) translateY(-4%) rotate(-4deg) scale(.9); }
+.way-visual .ftag.best { inset-inline-start: -4%; bottom: 9%; }
+.way-visual .ftag.other { inset-inline-end: -2%; top: 6%; }
+@media (max-width: 860px) {
+  .way-in { grid-template-columns: minmax(0, 1fr); text-align: center; }
+  .kicker, .way .cta-row { justify-content: center; }
+  .way .lead { margin-inline: auto; }
+  .way-points { grid-template-columns: minmax(0, 1fr); max-width: 520px; margin-inline: auto; text-align: start; }
+  .way-visual { min-height: 0; padding: 10px 0 24px; }
+  .way-visual .device { --w: min(230px, 52vw); }
+  .way-visual .ftag.best { inset-inline-start: 0; bottom: 6%; }
+  .way-visual .ftag.other { inset-inline-end: 0; top: 2%; }
+}

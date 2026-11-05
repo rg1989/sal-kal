@@ -685,8 +685,16 @@ html, * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--accen
 .cart-tabs .pill { flex: none; }
 .cart-tabs .pill span { font-family: var(--num); color: var(--muted); font-size: 13px; }
 .cart-tabs .pill.on span { color: inherit; opacity: .7; }
-.pill.add { border-style: dashed; color: var(--ink-2); background: transparent; }
-.pill.add:hover { border-color: var(--accent-edge); color: var(--ink); }
+/* "New cart": a real button (filled, solid edge, a yellow + disc), not a faint outline */
+.pill.add {
+  display: inline-flex; align-items: center; gap: 7px; padding-inline: 5px 14px; font-weight: 600; color: var(--ink);
+  background: var(--surface-2); border: 1.5px solid var(--line-strong); box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent);
+  cursor: pointer; transition: border-color .15s, background-color .15s, transform .1s;
+}
+.pill.add .plus { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--tag-ink); flex: none; }
+.pill.add .plus svg { width: 14px; height: 14px; }
+.pill.add:hover { border-color: var(--accent-edge); background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
+.pill.add:active { transform: scale(.97); }
 .cart-edit { display: flex; align-items: center; gap: 2px; padding-bottom: 8px; margin-bottom: 2px; border-bottom: 1px solid var(--line); }
 .cart-edit .cart-name { font-size: 19px; margin-inline-start: -6px; }
 .basket-btn .label { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1740,3 +1748,196 @@ input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowe
   border-radius: 14px; border-color: var(--line-strong); font-size: 16px; font-weight: 600;
 }
 .gate-install svg { width: 22px; height: 22px; }
+
+/* ================================================================ on my way: shopping along the route home -> work */
+/* header: a route icon instead of the pin */
+.near .ico-way { display: none; }
+.near.way .ico-way { display: block; }
+.near.way .ico-home { display: none; }
+.near.way svg .dot { fill: var(--accent-edge); }
+
+/* work on the map: like home, in ink */
+.work-pin { background: var(--ink); color: var(--paper); box-shadow: 0 0 0 7px color-mix(in srgb, var(--ink) 18%, transparent), 0 6px 16px rgba(0, 0, 0, .35); }
+/* the plan's stops, numbered in the order you reach them */
+.stop-pin {
+  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--tag); color: var(--tag-ink);
+  border: 2.5px solid var(--ink); font-size: 16px; font-weight: 700; line-height: 1; z-index: 3;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .35);
+}
+.stop-pin.many { width: auto; min-width: 28px; padding: 0 7px; border-radius: 999px; letter-spacing: .02em; }
+
+/* the location sheet: the switch, then home, then work and how you go */
+.area-seg { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin-bottom: 14px; }
+.area-seg button { padding-block: 9px; }
+.loc-h { margin: 4px 0 8px; font-weight: 700; font-size: 15px; color: var(--ink); }
+.travel-seg { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
+.travel-seg button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding-block: 9px; white-space: nowrap; }
+.travel-seg svg { width: 18px; height: 18px; flex: none; }
+
+/* checkout: the stops plan */
+.way-plan {
+  margin: 10px 0 18px; background: var(--surface); border: 1px solid var(--line); border-inline-start: 4px solid var(--tag);
+  border-radius: var(--r-lg); padding: 16px 18px; box-shadow: var(--shadow); display: grid; gap: 14px;
+}
+.way-plan[hidden] { display: none; }
+.wp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.wp-head h2 { margin: 0; font-size: 19px; }
+.wp-none { margin: 0; color: var(--ink-2); }
+.wp-opts { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.wp-opt {
+  flex: 1 0 104px; display: grid; gap: 1px; justify-items: start; text-align: start; padding: 9px 12px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); color: var(--ink);
+}
+.wp-opt .wp-n { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.wp-opt b { font-size: 21px; font-weight: 700; line-height: 1.1; }
+.wp-opt small { font-size: 12px; color: var(--good); font-weight: 600; white-space: nowrap; }
+.wp-opt:hover { border-color: var(--line-strong); }
+.wp-opt[aria-checked="true"] { background: var(--tag); border-color: var(--tag-edge); color: var(--tag-ink); box-shadow: 0 6px 16px -8px var(--tag-edge); }
+.wp-opt[aria-checked="true"] .wp-n, .wp-opt[aria-checked="true"] small { color: inherit; opacity: .8; }
+.wp-stops { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; counter-reset: none; }
+.wp-stop { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
+.wp-num {
+  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--tag); color: var(--tag-ink);
+  border: 2px solid var(--ink); font-size: 16px; font-weight: 700; line-height: 1;
+}
+.wp-main { min-width: 0; }
+.wp-row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.wp-chain { margin: 0; font-weight: 700; font-size: 16px; }
+.wp-sub { margin: 0; font-size: 18px; font-weight: 700; }
+.wp-branch { margin: 1px 0 6px; color: var(--muted); font-size: 13px; }
+.wp-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13.5px; color: var(--ink-2); }
+.wp-items li { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.wp-items li > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp-items small { color: var(--muted); white-space: nowrap; }
+.wp-items .num { flex: none; color: var(--ink); }
+.wp-deal { flex: none; font-size: 11px; font-weight: 700; color: var(--promo); }
+.wp-miss { margin: 0; font-size: 13px; color: var(--warn); }
+.wp-foot { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--line); }
+.wp-total { margin: 0; display: grid; }
+.wp-total span { font-size: 12px; color: var(--muted); }
+.wp-total b { font-size: 26px; font-weight: 700; line-height: 1; }
+.wp-trip { margin: 0; flex: 1; min-width: 160px; display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 14px; }
+.wp-trip svg { width: 20px; height: 20px; flex: none; color: var(--accent-edge); }
+.wp-foot .sc-btn { flex: none; }
+
+/* the cart column: the cheapest split on your way, one line */
+.lc-way {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; padding: 9px 12px;
+  border-radius: 12px; background: color-mix(in srgb, var(--accent) 26%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent-edge) 55%, transparent);
+  color: var(--ink); text-decoration: none; font-size: 13.5px;
+}
+.lc-way[hidden] { display: none; }
+.lc-way:hover { border-color: var(--accent-edge); }
+.lw-k { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+.lw-k svg { width: 16px; height: 16px; }
+.lw-v { white-space: nowrap; }
+.lw-v b { font-size: 16px; }
+.lw-v small { color: var(--good); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .area-seg button, .travel-seg button { min-height: 44px; }
+  .wp-opt { flex: 1 1 0; min-width: 88px; min-height: 64px; padding: 8px 10px; }
+  .wp-opt b { font-size: 19px; }
+  .wp-foot .sc-btn { width: 100%; justify-content: center; min-height: 44px; }
+  .lc-way { min-height: 44px; }
+}
+
+
+/* ================================================================ where: around a place | on the way (above the map) */
+.where { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 14px 0 6px; position: relative; z-index: 3; }
+.where[hidden] { display: none; }
+.where-mode { padding: 4px; box-shadow: var(--shadow); }
+.where-mode button { display: inline-flex; align-items: center; gap: 8px; padding: 9px 18px; font-size: 15px; white-space: nowrap; }
+.where-mode button svg { width: 18px; height: 18px; flex: none; }
+.where-mode button[aria-checked="true"] { background: var(--ink); color: var(--paper); }
+.where-pick { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; min-width: 0; }
+.where-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wsel {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 42px; padding-inline-start: 13px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 999px; cursor: pointer; min-width: 0;
+}
+.wsel:hover { border-color: var(--accent-edge); }
+.wsel:focus-within { border-color: var(--accent-edge); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+.ws-k { font-size: 12.5px; color: var(--muted); white-space: nowrap; display: inline-flex; }
+.wsel.ico .ws-k svg { width: 18px; height: 18px; color: var(--ink-2); }
+.wsel select {
+  appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--ink); font: 600 14.5px var(--ui);
+  padding-block: 9px; padding-inline: 2px 30px; cursor: pointer; min-width: 0; max-width: 190px; text-overflow: ellipsis; outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 8l5 5 5-5' fill='none' stroke='%236B7470' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-size: 16px; background-position: right 10px center;
+}
+[dir="rtl"] .wsel select { background-position: left 10px center; }
+.wsel.place select { font-weight: 700; }
+.wsel option { color: var(--ink); background: var(--surface); }
+.where-swap {
+  width: 38px; height: 38px; flex: none; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: var(--accent); color: var(--tag-ink); border: 1px solid var(--accent-edge);
+}
+.where-swap svg { width: 18px; height: 18px; }
+.where-swap:hover { filter: brightness(1.04); }
+.where-swap:active { transform: rotate(180deg); transition: transform .25s; }
+/* the home map no longer starts right under the header: it fades in at the top like elsewhere */
+#home-map:has(.where:not([hidden])) .mapbox canvas.maplibregl-canvas {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 13%, #000 87%, transparent 100%),
+                      linear-gradient(to bottom, transparent 0, #000 12%, #000 84%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 13%, #000 87%, transparent 100%),
+              linear-gradient(to bottom, transparent 0, #000 12%, #000 84%, transparent 100%);
+}
+#home-map:has(.where:not([hidden])) .mapbox { margin-top: -4px; }
+.wp-route { margin: 0; color: var(--ink-2); font-weight: 600; font-size: 14px; }
+
+/* the places sheet */
+.loc-body { display: grid; gap: 10px; }
+.loc-pick { display: grid; gap: 8px; }
+.loc-pick:empty { display: none; }
+.loc-pick .loc-legend { margin: 4px 0 0; }
+.loc-body .area-seg { margin-bottom: 4px; }
+.place-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.place-chips button {
+  min-height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--ink); font: 600 14.5px var(--ui); cursor: pointer;
+}
+.place-chips button:hover { border-color: var(--accent-edge); }
+.place-chips button[aria-checked="true"] { background: var(--accent); border-color: var(--accent-edge); color: var(--tag-ink); }
+.loc-body .loc-h { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.place-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pl-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.pl-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+.pl-text { flex: 1; min-width: 0; display: grid; }
+.pl-text b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-text small { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-btn {
+  flex: none; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2);
+  color: var(--ink); font: 600 13px var(--ui); cursor: pointer; display: inline-grid; place-items: center;
+}
+.pl-btn:hover { border-color: var(--line-strong); }
+.pl-del { width: 36px; padding: 0; color: var(--ink-2); }
+.pl-del svg { width: 17px; height: 17px; }
+.place-edit { display: grid; gap: 12px; padding: 14px; border: 1.5px solid var(--accent-edge); border-radius: 16px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.pl-name { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
+.pl-name input { font: 600 16px var(--ui); padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+.pl-name input:focus { outline: none; border-color: var(--accent-edge); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+.pl-actions { display: flex; gap: 8px; }
+.pl-actions button { min-height: 42px; padding: 0 18px; }
+.pl-actions .primary:disabled { opacity: .45; cursor: default; }
+.loc-body > .pill.add, .loc-pick .pill.add { justify-self: start; min-height: 42px; }
+
+@media (max-width: 640px) {
+  .where { gap: 8px; }
+  .where-mode { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .where-mode button { justify-content: center; min-height: 44px; padding-inline: 10px; font-size: 14.5px; }
+  .where-pick { width: 100%; display: grid; gap: 8px; }
+  .where-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .where-row.trip { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .where-row .pill.add { grid-column: 1 / -1; justify-content: center; min-height: 44px; }
+  .wsel { min-height: 44px; }
+  .wsel select { max-width: none; width: 100%; }
+  .where-swap { width: 44px; height: 44px; }
+  .pl-btn { min-height: 40px; }
+  .pl-del { width: 40px; }
+  .place-chips button { min-height: 44px; }
+}
+@media (max-width: 359px) {  /* the smallest phones: the places' names need the room more than the small labels */
+  .where-row .wsel:not(.ico) .ws-k { display: none; }
+  .where-row .wsel { padding-inline-start: 10px; }
+}
