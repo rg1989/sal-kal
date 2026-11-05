@@ -93,7 +93,7 @@ Online minimum orders across sites are 250–350 per ice.co.il, not per chain.
 
 ## Status (2026-11-04) — live on Omarchy
 Canonical copy: `omarchy:~/Projects/il-prices-app` (Tailscale host `omarchy`). URL: http://omarchy:8080.
-Git repo since 2026-11-05 (branch main, local only). Sessions run on omarchy itself: edit here, `./install-app.sh`
+Git repo since 2026-11-05 (branch main), pushed to the private GitHub repo rg1989/sal-kal (keep it private: this file has the home address). Sessions run on omarchy itself: edit here, `./install-app.sh`
 (sudo, idempotent) copies app/ to /srv/sal/code and restarts `sal-web`; services run that copy, never this folder.
 Sandboxed (2026-11-05, per user: omarchy also runs other private home services, and Sal will face the internet): everything
 runs as system user `sal` from `/srv/sal` (own btrfs subvolume: python/, code/, venv/, downloader/, ms-playwright/
