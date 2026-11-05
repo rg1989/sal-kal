@@ -96,7 +96,7 @@ Online minimum orders across sites are 250–350 per ice.co.il, not per chain.
 
 ## Status (2026-11-04) — live on Omarchy
 Canonical copy: `omarchy:~/Projects/il-prices-app` (Tailscale host `omarchy`). URL: http://omarchy:8080.
-Git repo since 2026-11-05 (branch main), pushed to the private GitHub repo rg1989/sal-kal (keep it private: this file has the home address). Sessions run on omarchy itself: edit here, `./install-app.sh`
+Git repo since 2026-11-05 (branch main), pushed to the PUBLIC GitHub repo rg1989/sal-kal (history scrubbed 2026-11-05: no home address, owner email, tailnet name or other home services; keep it that way, and never commit auth.json, keys or user data). Sessions run on omarchy itself: edit here, `./install-app.sh`
 (sudo, idempotent) copies app/ to /srv/sal/code and restarts `sal-web`; services run that copy, never this folder.
 Sandboxed (2026-11-05, per user: omarchy also runs other private home services, and Sal will face the internet): everything
 runs as system user `sal` from `/srv/sal` (own btrfs subvolume: python/, code/, venv/, downloader/, ms-playwright/
@@ -219,6 +219,10 @@ and a demo account at Tel Aviv City Hall, never a real home), live counts from /
 price-transparency regulations) linked. Credit: "Built by Roman Grinevich" (LinkedIn) + GitHub (rg1989/sal-kal) in the
 landing footer, the app footer and the account sheet. Mobile audit script (overflow, clipped text, overlaps, small targets)
 lives in the session scratchpad; fixes landed in styles.css (fee cards on phones, onboarding map height, radius row, pins).
+Phones (styles.css "made for a thumb" block, <=640px): every control >=44px tall, or 40px with a ::after hit area past its
+edges; labels never wrap (short labels: "Club prices", "Cheapest per chain", "Waze" / "Google Maps" with full aria-labels);
+control rows stay one row (checkout mode switch full width; deal + sort share a row; cards get a full-width Add); cart rows
+put the stepper under the price; checkboxes are custom (yellow, ink tick), switches keep [switch]. Check at 320/360/390/430 in he and en.
 Copy: the user dislikes filler text ("slop") — no taglines, explanatory notes or subtitles; labels only.
 Tailscale: also served at https://omarchy.<tailnet>.ts.net:8443 (tailscale serve, tailnet only; port 443 is another app).
 Cards (2026-11-05): server `_enrich()` (browse, picks, deals) adds `near` = cheapest shelf price at a branch within your
@@ -268,5 +272,5 @@ pasted barcodes), price changes, deals by chain, price gaps (across chains / acr
 and 2+ chains so carton-vs-pack and internal codes stay out), product tracker (words, barcode prefix = a maker, or
 barcodes). Cached 15 min per data version. History began 2026-11-05: time reports grow more valuable daily.
 Tests: tests/test_reports.py.
-Left: git repo (none yet); category ranking could prefer each category's core words; the price files' own
+Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

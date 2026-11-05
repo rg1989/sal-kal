@@ -2,6 +2,7 @@
 Usage statistics (app.stats) and the owner's /admin page, through the real ASGI app (middleware, cookies, headers), on
 scratch databases. Only the owner's verified Google sign-in opens /admin; everyone else gets "not found"."""
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -69,13 +70,15 @@ def ux(vid, sid, events, cookie=None, ctx=None, ua=IPHONE, ip="198.51.100.7"):
 
 
 # ---------------------------------------------------------------- who is the owner
-OWNER = "owner@example.com"
-assert auth.owner_email(OWNER) and auth.owner_email(" owner@example.com ") and not auth.owner_email("someone@gmail.com")
-assert "grinevic" not in open(auth.__file__).read().lower()  # only its hash is in the source (the repo is public)
+# auth.py holds only a hash of the real owner's address (the repo is public); the test swaps in a made-up owner
+assert len(auth.OWNER_EMAIL_SHA256) == 64 and "@" not in open(auth.__file__).read().split("OWNER_EMAIL_SHA256 =")[1].split("\n")[0]
+OWNER = "Owner.Person@Example.com"
+auth.OWNER_EMAIL_SHA256 = hashlib.sha256(OWNER.lower().encode()).hexdigest()
+assert auth.owner_email(OWNER) and auth.owner_email(" owner.person@example.com ") and not auth.owner_email("someone@gmail.com")
 owner = auth.sign_in(c, "google", "g-owner", OWNER, True, "Roman", None)
 alice = auth.sign_in(c, "google", "g-alice", "alice@example.com", True, "Alice", "https://lh3.example/a.jpg")
-fake = auth.sign_in(c, "facebook", "f-fake", "owner@example.com", False, "Not Roman", None)    # unverified
-fake2 = auth.sign_in(c, "google", "g-fake", "owner@example.com", False, "Not Roman 2", None)  # unverified
+fake = auth.sign_in(c, "facebook", "f-fake", "owner.person@example.com", False, "Not the owner", None)    # unverified
+fake2 = auth.sign_in(c, "google", "g-fake", "owner.person@example.com", False, "Not the owner 2", None)  # unverified
 assert len({owner, alice, fake, fake2}) == 4
 assert auth.is_owner(c, {"id": owner}) and not any(auth.is_owner(c, {"id": u}) for u in (alice, fake, fake2, None))
 c.execute("UPDATE users SET admin=1 WHERE id=?", (alice,))  # the old admin flag (reindex) doesn't open /admin
