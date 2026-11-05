@@ -27,6 +27,9 @@ estimate. The price files don't bind the till price; the shelf tag does.
 
 ## Features
 - **Carts** you name and keep (weekly shop, Shabbat…), switchable from a cart that follows you on every page.
+- **Share a cart by link**: send it to your partner on WhatsApp; they add it to their carts in one tap and know
+  exactly what to buy. The cart travels inside the link (after the `#`), so nothing is stored, looked up or sent to
+  anyone, and nothing is added until the person who opens it says so.
 - **Around a place**: every branch within 1–20 km of a saved place (home, work, your parents'), priced for the whole
   cart, cheapest first, with route, drive time, opening hours (OpenStreetMap) and Waze / Google Maps links.
 - **On the way**: pick where from, where to and how (car, bike, on foot). Sal-Kal prices the branches along the route
