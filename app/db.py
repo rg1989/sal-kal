@@ -1,5 +1,7 @@
+import json
 import os
 import sqlite3
+import time
 
 DB_PATH = os.environ.get("BASKET_DB", "/srv/sal/data/basket.db")
 
@@ -72,6 +74,19 @@ CREATE TABLE IF NOT EXISTS u.snapshots(
   data_ts INTEGER, kind TEXT, payload TEXT);
 CREATE INDEX IF NOT EXISTS u.snapshots_cart ON snapshots(cart_id, taken_at);
 CREATE TABLE IF NOT EXISTS u.settings(key TEXT PRIMARY KEY, value TEXT);
+-- accounts (app.auth): user 1 is the household from before accounts; prefs / delivery are that account's JSON
+CREATE TABLE IF NOT EXISTS u.users(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, avatar TEXT, created INTEGER, seen INTEGER,
+  lang TEXT, onboarded INTEGER DEFAULT 0, admin INTEGER DEFAULT 0, prefs TEXT, delivery TEXT);
+-- one row per Google / Facebook sign-in; verified = the provider confirmed the email address
+CREATE TABLE IF NOT EXISTS u.identities(
+  provider TEXT, subject TEXT, user_id INTEGER, email TEXT, verified INTEGER DEFAULT 0, created INTEGER,
+  PRIMARY KEY(provider, subject));
+CREATE INDEX IF NOT EXISTS u.identities_user ON identities(user_id);
+CREATE INDEX IF NOT EXISTS u.identities_email ON identities(email);
+-- token = SHA-256 of the cookie's random token
+CREATE TABLE IF NOT EXISTS u.sessions(token TEXT PRIMARY KEY, user_id INTEGER, created INTEGER, seen INTEGER, expires INTEGER);
+CREATE INDEX IF NOT EXISTS u.sessions_user ON sessions(user_id);
 """
 
 
@@ -107,6 +122,7 @@ def _migrate(con):
                     raise
     if "ts" not in _cols(con, "item_names"):
         _migrate_item_names(con)
+    _migrate_users(con)
     old = [t for t in USER_TABLES
            if con.execute("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?", (t,)).fetchone()]
     if not old:
@@ -116,6 +132,38 @@ def _migrate(con):
             if not con.execute(f"SELECT 1 FROM u.{t} LIMIT 1").fetchone():
                 con.execute(f"INSERT INTO u.{t} SELECT * FROM main.{t}")
             con.execute(f"DROP TABLE main.{t}")
+
+
+def _migrate_users(con):
+    """Accounts: carts get an owner (user_id), and the household from before accounts becomes user 1 with its carts,
+    address and delivery settings (the first account to sign in takes it over, see app.auth.sign_in)."""
+    ucols = lambda: {r[1] for r in con.execute("PRAGMA u.table_info(carts)")}
+    if "user_id" not in ucols():
+        try:
+            con.execute("ALTER TABLE u.carts ADD COLUMN user_id INTEGER")
+        except sqlite3.OperationalError:
+            if "user_id" not in ucols():
+                raise
+    con.execute("CREATE INDEX IF NOT EXISTS u.carts_user ON carts(user_id, updated)")
+    if con.execute("SELECT 1 FROM u.users LIMIT 1").fetchone():
+        return
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        if not con.execute("SELECT 1 FROM u.users LIMIT 1").fetchone():
+            get = lambda k: (con.execute("SELECT value FROM u.settings WHERE key=?", (k,)).fetchone() or [None])[0]
+            prefs, delivery = get("prefs"), get("delivery")
+            try:
+                has_home = bool(json.loads(prefs or "{}").get("home"))
+            except ValueError:
+                has_home = False
+            now = int(time.time())
+            con.execute("INSERT INTO u.users(id, name, created, seen, onboarded, admin, prefs, delivery) VALUES(1,?,?,?,?,1,?,?)",
+                        ("Household", now, now, int(has_home), prefs, delivery))
+            con.execute("UPDATE u.carts SET user_id=1 WHERE user_id IS NULL")
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
 
 
 def _migrate_item_names(con):

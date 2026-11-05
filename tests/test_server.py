@@ -1,5 +1,6 @@
 """Run: .venv/bin/python tests/test_server.py
 Card prices, deals and price history from app.server, on a scratch database (never the live one)."""
+import json
 import os
 import sys
 import tempfile
@@ -9,7 +10,7 @@ TMP = tempfile.mkdtemp(prefix="sal-test-")
 os.environ["BASKET_DB"] = os.path.join(TMP, "basket.db")  # app.server connects at import: keep it off the live DB
 os.environ["BASKET_USER_DB"] = os.path.join(TMP, "user.db")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import db as dbmod, deals as dealsmod, engine, server  # noqa: E402
+from app import auth, db as dbmod, deals as dealsmod, engine, server  # noqa: E402
 NOW_TS = int(time.strftime("%Y%m%d%H%M"))  # names seen just now
 
 c = dbmod.connect(os.environ["BASKET_DB"])
@@ -37,7 +38,10 @@ INSERT INTO item_names(key, chain_id, name, ts) VALUES ('{MILK}', 'A', 'חלב 1
 near = {("A", 1): 1.0, ("A", 2): 2.0, ("A", 3): 2.0, ("B", 1): 0.5, ("B", 2): 0.4}
 server._near_stores = lambda con: near
 server.geo.store_coords = lambda con: {sk: (32.0, 34.8) for sk in near}
-engine.put_setting(c, "prefs", {"home": {"lat": 32.0, "lon": 34.8, "label": "x"}, "max_km": 5})
+# the calls below run as the household account (user 1, local mode), with a home address 5 km around
+c.execute("UPDATE users SET prefs=? WHERE id=1", (json.dumps({"home": {"lat": 32.0, "lon": 34.8, "label": "x"}, "max_km": 5}),))
+c.commit()
+server._user.set(auth.user_row(c, 1))
 
 
 def card(key):
@@ -98,10 +102,14 @@ c.execute("UPDATE deals SET end_ts=? WHERE key=? AND chain_id='A' AND store_id=1
 engine.put_setting(c, "deals_version", 4)
 assert server.deals(kind="ending", limit=5) == []                      # six days left: not ending soon
 assert [d["key"] for d in server.deals(kind="biggest", limit=5)] == [MILK]
+c.execute("INSERT INTO u.carts(id, name, created, updated, user_id) VALUES(1, 'x', 0, 0, 1), (2, 'y', 0, 0, 2)")
+c.execute("INSERT INTO u.cart_items(cart_id, key, qty, name, position) VALUES(2, ?, 1, 'חלב', 0)", (MILK,))
+assert [d["key"] for d in server.deals(kind="biggest", limit=5, skip_basket=1)] == [MILK]  # someone else's cart
 c.execute("INSERT INTO u.cart_items(cart_id, key, qty, name, position) VALUES(1, ?, 1, 'חלב', 0)", (MILK,))
 assert server.deals(kind="biggest", limit=5, skip_basket=1) == []       # already in a cart
 assert [d["key"] for d in server.deals(kind="biggest", limit=5)] == [MILK]
 c.execute("DELETE FROM u.cart_items")
+c.execute("DELETE FROM u.carts")
 c.execute("UPDATE deals SET end_ts=? WHERE key=? AND chain_id='A' AND store_id=1", (SOON, MILK))
 
 # ---------------------------------------------------------------- price history (F16, F17, F38)

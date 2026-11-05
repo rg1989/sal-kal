@@ -4,7 +4,7 @@
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const money = v => v == null ? '—' : '₪' + Number(v).toFixed(2);
+const money = v => v == null ? '—' : '₪' + Number(v).toFixed(2);  // ₪ first in both languages, like the shelf labels
 const signed = v => (v > 0 ? '+' : '−') + '₪' + Math.abs(v).toFixed(2);
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const local = {
@@ -15,9 +15,9 @@ const tsDate = t => {  // YYYYMMDDHHMM -> Date
   const s = String(t || '');
   return s.length < 12 ? null : new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(8, 10), +s.slice(10, 12));
 };
-const fmtDate = d => d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-const kmText = d => d == null ? '' : d < 1 ? `${Math.max(100, Math.round(d * 10) * 100)} m` : `${d < 10 ? d.toFixed(1) : Math.round(d)} km`;
+const fmtDate = d => d.toLocaleString(locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const plural = (n, w) => tn(n, w);
+const kmText = d => d == null ? '' : d < 1 ? t('{n} m', { n: Math.max(100, Math.round(d * 10) * 100) }) : t('{n} km', { n: d < 10 ? d.toFixed(1) : Math.round(d) });
 const bdi = v => `<bdi>${esc(v)}</bdi>`;
 // chains fill empty fields with placeholders like "לא ידוע" (unknown), "0" or ","
 const clean = v => { const t = String(v ?? '').trim(); return /^(לא ידוע|unknown|כללי|[0.,\-\s]*)$/i.test(t) ? '' : t; };
@@ -31,17 +31,22 @@ const SVG = {
 };
 
 async function api(path, opts = {}) {
-  const r = await fetch(path, {
-    method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  if (!r.ok) throw new Error(`${r.status} ${path}`);
-  return r.json();
+  const done = opts.quiet ? null : loading();  // the thin bar under the header while anything loads
+  try {
+    const r = await fetch(path, {
+      method: opts.method || 'GET',
+      headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      credentials: 'same-origin',
+    });
+    if (r.status === 401 && !opts.noAuth) { signedOut(); throw new Error('signed out'); }
+    if (!r.ok) throw new Error(`${r.status} ${path}`);
+    return await r.json();
+  } finally { done?.(); }
 }
 
 const S = {
-  cart: { id: null, name: 'Weekly shop', items: [] },  // items: [{key, qty, name}]
+  cart: { id: null, name: t('Weekly shop'), items: [] },  // items: [{key, qty, name}]
   meta: {},           // product key -> {name, manufacturer, is_weighted, min, max, stores}
   prefs: { mode: 'store', club: false, home: null, max_km: null },
   result: null,       // last /api/compare response for the current basket + prefs
@@ -59,37 +64,40 @@ const paid = c => delivery() ? (c.online.delivered ?? c.online.total) : c.in_sto
 const full = c => !!(view(c)?.complete ?? c.complete);
 const nCompared = (r = S.result) => r?.n ?? 0;
 // "all 4" / "3 of 4" / "Not compared" (only produce in the cart)
-const countText = (covered, isFull, n = nCompared(), noun = '') => !n ? 'Not compared'
-  : isFull ? (n === 1 ? 'has it' : `all ${n}${noun}`) : `${covered} of ${n}${noun}`;
-const priceUnit = key => S.meta[key]?.is_weighted ? '/kg' : '';
+const countText = (covered, isFull, n = nCompared(), noun = '') => !n ? t('Not compared')
+  : isFull ? (n === 1 ? t('has it') : noun ? t('all {n} products', { n }) : t('all {n}', { n }))
+  : noun ? t('{a} of {n} products', { a: covered, n }) : t('{a} of {n}', { a: covered, n });
+const priceUnit = key => S.meta[key]?.is_weighted ? perKg() : '';
 function pricesFrom(ts) {  // "Prices from 09:30" today, "Prices from 4 Nov 22:10" before
   const d = tsDate(ts);
   if (!d) return '';
-  const t = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return 'Prices from ' + (d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${t}`);
+  const hm = d.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' });
+  return t('Prices from {when}', { when: d.toDateString() === new Date().toDateString() ? hm : `${d.toLocaleDateString(locale(), { day: 'numeric', month: 'short' })} ${hm}` });
 }
 // why a price isn't counted (engine `reason`)
-const unconfText = l => ({ price: 'Price looks wrong', noname: 'Name not checked', new: 'Being checked' })[l.reason]
-  || (l.reason === 'name' ? 'Named differently' + (l.shelf_name ? `: ${bdi(l.shelf_name)}` : '') : 'Not confirmed');
+const unconfText = l => ({ price: t('Price looks wrong'), noname: t('Name not checked'), new: t('Being checked') })[l.reason]
+  || (l.reason === 'name' ? t('Named differently') + (l.shelf_name ? `: ${bdi(l.shelf_name)}` : '') : t('Not confirmed'));
 // confirmed deals this quantity doesn't reach: "2 for ₪55"
-const dealMoreText = d => `${d.units} for ₪${Number.isInteger(+d.total) ? +d.total : (+d.total).toFixed(2)}`;
+const dealMoreText = d => t('{n} for {price}', { n: d.units, price: '₪' + (Number.isInteger(+d.total) ? +d.total : (+d.total).toFixed(2)) });
 const dealsMore = (l, tag = 'span') => (l.deals_more || []).filter(d => d.units > 0 && d.total != null).map(d =>
   `<${tag} ${tag === 'button' ? `type="button" data-dealqty="${d.units}" ` : ''}class="chip more" dir="auto" title="${esc(d.description || '')}">${dealMoreText(d)}</${tag}>`).join(' ');
-const notCounted = l => l.deals_not_counted?.length ? `<span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>` : '';
+const notCounted = l => l.deals_not_counted?.length ? `<span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">${t('Deal not counted')}</span>` : '';
 // produce at one store: its own item, or items with the same name; null when it has neither
 const ncPick = l => l.own && l.price != null ? { name: l.shelf_name, price: l.price } : l.similar?.[0] || null;
 const radius = () => S.prefs.home && S.prefs.max_km ? S.prefs.max_km : null;
 
 // ---------------------------------------------------------------- toast
 let toastTimer;
-function toast(msg, action, fn) {
-  const t = $('#toast');
-  (document.querySelector('dialog[open]') || document.body).append(t);  // stay above an open dialog's backdrop
-  t.innerHTML = `<span>${esc(msg)}</span>` + (action ? `<button type="button">${esc(action)}</button>` : '');
-  if (action) t.querySelector('button').onclick = () => { t.hidden = true; fn(); };
-  t.hidden = false;
+function toast(msg, action, fn, kind) {
+  haptic(kind || (action ? 'warn' : 'tap'));
+  const el = $('#toast');
+  (document.querySelector('dialog[open]') || document.body).append(el);  // stay above an open dialog's backdrop
+  el.innerHTML = `<span>${esc(msg)}</span>` + (action ? `<button type="button">${esc(action)}</button>` : '');
+  if (action) el.querySelector('button').onclick = () => { el.hidden = true; fn(); };
+  el.hidden = false;
+  el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, action ? 8000 : 3000);
+  toastTimer = setTimeout(() => { el.hidden = true; }, action ? 8000 : 3000);
 }
 
 // ---------------------------------------------------------------- basket
@@ -97,8 +105,8 @@ function metaHTML(it) {
   const m = S.meta[it.key] || {};
   const parts = [];
   if (clean(m.manufacturer)) parts.push(bdi(clean(m.manufacturer)));
-  if (m.min != null) parts.push((m.min === m.max ? money(m.min) : `${money(m.min)}–${money(m.max)}`) + (m.is_weighted ? '/kg' : ''));
-  if (m.stores === 0) parts.push('not on sale anywhere right now');
+  if (m.min != null) parts.push((m.min === m.max ? money(m.min) : `${money(m.min)}–${money(m.max)}`) + (m.is_weighted ? perKg() : ''));
+  if (m.stores === 0) parts.push(t('not on sale anywhere right now'));
   return parts.join(' · ');
 }
 
@@ -113,17 +121,17 @@ const wide = () => matchMedia('(min-width: 1100px)').matches;
 function itemNote(it, c, l) {
   const m = S.meta[it.key] || {}, kg = m.is_weighted;
   if (!l) return metaHTML(it);
-  const each = p => it.qty !== 1 ? `${fmtQty(it.qty, kg)} × ${money(p)}` : money(p) + (kg ? '/kg' : '');
-  if (l.status === 'missing') return `<span class="warn">Not at ${esc(c.name)}</span>`;
-  if (l.status === 'unconfirmed') return `<span class="unc">${unconfText(l)} · Not counted</span>`;
+  const each = p => it.qty !== 1 ? `${fmtQty(it.qty, kg)} × ${money(p)}` : money(p) + (kg ? perKg() : '');
+  if (l.status === 'missing') return `<span class="warn">${t('Not at {chain}', { chain: esc(cn(c.name)) })}</span>`;
+  if (l.status === 'unconfirmed') return `<span class="unc">${unconfText(l)} · ${t('Not counted')}</span>`;
   if (l.status === 'not_compared') {
     const p = ncPick(l);
-    return `<span class="unc">Not compared${p ? ` · ${l.own ? '' : 'Similar · '}${each(p.price)}` : ` · Not at ${esc(c.name)}`}</span>`;
+    return `<span class="unc">${t('Not compared')}${p ? ` · ${l.own ? '' : t('Similar') + ' · '}${each(p.price)}` : ` · ${t('Not at {chain}', { chain: esc(cn(c.name)) })}`}</span>`;
   }
   return each(l.price)
-    + (l.promo ? ` · <span class="promo" dir="auto">${esc(l.promo.description || 'deal')}</span>` : '')
+    + (l.promo ? ` · <span class="promo" dir="auto">${esc(l.promo.description || t('deal'))}</span>` : '')
     + (l.deals_more?.length ? ' ' + dealsMore(l, 'button') : '')
-    + (l.deals_not_counted?.length ? ` · <span class="unc" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>` : '');
+    + (l.deals_not_counted?.length ? ` · <span class="unc" title="${esc(l.deals_not_counted.join(' · '))}">${t('Deal not counted')}</span>` : '');
 }
 function itemPrice(it, l) {
   if (!l) return '';
@@ -146,9 +154,9 @@ function renderBasket() {
       <span class="item-name" dir="auto">${esc(it.name || m.name || it.key)}</span>
       <span class="item-meta">${itemNote(it, c, l)}</span>
       <span class="stepper">
-        <button type="button" data-step="-1" aria-label="${last ? 'Remove' : 'One less'}">${last ? SVG.trash : '−'}</button>
-        <input type="number" inputmode="decimal" min="0" step="${kg ? 0.5 : 1}" value="${it.qty}" aria-label="Quantity">${kg ? '<span class="unit">kg</span>' : ''}
-        <button type="button" data-step="1" aria-label="One more">+</button>
+        <button type="button" data-step="-1" aria-label="${last ? t('Remove') : t('One less')}">${last ? SVG.trash : '−'}</button>
+        <input type="number" inputmode="decimal" min="0" step="${kg ? 0.5 : 1}" value="${it.qty}" aria-label="${t('Quantity')}">${kg ? `<span class="unit">${t('kg')}</span>` : ''}
+        <button type="button" data-step="1" aria-label="${t('One more')}">+</button>
       </span>
       <span class="lc-price num">${itemPrice(it, l)}</span>
     </li>`;
@@ -174,13 +182,13 @@ function updateTotals() {
   const n = S.cart.items.length, c = pinned();
   const units = S.cart.items.reduce((t, i) => t + (S.meta[i.key]?.is_weighted ? 1 : i.qty), 0);
   $('#basket-count').textContent = n || '';
-  $('#lc-sum').innerHTML = !n ? '' : `${plural(n, 'product')}${units !== n ? ` · ${units} items` : ''}`
-    + (c ? ` · prices at <strong>${esc(c.name)}</strong>` : '');
+  $('#lc-sum').innerHTML = !n ? '' : `${plural(n, 'product')}${units !== n ? ` · ${plural(units, 'item')}` : ''}`
+    + (c ? ` · ${t('prices at {chain}', { chain: `<strong>${esc(cn(c.name))}</strong>` })}` : '');
   $('#cart-bar').hidden = !n;
   $('#cb-n').textContent = n;
   const v = c && view(c);
-  $('#cb-txt').innerHTML = !c ? 'Finding the cheapest store…' : !nCompared() ? 'Not compared'
-    : `<strong class="num">${money(paid(c))}</strong> at ${esc(c.name)}${full(c) ? '' : ` · ${v.covered} of ${nCompared()}`}`;
+  $('#cb-txt').innerHTML = !c ? t('Finding the cheapest store…') : !nCompared() ? t('Not compared')
+    : t('{price} at {chain}', { price: `<strong class="num">${money(paid(c))}</strong>`, chain: esc(cn(c.name)) }) + (full(c) ? '' : ` · ${t('{a} of {n}', { a: v.covered, n: nCompared() })}`);
   renderStores();
 }
 
@@ -189,24 +197,24 @@ function renderStores() {
   const el = $('#lc-stores'), ch = S.result?.chains || [], p = pinned();
   if (!S.cart.items.length) { el.innerHTML = ''; return; }
   const n = nCompared();
-  if (!S.result) { el.innerHTML = '<p class="lc-wait">Finding the cheapest store…</p>'; return; }
+  if (!S.result) { el.innerHTML = `<p class="lc-wait"><span class="spin" aria-hidden="true"></span>${t('Finding the cheapest store…')}</p>`; return; }
   if (!ch.length) {
-    el.innerHTML = `<p class="lc-wait">No store${radius() && !delivery() ? ` within ${radius()} km` : ''} has these products. <button class="linkish" type="button" data-open-loc>Change distance</button></p>`;
+    el.innerHTML = `<p class="lc-wait">${radius() && !delivery() ? t('No store within {n} km has these products.', { n: radius() }) : t('No store has these products.')} <button class="linkish" type="button" data-open-loc>${t('Change distance')}</button></p>`;
     return;
   }
   $('#all-branches').checked = S.allBranches;
   $('#all-branches').closest('.switch').hidden = delivery();
   const bs = S.result.branches || [];
   if (S.allBranches && !delivery() && bs.length) {
-    $('#lc-label').innerHTML = `All branches <span>· ${bs.length}, cheapest first</span>`;
+    $('#lc-label').innerHTML = `${t('All branches')} <span>· ${t('{n}, cheapest first', { n: bs.length })}</span>`;
     let gap = false;
     const sel = selStore();
     el.innerHTML = '<div class="lc-scroll">' + bs.map((b, i) => {
-      const sep = n && !gap && !b.complete ? (gap = true, '<p class="lc-sep">Missing some products</p>') : '';
+      const sep = n && !gap && !b.complete ? (gap = true, `<p class="lc-sep">${t('Missing some products')}</p>`) : '';
       const on = sel && String(sel.chain_id) === String(b.chain_id) && sel.store_id === b.store_id;
       const best = i === 0 && b.complete && n > 0;
       return sep + `<button type="button" class="lc-store${best ? ' best' : ''}${on ? ' on' : ''}" data-branch="${i}" aria-pressed="${!!on}">
-        <span class="ls-name">${esc(b.chain)}${best ? ' <em>Cheapest</em>' : ''}</span>
+        <span class="ls-name">${esc(cn(b.chain))}${best ? ` <em>${t('Cheapest')}</em>` : ''}</span>
         <span class="ls-sub">${bdi(storeName(b))}${b.distance_km != null ? ` · ${kmText(b.distance_km)}` : ''} · ${countText(b.covered, b.complete, n)}</span>
         <span class="ls-total num">${n ? money(b.total) : ''}</span></button>`;
     }).join('') + '</div>';
@@ -215,20 +223,21 @@ function renderStores() {
   const list = ch.filter(counted).slice(0, 4);
   if (p && !list.includes(p)) list.push(p);
   // the map counts branches; this ranks chains, each at its cheapest branch near you — say so, with the totals
-  $('#lc-label').innerHTML = `Cheapest stores${ch.length > list.length ? ` <span>· top ${list.length} of ${ch.length}</span>` : ''}`;
+  $('#lc-label').innerHTML = `${t('Cheapest stores')}${ch.length > list.length ? ` <span>· ${t('top {a} of {n}', { a: list.length, n: ch.length })}</span>` : ''}`;
   el.innerHTML = list.map(c => {
     const v = view(c), best = c === ch[0] && full(c) && n > 0;
-    const where = delivery() ? (v.fee == null ? 'Delivered · fee not set' : v.fee === 0 ? 'Free delivery' : `incl. ${money(v.fee)} delivery`)
+    const where = delivery() ? (v.fee == null ? t('Delivered · fee not set') : v.fee === 0 ? t('Free delivery') : t('incl. {fee} delivery', { fee: money(v.fee) }))
       : bdi(storeName(v)) + (v.distance_km != null ? ` · ${kmText(v.distance_km)}` : '');
     return `<button type="button" class="lc-store${c === p ? ' on' : ''}${best ? ' best' : ''}" data-pin="${esc(c.chain_id)}" aria-pressed="${c === p}">
-      <span class="ls-name">${esc(c.name)}${best ? ' <em>Cheapest</em>' : ''}</span>
+      <span class="ls-name">${esc(cn(c.name))}${best ? ` <em>${t('Cheapest')}</em>` : ''}</span>
       <span class="ls-sub">${where} · ${countText(v.covered, full(c), n, full(c) ? '' : ' products')}</span>
       <span class="ls-total num">${n ? money(paid(c)) : ''}</span></button>`;
   }).join('');
 }
-function pin(id) { S.pin = id; S.sel = null; renderBasket(); drawPins(); renderStoreCard(true); }
+function pin(id) { haptic('select'); S.pin = id; S.sel = null; renderBasket(); drawPins(); renderStoreCard(true); }
 S.allBranches = local.get('branches') === 'all';
 function setAllBranches(on) {
+  haptic('select');
   S.allBranches = on;
   local.set('branches', on ? 'all' : 'best');
   renderStores();
@@ -262,7 +271,7 @@ async function persist() {
       local.set('cart', c.id);
     }
     loadCarts();  // keep the cart tabs' names and counts current
-  } catch { toast("Couldn't save the cart"); }
+  } catch (e) { if (e.message !== 'signed out') toast(t("Couldn't save the cart"), null, null, 'error'); }
 }
 const save = debounce(() => { saving = saving.then(persist); }, 400);
 
@@ -282,7 +291,7 @@ function setQty(i, q) {
 function removeAt(i) {
   const [gone] = S.cart.items.splice(i, 1);
   changed();
-  toast(`Removed ${gone.name || 'item'}`, 'Undo', () => { S.cart.items.splice(i, 0, gone); changed(); });
+  toast(t('Removed {name}', { name: iso(gone.name || t('item')) }), t('Undo'), () => { S.cart.items.splice(i, 0, gone); changed(); });
 }
 
 $('#drawer-items').addEventListener('click', e => {
@@ -300,7 +309,7 @@ async function openCart(id) {
     const c = await api(`/api/carts/${id}`);
     S.cart = { id: c.id, name: c.name, items: c.items };
     local.set('cart', c.id);
-  } catch { S.cart = { id: null, name: 'Weekly shop', items: [] }; }
+  } catch { S.cart = { id: null, name: t('Weekly shop'), items: [] }; }
   S.result = null;
   S.pin = null;
   S.sel = null;
@@ -321,16 +330,17 @@ function renderCartTabs() {
   $('#cart-tabs').innerHTML = list.map(c => {
     const on = c.id === S.cart.id, n = on ? S.cart.items.length : c.n;
     return `<button class="pill${on ? ' on' : ''}" type="button" role="tab" aria-selected="${on}" data-cartid="${c.id}"><bdi>${esc(on ? S.cart.name : c.name)}</bdi>${n ? ` <span>${n}</span>` : ""}</button>`;
-  }).join('') + '<button class="pill add" type="button" data-cart="new">+ New cart</button>';
+  }).join('') + `<button class="pill add" type="button" data-cart="new">${t('+ New cart')}</button>`;
 }
 $('#cart-tabs').addEventListener('click', async e => {
-  const t = e.target.closest('[data-cartid]');
-  if (t && +t.dataset.cartid !== S.cart.id) { await openCart(+t.dataset.cartid); return; }
+  const tab = e.target.closest('[data-cartid]');
+  if (tab && +tab.dataset.cartid !== S.cart.id) { haptic('select'); await openCart(+tab.dataset.cartid); return; }
   if (e.target.closest('[data-cart="new"]')) {
     await saving;
     const n = S.carts.length + 1;
-    const c = await api('/api/carts', { method: 'POST', body: { name: `Cart ${n}` } }).catch(() => null);
-    if (!c) return toast("Couldn't create a cart");
+    const c = await api('/api/carts', { method: 'POST', body: { name: t('Cart {n}', { n }) } }).catch(() => null);
+    if (!c) return toast(t("Couldn't create a cart"), null, null, 'error');
+    haptic('success');
     await loadCarts();
     await openCart(c.id);
     $('#drawer-cart-name').focus();
@@ -338,7 +348,7 @@ $('#cart-tabs').addEventListener('click', async e => {
   }
 });
 $('#drawer-cart-name').addEventListener('change', e => {
-  S.cart.name = e.target.value.trim() || 'Untitled';
+  S.cart.name = e.target.value.trim() || t('Untitled');
   e.target.value = S.cart.name;
   if (S.cart.id) save();
   renderBasket();
@@ -353,29 +363,31 @@ document.querySelector('.cart-edit').addEventListener('click', async e => {
     const old = S.cart.items;
     S.cart.items = [];
     changed();
-    return toast(`Emptied ${S.cart.name}`, 'Undo', () => { S.cart.items = old; changed(); });
+    return toast(t('Emptied {cart}', { cart: iso(S.cart.name) }), t('Undo'), () => { S.cart.items = old; changed(); });
   }
   if (b.dataset.cart === 'dup' && S.cart.id) {
     const c = await api(`/api/carts/${S.cart.id}/duplicate`, { method: 'POST' });
     await loadCarts();
     await openCart(c.id);
-    toast(`Made “${c.name}”`);
+    toast(t('Made “{cart}”', { cart: iso(c.name) }), null, null, 'success');
   }
   if (b.dataset.cart === 'del') {
     if (!S.cart.id) { S.cart.items = []; return changed(); }
-    if (!confirm(`Delete the cart “${S.cart.name}”?`)) return;
+    if (!await confirmSheet(t('Delete the cart “{cart}”?', { cart: iso(S.cart.name) }), t('Delete'))) return;
     await api(`/api/carts/${S.cart.id}`, { method: 'DELETE' });
     await loadCarts();
     if (S.carts.length) await openCart(S.carts[0].id);
-    else { S.cart = { id: null, name: 'Weekly shop', items: [] }; S.result = null; renderBasket(); renderResults(); }
-    toast('Cart deleted');
+    else { S.cart = { id: null, name: t('Weekly shop'), items: [] }; S.result = null; renderBasket(); renderResults(); }
+    toast(t('Cart deleted'));
   }
 });
 
 // ---------------------------------------------------------------- search
 // ---------------------------------------------------------------- cart actions
-function addToCart(h, qty = 1, quiet = false) {
+function addToCart(h, qty = 1, quiet = false, from = null) {
   const kg = !!h.is_weighted, fresh = !S.cart.items.length && !S.cart.id;
+  haptic('success');
+  flyToCart(from);
   S.meta[h.key] = { ...S.meta[h.key], name: h.name, manufacturer: h.manufacturer, is_weighted: kg,
                     min: h.min_price, max: h.max_price, stores: h.store_count, img: h.img || S.meta[h.key]?.img };
   const ex = S.cart.items.find(i => i.key === h.key);
@@ -384,19 +396,21 @@ function addToCart(h, qty = 1, quiet = false) {
   S.lastAdded = h.key;
   changed();
   for (const b of [$('#basket-btn'), $('#cart-bar')]) { b.classList.remove('bump'); void b.offsetWidth; b.classList.add('bump'); }
-  if (wide()) { if (fresh && !quiet) toast(`Started the cart “${S.cart.name}”`); return; }  // the cart column shows the rest
-  if (!quiet) toast(fresh ? `Started the cart “${S.cart.name}”` : qty > 1 ? `Added ${qty} to ${S.cart.name}` : `Added to ${S.cart.name}`, 'View cart', showCart);
+  if (wide()) { if (fresh && !quiet) toast(t('Started the cart “{cart}”', { cart: iso(S.cart.name) }), null, null, 'none'); return; }  // the cart column shows the rest
+  if (!quiet) toast(fresh ? t('Started the cart “{cart}”', { cart: iso(S.cart.name) }) : qty > 1 ? t('Added {n} to {cart}', { n: qty, cart: iso(S.cart.name) }) : t('Added to {cart}', { cart: iso(S.cart.name) }), t('View cart'), showCart, 'none');
 }
 function stepCart(key, d) {
   const i = S.cart.items.findIndex(x => x.key === key);
   if (i < 0) return;
   const it = S.cart.items[i], step = S.meta[key]?.is_weighted ? 0.5 : 1;
   const q = Math.round((it.qty + d * step) * 100) / 100;
+  haptic('tap');
   if (q < step - 1e-9) removeAt(i);
   else { it.qty = q; changed(); }
 }
 function showCart() {
   if (wide()) { const c = $('#cart'); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); return; }
+  haptic('tap');
   document.body.classList.add('cart-open');
   $('#cart').focus();
 }
@@ -431,7 +445,7 @@ document.addEventListener('click', e => {
   if (e.target.closest('[data-close-cart]')) closeCart();
   if (e.target.closest('[data-open-loc]')) openLocation();
   const a = e.target.closest('[data-add]');
-  if (a) { e.preventDefault(); const h = S.hits[a.dataset.add]; if (h) addToCart(h, +(a.dataset.qty || 1)); }
+  if (a) { e.preventDefault(); const h = S.hits[a.dataset.add]; if (h) addToCart(h, +(a.dataset.qty || 1), false, a.closest('.card, .p-head')?.querySelector('.c-thumb')); }
   const st = e.target.closest('[data-cstep]');
   if (st) { e.preventDefault(); stepCart(st.closest('[data-ckey]').dataset.ckey, +st.dataset.cstep); }
   if (e.target.closest('[data-showcart]')) { e.preventDefault(); showCart(); }
@@ -449,40 +463,40 @@ const catIcon = c => c.line
 function qtyCtl(h, deal) {
   const it = S.cart.items.find(i => i.key === h.key);
   return it
-    ? `<span class="qty-ctl" data-ckey="${esc(h.key)}"><button type="button" data-cstep="-1" aria-label="One less">−</button><span class="num">${fmtQty(it.qty, h.is_weighted)}</span><button type="button" data-cstep="1" aria-label="One more">+</button></span>`
-    : `<button class="add" type="button" data-add="${esc(h.key)}"${deal && deal.min_qty > 1 ? ` data-qty="${deal.min_qty}"` : ''}>${deal && deal.min_qty > 1 ? `Add ${deal.min_qty}` : 'Add'}</button>`;
+    ? `<span class="qty-ctl" data-ckey="${esc(h.key)}"><button type="button" data-cstep="-1" aria-label="${t('One less')}">−</button><span class="num">${fmtQty(it.qty, h.is_weighted)}</span><button type="button" data-cstep="1" aria-label="${t('One more')}">+</button></span>`
+    : `<button class="add" type="button" data-add="${esc(h.key)}"${deal && deal.min_qty > 1 ? ` data-qty="${deal.min_qty}"` : ''}>${deal && deal.min_qty > 1 ? t('Add {n}', { n: deal.min_qty }) : t('Add')}</button>`;
 }
-const perText = u => u ? `${money(u.v)} / ${u.per}` : '';
+const perText = u => u ? `${money(u.v)} / ${sizeText(u.per)}` : '';
 // a deal in its last days (end time YYYYMMDDHHMM): "ends today", "ends tomorrow", "ends Sat"
 function endsText(ts) {
   const end = tsDate(ts);
   if (!end) return '';
   const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()), n = Math.round((day(end) - day(new Date())) / 864e5);
-  return n < 0 || n > 2 ? '' : n === 0 ? 'ends today' : n === 1 ? 'ends tomorrow' : 'ends ' + end.toLocaleDateString('en-GB', { weekday: 'short' });
+  return n < 0 || n > 2 ? '' : n === 0 ? t('ends today') : n === 1 ? t('ends tomorrow') : t('ends {day}', { day: end.toLocaleDateString(locale(), { weekday: 'short' }) });
 }
 function card(h) {
   S.hits[h.key] = { ...S.hits[h.key], ...h };
   // produce / deli: one chain's own item, priced at that chain only; other chains' items of the same name aren't compared
-  const own = h.scope === 'chain' ? h.chain || '' : null;
-  const d = h.deal, n = own != null && h.near && h.near.chain !== own ? null : h.near, unit = h.is_weighted ? '/kg' : '';
+  const own = h.scope === 'chain' ? h.chain || '' : null, ownName = own != null ? cn(own) : null;
+  const d = h.deal, n = own != null && h.near && h.near.chain !== own ? null : h.near, unit = h.is_weighted ? perKg() : '';
   // the server's pack size (null when the name's number is something else, e.g. grams of protein); no bare numbers
-  const facts = ['pack' in h ? h.pack : h.size, perText(h.per)].filter(Boolean).join(' · ');
-  const label = own != null ? esc(own) + (!n && h.min_price !== h.max_price ? ' · from' : '')
-    : n ? 'near you' : h.min_price === h.max_price ? 'price' : 'from';
+  const facts = [sizeText('pack' in h ? h.pack : h.size), perText(h.per)].filter(Boolean).join(' · ');
+  const label = own != null ? esc(ownName) + (!n && h.min_price !== h.max_price ? ` · ${t('from')}` : '')
+    : n ? t('near you') : h.min_price === h.max_price ? t('price') : t('from');
   const price = d
-    ? `<span class="c-price deal"><small>${d.min_qty > 1 ? `each, ×${d.min_qty}` : 'deal price'}</small>${money(d.unit_price)}${unit}</span>`
+    ? `<span class="c-price deal"><small>${d.min_qty > 1 ? t('each, ×{n}', { n: d.min_qty }) : t('deal price')}</small>${money(d.unit_price)}${unit}</span>`
     : (n || h.min_price != null) ? `<span class="c-price"><small>${label}</small>${money(n ? n.price : h.min_price)}${unit}</span>`
     : '<span class="c-price"></span>';
   const where = n && n.km != null ? ` · ${kmText(n.km)}` : '';
   const info = d
     ? `<span class="c-deal" dir="auto">${esc(d.description)}</span>
-       <span class="c-meta">${esc(d.chain)}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · usually ${money(d.typical)}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
+       <span class="c-meta">${esc(cn(d.chain))}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · ${t('usually {price}', { price: money(d.typical) })}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
        ${facts ? `<span class="c-meta">${bdi(facts)}</span>` : ''}`
     : `<span class="c-meta">${facts ? bdi(facts) : ''}</span>`
       + (own != null
-        ? (n ? `<span class="c-near"><strong>${money(n.price)}${unit}</strong> at ${esc(n.chain)}${where}</span>` : '')
-          + `<span class="c-meta">${h.chain_count > 1 ? `Similar at ${plural(h.chain_count - 1, 'other chain')}` : esc(own) + ' only'}</span>`
-        : n ? `<span class="c-near">Cheapest <strong>${money(n.price)}${unit}</strong> at ${esc(n.chain)}${where}</span>`
+        ? (n ? `<span class="c-near">${t('{price} at {chain}', { price: `<strong>${money(n.price)}${unit}</strong>`, chain: esc(cn(n.chain)) })}${where}</span>` : '')
+          + `<span class="c-meta">${h.chain_count > 1 ? t('Similar at {n}', { n: plural(h.chain_count - 1, 'other chain') }) : t('{chain} only', { chain: esc(ownName) })}</span>`
+        : n ? `<span class="c-near">${t('Cheapest {price} at {chain}', { price: `<strong>${money(n.price)}${unit}</strong>`, chain: esc(cn(n.chain)) })}${where}</span>`
         : `<span class="c-meta">${h.chain_count ? plural(h.chain_count, 'chain') : ''}</span>`);
   return `<li class="card${d ? ' has-deal' : ''}" data-key="${esc(h.key)}">
     <a class="c-link" href="#/p/${encodeURIComponent(h.key)}">
@@ -499,7 +513,7 @@ function refreshCards() {
     if (h) li.querySelector('.c-ctl').innerHTML = qtyCtl(h, li.classList.contains('has-deal') ? h.deal : null);
   });
 }
-const skeletons = n => '<li class="card skel"><span class="c-thumb"></span></li>'.repeat(n);
+const skeletons = n => '<li class="card skel" aria-hidden="true"><span class="c-thumb"></span><span class="sk-line"></span><span class="sk-line short"></span><span class="sk-foot"></span></li>'.repeat(n);
 async function fill(list, wrap, load) {
   let items = [];
   try { items = await load(); } catch { /* section just stays hidden */ }
@@ -520,7 +534,7 @@ function rememberViewed(p) {
 }
 let cats = null;
 const catTile = c => `<a class="cat" href="#/c/${c.slug}" style="--tint:${c.tint}">
-  <span class="cat-icon" aria-hidden="true">${catIcon(c)}</span><span class="cat-name">${esc(c.name)}</span><span class="cat-he" dir="rtl">${esc(c.he)}</span></a>`;
+  <span class="cat-icon" aria-hidden="true">${catIcon(c)}</span><span class="cat-name">${esc(catName(c))}</span>${L() === 'en' ? `<span class="cat-he" dir="rtl">${esc(c.he)}</span>` : ''}</a>`;
 // home is for finding things: deals near you, never what's already in your carts, and no product twice on the page
 const HOME_ROWS = [['biggest', 'biggest'], ['fresh', 'new'], ['ending', 'ending']];
 let homeSeq = 0;
@@ -552,7 +566,7 @@ async function dealRows() {
 }
 
 function renderRail() {
-  $('#rail-list').innerHTML = (cats || []).map(c => `<a class="rail-cat" href="#/c/${c.slug}" data-slug="${c.slug}">${catIcon(c)}<span>${esc(c.name)}</span></a>`).join('');
+  $('#rail-list').innerHTML = (cats || []).map(c => `<a class="rail-cat" href="#/c/${c.slug}" data-slug="${c.slug}">${catIcon(c)}<span>${esc(catName(c))}</span></a>`).join('');
   markRail();
 }
 function markRail() {
@@ -651,15 +665,16 @@ function drawDots() {
 function renderMapInfo() {
   const info = $('#map-info');
   if (!mapData?.home) {
-    info.innerHTML = `<button class="linkish" type="button" data-open-loc>Set your address</button>&nbsp;to see the stores around you`;
+    info.innerHTML = `<button class="linkish" type="button" data-open-loc>${t('Set your address')}</button>&nbsp;${t('to see the stores around you')}`;
     return;
   }
-  const chains = new Set(mapData.stores.map(x => x.chain)).size, where = mapData.max_km ? `within ${mapData.max_km} km` : 'nearby';
+  const chains = new Set(mapData.stores.map(x => x.chain)).size;
+  const where = mapData.max_km ? t('within {n} km', { n: mapData.max_km }) : t('nearby');
   info.innerHTML = !delivery() && S.result?.chains?.length
-    ? `<span class="mi-dot"></span><span class="mi-seg" role="group" aria-label="Branches on the map">
-        <button type="button" data-branches="best" aria-pressed="${!S.allBranches}">Cheapest of each chain <b>${S.result.chains.length}</b></button>
-        <button type="button" data-branches="all" aria-pressed="${S.allBranches}">All branches <b>${mapData.total}</b></button></span>`
-    : `<span class="mi-dot"></span><span><strong>${mapData.total}</strong> ${mapData.total === 1 ? 'branch' : 'branches'} of <strong>${chains}</strong> ${chains === 1 ? 'chain' : 'chains'} ${where}</span>`;
+    ? `<span class="mi-dot"></span><span class="mi-seg" role="group" aria-label="${t('Branches on the map')}">
+        <button type="button" data-branches="best" aria-pressed="${!S.allBranches}">${t('Cheapest of each chain')} <b>${S.result.chains.length}</b></button>
+        <button type="button" data-branches="all" aria-pressed="${S.allBranches}">${t('All branches')} <b>${mapData.total}</b></button></span>`
+    : `<span class="mi-dot"></span><span>${t('{branches} of {chains} {where}', { branches: `<strong>${plural(mapData.total, 'branch')}</strong>`, chains: `<strong>${plural(chains, 'chain')}</strong>`, where })}</span>`;
 }
 $('#map-info').addEventListener('click', e => { const b = e.target.closest('[data-branches]'); if (b) setAllBranches(b.dataset.branches === 'all'); });
 async function updateMap() {
@@ -680,7 +695,7 @@ async function initMap() {
   const pin = document.createElement('div');
   pin.className = 'home-pin';
   pin.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 9.2 10 4l6.5 5.2M5.5 8v7.5h9V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  pin.title = 'Home';
+  pin.title = t('Home');
   homeMarker = new maplibregl.Marker({ element: pin }).setLngLat([34.83, 32.07]).addTo(map);
   map.on('style.load', addOverlays);  // every style load (first one and theme switches) gets the overlays back
   updateMap();  // data doesn't wait for the map; it's drawn as soon as the overlays exist
@@ -688,7 +703,7 @@ async function initMap() {
   const pop = new maplibregl.Popup({ closeButton: false, offset: 10, className: 'sal-pop' });
   map.on('click', 'stores', e => {
     const f = e.features[0].properties;
-    pop.setLngLat(e.lngLat).setHTML(`<strong>${esc(f.chain)}</strong><br><bdi>${esc(f.name)}</bdi> · ${kmText(+f.km)}`).addTo(map);
+    pop.setLngLat(e.lngLat).setHTML(`<strong>${esc(cn(f.chain))}</strong><br><bdi>${esc(f.name)}</bdi> · ${kmText(+f.km)}`).addTo(map);
   });
   map.on('mouseenter', 'stores', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'stores', () => { map.getCanvas().style.cursor = ''; });
@@ -715,8 +730,8 @@ function drawPins() {
     const best = c === ch[0] && full(c), el = document.createElement('button');
     el.type = 'button';
     el.className = `price-pin${best ? ' best' : ''}${c === p ? ' on' : ''}`;
-    el.innerHTML = `${best ? '<em>Cheapest</em>' : ''}<b class="num">${money(v.total)}</b><span>${esc(c.name)}${full(c) ? '' : ` · ${v.covered}/${n}`}</span>`;
-    el.title = `${c.name} · ${storeName(v)}${v.distance_km != null ? ' · ' + kmText(v.distance_km) : ''} — price the cart here`;
+    el.innerHTML = `${best ? `<em>${t('Cheapest')}</em>` : ''}<b class="num">${money(v.total)}</b><span>${esc(cn(c.name))}${full(c) ? '' : ` · ${v.covered}/${n}`}</span>`;
+    el.title = `${cn(c.name)} · ${storeName(v)}${v.distance_km != null ? ' · ' + kmText(v.distance_km) : ''} — ${t('price the cart here')}`;
     el.addEventListener('click', e => { e.stopPropagation(); pin(String(c.chain_id)); });
     pins.push(new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] }).setLngLat([v.lon, v.lat]).addTo(map));
   });
@@ -724,7 +739,7 @@ function drawPins() {
 // ---------------------------------------------------------------- the selected store: route, address, hours, directions
 S.sel = null;  // a branch tapped in "All branches"; otherwise the store the cart is priced at
 const storeCache = new Map();
-const DAYNAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAYNAMES = () => [0, 1, 2, 3, 4, 5, 6].map(i => new Date(2026, 10, 1 + i).toLocaleDateString(locale(), { weekday: 'long' }));  // 1 Nov 2026 is a Sunday
 const ICO = {
   pin: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17.6s5.6-5.1 5.6-9.4a5.6 5.6 0 0 0-11.2 0c0 4.3 5.6 9.4 5.6 9.4z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="10" cy="8.2" r="2" fill="currentColor"/></svg>',
   car: '<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3.5 12.5V10l1.7-4.2a1.5 1.5 0 0 1 1.4-.9h6.8a1.5 1.5 0 0 1 1.4.9L16.5 10v2.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM3.5 10h13"/><path d="M5.5 13.5V15M14.5 13.5V15" stroke-linecap="round"/></g></svg>',
@@ -746,16 +761,16 @@ function openNow(day) {  // "07:00–23:00, 16:00–20:00" | "Closed" | "Open 24
   return day.split(', ').some(r => { const [a, b] = r.split('–').map(mins); return b > a ? now >= a && now < b : now >= a || now < b; });
 }
 function hoursHTML(h, gsearch) {
-  if (!h) return '<span class="muted">Looking up opening hours…</span>';
+  if (!h) return `<span class="muted"><span class="spin" aria-hidden="true"></span>${t('Looking up opening hours…')}</span>`;
   if (h.week) {
-    const today = new Date().getDay(), t = h.week[today];
-    return `<span>Today ${esc(t)}</span> ${openNow(t) ? '<b class="open">Open now</b>' : '<b class="shut">Closed now</b>'}
-      <details class="sc-week"><summary>All week</summary><table>${h.week.map((x, i) =>
-        `<tr${i === today ? ' class="today"' : ''}><th>${DAYNAMES[i]}</th><td>${esc(x)}</td></tr>`).join('')}</table></details>`;
+    const today = new Date().getDay(), td = h.week[today], days = DAYNAMES();
+    return `<span>${t('Today {hours}', { hours: `<bdi dir="ltr">${esc(hoursText(td))}</bdi>` })}</span> ${openNow(td) ? `<b class="open">${t('Open now')}</b>` : `<b class="shut">${t('Closed now')}</b>`}
+      <details class="sc-week"><summary>${t('All week')}</summary><table>${h.week.map((x, i) =>
+        `<tr${i === today ? ' class="today"' : ''}><th>${days[i]}</th><td><bdi dir="ltr">${esc(hoursText(x))}</bdi></td></tr>`).join('')}</table></details>`;
   }
   if (h.hours) return `<span dir="ltr">${esc(h.hours)}</span>`;
-  return `<span class="muted">${h.checked === false ? 'Couldn’t check the opening hours just now' : 'Opening hours aren’t listed for this branch'} —
-    <a href="${gsearch}" target="_blank" rel="noopener">see them on Google Maps</a></span>`;
+  return `<span class="muted">${h.checked === false ? t('Couldn’t check the opening hours just now') : t('Opening hours aren’t listed for this branch')} —
+    <a href="${gsearch}" target="_blank" rel="noopener">${t('see them on Google Maps')}</a></span>`;
 }
 function storeCardHTML(v, d, h) {
   const top = S.result.chains[0], best = top.in_store, n = nCompared();
@@ -765,18 +780,18 @@ function storeCardHTML(v, d, h) {
   const gsearch = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([d?.brand_he || v.chain, addr].filter(Boolean).join(' '));
   const gdir = `https://www.google.com/maps/dir/?api=1${home ? `&origin=${home.lat},${home.lon}` : ''}&destination=${dest}&travelmode=driving`;
   return `<div class="sc-head">
-      <div><p class="sc-chain">${esc(v.chain)}${isBest ? ' <em>Cheapest for this cart</em>' : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
+      <div><p class="sc-chain">${esc(cn(v.chain))}${isBest ? ` <em>${t('Cheapest for this cart')}</em>` : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
       ${n ? `<p class="sc-total"><span class="num">${money(v.total)}</span>
-        <small>${!v.complete ? `${v.covered} of ${n} products here` : n === 1 ? 'for your product' : `all ${n} products`}</small></p>` : ''}
+        <small>${!v.complete ? t('{a} of {n} products here', { a: v.covered, n }) : n === 1 ? t('for your product') : t('all {n} products', { n })}</small></p>` : ''}
     </div>
     <ul class="sc-rows">
-      <li>${ICO.pin}<span>${d ? (addr ? bdi(addr) : '<span class="muted">Address not listed</span>') : '<span class="muted">Finding the address…</span>'}</span></li>
-      <li>${ICO.car}<span>${d?.route ? `${d.route.km} km by road` : `${kmText(v.distance_km)} away`}<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span></span></li>
-      <li title="Opening hours: OpenStreetMap">${ICO.clock}<span class="sc-hours">${hoursHTML(h, gsearch)}</span></li>
+      <li>${ICO.pin}<span>${d ? (addr ? bdi(addr) : `<span class="muted">${t('Address not listed')}</span>`) : `<span class="muted">${t('Finding the address…')}</span>`}</span></li>
+      <li>${ICO.car}<span>${d?.route ? t('{n} km by road', { n: d.route.km }) : t('{d} away', { d: kmText(v.distance_km) })}<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span></span></li>
+      <li title="${t('Opening hours: OpenStreetMap')}">${ICO.clock}<span class="sc-hours">${hoursHTML(h, gsearch)}</span></li>
     </ul>
     ${dest ? `<div class="sc-actions">
-      <a class="sc-btn waze" href="https://waze.com/ul?ll=${dest}&navigate=yes" target="_blank" rel="noopener">${ICO.go}Open in Waze</a>
-      <a class="sc-btn" href="${gdir}" target="_blank" rel="noopener">${ICO.go}Open in Google Maps</a></div>` : ''}
+      <a class="sc-btn waze" href="https://waze.com/ul?ll=${dest}&navigate=yes" target="_blank" rel="noopener">${ICO.go}${t('Open in Waze')}</a>
+      <a class="sc-btn" href="${gdir}" target="_blank" rel="noopener">${ICO.go}${t('Open in Google Maps')}</a></div>` : ''}
 `;
 }
 let storeSeq = 0;
@@ -859,9 +874,9 @@ const setBrowse = patch => go(browseHash({ ...B, ...patch }));
 
 function renderTerms() {
   const c = cats?.find(x => x.slug === B.cat);
-  $('#b-pills').innerHTML = (c ? `<span class="term cat">${catIcon(c)} ${esc(c.name)}<button type="button" data-rmcat aria-label="Remove ${esc(c.name)}">×</button></span>` : '')
-    + B.terms.map((t, i) => `<span class="term"><bdi>${esc(t)}</bdi><button type="button" data-rmterm="${i}" aria-label="Remove ${esc(t)}">×</button></span>`).join('');
-  $('#b-add').placeholder = B.terms.length || B.cat ? 'Narrow down…' : 'Type a product…';
+  $('#b-pills').innerHTML = (c ? `<span class="term cat">${catIcon(c)} ${esc(catName(c))}<button type="button" data-rmcat aria-label="${esc(t('Remove {x}', { x: catName(c) }))}">×</button></span>` : '')
+    + B.terms.map((w, i) => `<span class="term"><bdi>${esc(w)}</bdi><button type="button" data-rmterm="${i}" aria-label="${esc(t('Remove {x}', { x: w }))}">×</button></span>`).join('');
+  $('#b-add').placeholder = B.terms.length || B.cat ? t('Narrow down…') : t('Type a product…');
   $('#b-add').value = '';
 }
 
@@ -869,25 +884,26 @@ let listSeq = 0;
 async function openBrowse(live) {
   const my = ++listSeq, grid = $('#b-cards');
   cats = cats || await api('/api/categories').catch(() => []);
-  $('#b-cats').innerHTML = cats.map(c => `<a class="pill${c.slug === B.cat ? ' on' : ''}" href="${browseHash({ ...B, cat: c.slug === B.cat ? '' : c.slug, sizes: [] })}">${catIcon(c)} ${esc(c.name)}</a>`).join('');
+  $('#b-cats').innerHTML = cats.map(c => `<a class="pill${c.slug === B.cat ? ' on' : ''}" href="${browseHash({ ...B, cat: c.slug === B.cat ? '' : c.slug, sizes: [] })}">${catIcon(c)} ${esc(catName(c))}</a>`).join('');
   renderTerms();
   markRail();
   if (live && grid.querySelector('.card:not(.skel)')) grid.classList.add('busy');
-  else { $('#b-title').textContent = 'Searching…'; grid.innerHTML = skeletons(12); }
+  else { $('#b-title').textContent = t('Searching…'); grid.innerHTML = skeletons(12); }
   const qs = new URLSearchParams({ terms: B.terms.join('|'), cat: B.cat, size: B.sizes.join('|'), deal: B.deal ? 1 : 0, sort: B.sort, limit: 120 });
   const r = await api('/api/browse?' + qs).catch(() => null);
   if (my !== listSeq) return;
   grid.classList.remove('busy');
-  if (!r) { $('#b-title').textContent = 'Couldn’t load products — try again in a moment'; $('#b-cards').innerHTML = ''; return; }
+  if (!r) { $('#b-title').textContent = t('Couldn’t load products — try again in a moment'); $('#b-cards').innerHTML = ''; return; }
   $('#b-title').innerHTML = r.total
-    ? `${r.total.toLocaleString()}${r.more ? '+' : ''} ${r.total === 1 ? 'product' : 'products'}${r.total > r.products.length ? ` <small>top ${r.products.length} shown</small>` : ''}`
-    : 'Nothing matches all of these filters';
-  $('#b-refine').innerHTML = r.refine.length ? '<span class="facet-label">Narrow down</span>'
+    ? (r.total === 1 ? t('1 product') : t('{n} products', { n: r.total.toLocaleString(locale()) + (r.more ? '+' : '') }))
+      + (r.total > r.products.length ? ` <small>${t('top {n} shown', { n: r.products.length })}</small>` : '')
+    : t('Nothing matches all of these filters');
+  $('#b-refine').innerHTML = r.refine.length ? `<span class="facet-label">${t('Narrow down')}</span>`
     + r.refine.map(w => `<button class="pill sug" type="button" data-term="${esc(w.word)}"><bdi>${esc(w.word)}</bdi> <span>${w.n}</span></button>`).join('') : '';
-  $('#b-sizes').innerHTML = r.sizes.length ? '<span class="facet-label">Size</span>'
-    + r.sizes.map(z => `<button class="pill sug${B.sizes.includes(z.size) ? ' on' : ''}" type="button" data-size="${esc(z.size)}">${esc(z.size)} <span>${z.n}</span></button>`).join('') : '';
+  $('#b-sizes').innerHTML = r.sizes.length ? `<span class="facet-label">${t('Size')}</span>`
+    + r.sizes.map(z => `<button class="pill sug${B.sizes.includes(z.size) ? ' on' : ''}" type="button" data-size="${esc(z.size)}"><bdi>${esc(sizeText(z.size))}</bdi> <span>${z.n}</span></button>`).join('') : '';
   $('#b-deal').setAttribute('aria-pressed', B.deal);
-  $('#b-deal').innerHTML = `On deal now <span>${r.deal_n}</span>`;
+  $('#b-deal').innerHTML = `${t('On deal now')} <span>${r.deal_n}</span>`;
   $('#b-sort').value = B.sort;
   $('#b-cards').innerHTML = r.products.length ? r.products.map(card).join('')
     : '';
@@ -902,14 +918,14 @@ $('#b-add').addEventListener('keydown', e => {
   }
 });
 $('#view-browse').addEventListener('click', e => {
-  const t = e.target.closest('[data-term]');
-  if (t) return setBrowse({ terms: [...B.terms, t.dataset.term] });
+  const tm = e.target.closest('[data-term]');
+  if (tm) { haptic('select'); return setBrowse({ terms: [...B.terms, tm.dataset.term] }); }
   const rt = e.target.closest('[data-rmterm]');
   if (rt) return setBrowse({ terms: B.terms.filter((_, i) => i !== +rt.dataset.rmterm) });
   if (e.target.closest('[data-rmcat]')) return setBrowse({ cat: '', sizes: [] });
   const z = e.target.closest('[data-size]');
-  if (z) { const v = z.dataset.size; return setBrowse({ sizes: B.sizes.includes(v) ? B.sizes.filter(x => x !== v) : [...B.sizes, v] }); }
-  if (e.target.closest('#b-deal')) return setBrowse({ deal: !B.deal });
+  if (z) { haptic('select'); const v = z.dataset.size; return setBrowse({ sizes: B.sizes.includes(v) ? B.sizes.filter(x => x !== v) : [...B.sizes, v] }); }
+  if (e.target.closest('#b-deal')) { haptic('select'); return setBrowse({ deal: !B.deal }); }
   if (e.target.closest('#b-terms') && !e.target.closest('button')) $('#b-add').focus();
 });
 $('#b-sort').onchange = e => setBrowse({ sort: e.target.value });
@@ -918,7 +934,7 @@ $('#b-sort').onchange = e => setBrowse({ sort: e.target.value });
 let prodSeq = 0;
 async function openProduct(key) {
   const el = $('#view-product'), my = ++prodSeq;
-  if (S.product?.p.key !== key) el.innerHTML = '<div class="skeleton"></div>';
+  if (S.product?.p.key !== key) el.innerHTML = productSkeleton();
   let p, res;
   try {
     [p, res] = await Promise.all([
@@ -926,7 +942,7 @@ async function openProduct(key) {
       comparePost({ items: [{ key, qty: 1 }], prefs: { ...S.prefs, mode: 'store' } }),
     ]);
   } catch {
-    el.innerHTML = '<a class="back" href="#/" data-back>← Back</a>' + emptyState('Couldn’t load this product', '');
+    el.innerHTML = backLink() + emptyState(t('Couldn’t load this product'), '');
     return;
   }
   if (my !== prodSeq) return;
@@ -938,9 +954,9 @@ async function openProduct(key) {
   if (my !== prodSeq || !deal) return;
   const d = deal.deal;
   $('#p-deal').innerHTML = `<span class="c-badge">−${Math.round(d.save_pct * 100)}%</span>
-    <span><strong dir="auto">${esc(d.description)}</strong> at ${esc(d.chain)}${d.distance_km != null ? ` (${kmText(d.distance_km)})` : ''}:
-    ${money(d.unit_price)} each${d.min_qty > 1 ? ` when you buy ${d.min_qty}` : ''}, usually ${money(d.typical)}.</span>
-    ${d.min_qty > 1 && !S.cart.items.some(i => i.key === key) ? `<button class="add" type="button" data-add="${esc(key)}" data-qty="${d.min_qty}">Add ${d.min_qty}</button>` : ''}`;
+    <span>${t('{deal} at {chain}', { deal: `<strong dir="auto">${esc(d.description)}</strong>`, chain: esc(cn(d.chain)) })}${d.distance_km != null ? ` (${kmText(d.distance_km)})` : ''}:
+    ${d.min_qty > 1 ? t('{price} each when you buy {n}', { price: money(d.unit_price), n: d.min_qty }) : t('{price} each', { price: money(d.unit_price) })}, ${t('usually {price}', { price: money(d.typical) })}.</span>
+    ${d.min_qty > 1 && !S.cart.items.some(i => i.key === key) ? `<button class="add" type="button" data-add="${esc(key)}" data-qty="${d.min_qty}">${t('Add {n}', { n: d.min_qty })}</button>` : ''}`;
   $('#p-deal').hidden = false;
 }
 
@@ -950,40 +966,40 @@ const offerPrice = l => l?.status === 'ok' ? l.cost : l?.status === 'not_compare
 function offer(c, best) {
   const s = c.in_store, l = offerLine(c), kg = S.product.p.is_weighted, ol = c.online?.lines?.[0];
   const flags = [
-    l?.promo && `<span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>`,
+    l?.promo && `<span class="chip promo" dir="auto">${esc(l.promo.description || t('Promotion'))}</span>`,
     l && dealsMore(l),
     l && notCounted(l),
   ].filter(Boolean).join(' ');
-  const online = ol && offerPrice(ol) != null ? `<small>Online ${money(offerPrice(ol))}</small>` : '';
+  const online = ol && offerPrice(ol) != null ? `<small>${t('Online {price}', { price: money(offerPrice(ol)) })}</small>` : '';
   // branches are ranked by the cart total; with nothing compared (produce) that is no price order
-  const of = s.branch_count > 1 ? (S.product.res.n ? ` · cheapest of ${s.branch_count} branches` : ` · ${s.branch_count} branches`) : '';
+  const of = s.branch_count > 1 ? ' · ' + (S.product.res.n ? t('cheapest of {n} branches', { n: s.branch_count }) : plural(s.branch_count, 'branch')) : '';
   return `<li class="offer${best ? ' best' : ''}">
-    <span class="o-chain">${esc(c.name)}${best ? ' <span class="o-badge">Cheapest</span>' : ''}</span>
+    <span class="o-chain">${esc(cn(c.name))}${best ? ` <span class="o-badge">${t('Cheapest')}</span>` : ''}</span>
     <span class="o-store">${storePlace(s)}${of}${l?.shelf_name ? ` · ${bdi(l.shelf_name)}` : ''}</span>
     ${flags ? `<span class="o-flags">${flags}</span>` : ''}
-    <span class="o-price">${l?.promo ? `<s>${money(l.full)}</s>` : ''}${money(offerPrice(l))}${kg ? '<em>/kg</em>' : ''}${online}</span>
+    <span class="o-price">${l?.promo ? `<s>${money(l.full)}</s>` : ''}${money(offerPrice(l))}${kg ? `<em>${perKg()}</em>` : ''}${online}</span>
   </li>`;
 }
 // a chain whose price can't be confirmed (or produce matched only by name): greyed, below the offers
 function offerOther(c) {
   const s = c.in_store, l = offerLine(c), kg = S.product.p.is_weighted, own = l.status === 'not_compared' && l.own && l.price != null;
-  const what = l.status === 'unconfirmed' ? `${unconfText(l)} · Not counted`
-    : own ? 'Not compared' + (l.shelf_name ? ` · ${bdi(l.shelf_name)}` : '')
-    : (l.similar || []).map(x => `Similar: ${bdi(x.name)} ${money(x.price)}${kg ? '/kg' : ''}`).join(' · ');
+  const what = l.status === 'unconfirmed' ? `${unconfText(l)} · ${t('Not counted')}`
+    : own ? t('Not compared') + (l.shelf_name ? ` · ${bdi(l.shelf_name)}` : '')
+    : (l.similar || []).map(x => `${t('Similar')}: ${bdi(x.name)} ${money(x.price)}${kg ? perKg() : ''}`).join(' · ');
   const price = l.status === 'unconfirmed' || own ? l.price : l.similar?.[0]?.price;
   return `<li class="offer unconfirmed">
-    <span class="o-chain">${esc(c.name)}</span>
+    <span class="o-chain">${esc(cn(c.name))}</span>
     <span class="o-store">${storePlace(s)}</span>
     <span class="o-flags">${what}</span>
-    <span class="o-price">${money(price)}${kg ? '<em>/kg</em>' : ''}</span>
+    <span class="o-price">${money(price)}${kg ? `<em>${perKg()}</em>` : ''}</span>
   </li>`;
 }
 
 function renderBuy() {
   const { p } = S.product, it = S.cart.items.find(i => i.key === p.key);
   $('#p-buy').innerHTML = it
-    ? `${qtyCtl(p)}<span class="in-cart">In your cart · <button class="linkish" type="button" data-showcart>View cart</button></span>`
-    : `<button class="primary" type="button" data-add="${esc(p.key)}">Add to cart</button>`;
+    ? `${qtyCtl(p)}<span class="in-cart">${t('In your cart')} · <button class="linkish" type="button" data-showcart>${t('View cart')}</button></span>`
+    : `<button class="primary" type="button" data-add="${esc(p.key)}">${t('Add to cart')}</button>`;
 }
 
 function renderProduct() {
@@ -995,27 +1011,27 @@ function renderProduct() {
     .sort((a, b) => res.n ? 0 : offerPrice(offerLine(a)) - offerPrice(offerLine(b)));
   const others = res.chains.filter(c => { const l = offerLine(c); return l && !chains.includes(c)
     && (l.status === 'unconfirmed' || (l.status === 'not_compared' && (l.similar?.length || (l.own && l.price != null)))); });
-  const meta = [clean(p.manufacturer), qtyText(p.quantity, p.unit), kg ? 'sold by weight' : ''].filter(Boolean);
+  const meta = [clean(p.manufacturer), qtyText(p.quantity, p.unit), kg ? t('sold by weight') : ''].filter(Boolean);
   const shown = chains.slice(0, 6), more = chains.slice(6);
-  el.innerHTML = `<a class="back" href="#/" data-back>← Back</a>
+  el.innerHTML = `${backLink()}
     <div class="p-head">
       <span class="c-thumb p-thumb">${PH}${photo(p)}</span>
       <div class="p-info">
         <h1 dir="auto">${esc(p.name)}</h1>
         ${meta.length ? `<p class="p-meta">${meta.map(bdi).join(' · ')}</p>` : ''}
-        ${chains.length ? `<p class="p-from">${res.n ? 'From ' : ''}<strong class="num">${money(offerPrice(offerLine(chains[0])))}${kg ? '/kg' : ''}</strong> at ${esc(chains[0].name)}</p>` : ''}
+        ${chains.length ? `<p class="p-from">${t(res.n ? 'From {price} at {chain}' : '{price} at {chain}', { price: `<strong class="num">${money(offerPrice(offerLine(chains[0])))}${kg ? perKg() : ''}</strong>`, chain: esc(cn(chains[0].name)) })}</p>` : ''}
         <div class="buy" id="p-buy"></div>
       </div>
     </div>
     <p class="p-deal" id="p-deal" hidden></p>
-    ${chains.length ? `<h2 class="p-h">Price at ${plural(chains.length, 'chain')}${r ? ` within ${r} km` : ''}${res.n ? ' · cheapest first' : ''}</h2>
+    ${chains.length ? `<h2 class="p-h">${t('Price at {chains}', { chains: plural(chains.length, 'chain') })}${r ? ' ' + t('within {n} km', { n: r }) : ''}${res.n ? ` · ${t('cheapest first')}` : ''}</h2>
       <ol class="offers">${shown.map((c, i) => offer(c, i === 0 && res.n > 0 && !!c.in_store?.complete)).join('')}</ol>
-      ${more.length ? `<details class="pricier"><summary>More expensive (${more.length})
+      ${more.length ? `<details class="pricier"><summary>${t('More expensive')} (${more.length})
         <span class="range">${money(offerPrice(offerLine(more[0])))}${more.length > 1 ? ' – ' + money(offerPrice(offerLine(more.at(-1)))) : ''}</span></summary>
         <ol class="offers">${more.map(c => offer(c, false)).join('')}</ol></details>` : ''}`
-    : others.length ? '' : emptyState(r ? `Not sold within ${r} km` : 'Not on sale right now', '',
-        r ? '<div class="actions"><button class="primary" type="button" data-open-loc>Change distance</button></div>' : '')}
-    ${others.length ? `<details class="pricier"${chains.length ? '' : ' open'}><summary>${res.n ? 'Not counted' : 'Not compared'} (${others.length})</summary>
+    : others.length ? '' : emptyState(r ? t('Not sold within {n} km', { n: r }) : t('Not on sale right now'), '',
+        r ? `<div class="actions"><button class="primary" type="button" data-open-loc>${t('Change distance')}</button></div>` : '')}
+    ${others.length ? `<details class="pricier"${chains.length ? '' : ' open'}><summary>${res.n ? t('Not counted') : t('Not compared')} (${others.length})</summary>
       <ol class="offers">${others.map(offerOther).join('')}</ol></details>` : ''}
     <section class="p-history"></section>`;
   renderBuy();
@@ -1023,15 +1039,15 @@ function renderProduct() {
   productHistory(p.key, chains.slice(0, 4).map(c => c.name));
 }
 async function productHistory(key, names) {
-  const t = await api('/api/history?key=' + encodeURIComponent(key)).catch(() => null);
+  const hist = await api('/api/history?key=' + encodeURIComponent(key), { quiet: true }).catch(() => null);
   const el = $('#view-product .p-history');
-  if (!t || !el || S.product?.p.key !== key) return;
-  const series = t.chains.filter(c => names.includes(c.chain))
+  if (!hist || !el || S.product?.p.key !== key) return;
+  const series = hist.chains.filter(c => names.includes(c.chain))
     .map(c => ({ name: c.chain, points: withGaps(c.points.map(p => [p[0], p[1]]), c.ends) })).filter(sr => sr.points.some(p => p[1] != null));
   const days = new Set(series.flatMap(sr => sr.points.map(p => p[0])));
-  el.innerHTML = !series.length ? '' : '<h2 class="p-h">Price history</h2>' + (days.size < 2 && (t.since || 0) >= todayNum()
-    ? `<p class="trend-note">Tracking since ${fmtDay(t.since || todayNum())}.</p>`
-    : lineChart(series, 'Cheapest shelf price over time at each chain'));
+  el.innerHTML = !series.length ? '' : `<h2 class="p-h">${t('Price history')}</h2>` + (days.size < 2 && (hist.since || 0) >= todayNum()
+    ? `<p class="trend-note">${t('Tracking since {day}.', { day: fmtDay(hist.since || todayNum()) })}</p>`
+    : lineChart(series, t('Cheapest shelf price over time at each chain')));
 }
 
 $('#view-product').addEventListener('click', e => {
@@ -1045,8 +1061,10 @@ function route() {
   navs++;
   const m = location.hash.match(/^#\/([a-z]*)\/?([^?]*)(?:\?(.*))?$/) || [];
   const v = VIEWS[m[1] || ''] || 'home', arg = decodeURIComponent(m[2] || ''), qs = new URLSearchParams(m[3] || '');
+  const before = document.body.dataset.view;
   for (const id of ['home', 'browse', 'product', 'basket']) $(`#view-${id}`).hidden = id !== v;
   document.body.dataset.view = v;
+  if (before && before !== v) enter($(`#view-${v}`));  // a gentle fade-in for a new page (not for live search updates)
   renderStoreCard(false);  // shows at checkout, hides (with its route) everywhere else
   if (document.activeElement !== topQ) {  // the box shows what a search page is filtered by, and is empty elsewhere
     topQ.value = m[1] === 's' ? splitBar(arg).join(' ') : '';
@@ -1090,7 +1108,7 @@ async function compareNow() {
     renderMapInfo();
     renderStoreCard(false);
     loadTrend();
-  } catch { if (my === compareSeq) toast("Couldn't compare prices — is the server up?"); }
+  } catch (e) { if (my === compareSeq && e.message !== 'signed out') toast(t("Couldn't compare prices — is the server up?"), null, null, 'error'); }
 }
 const compareSoon = debounce(compareNow, 250);
 
@@ -1099,13 +1117,13 @@ function emptyState(title, text, extra = '') {
 }
 
 const realCity = c => c && !/^\d+$/.test(c.trim()) ? c.trim() : '';
-const storeName = v => clean(v.name) || `Branch ${v.store_id}`;
+const storeName = v => clean(v.name) || t('Branch {n}', { n: v.store_id });
 function storePlace(v) {
   const city = realCity(v.city), n = storeName(v);
   const name = city && n.includes(city) ? n : [n, city].filter(Boolean).join(', ');
-  return bdi(name) + (v.distance_km != null ? ` · ${kmText(v.distance_km)} away` : '') + driveSlot(v);
+  return bdi(name) + (v.distance_km != null ? ` · ${t('{d} away', { d: kmText(v.distance_km) })}` : '') + driveSlot(v);
 }
-const place = v => delivery() ? `Online store · ${bdi(storeName(v))}` : storePlace(v);
+const place = v => delivery() ? `${t('Online store')} · ${bdi(storeName(v))}` : storePlace(v);
 const driveSlot = v => S.prefs.home ? `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>` : '';
 
 // drive times load after the results so pricing never waits on the routing service
@@ -1115,38 +1133,38 @@ async function fillDrive(root = $('#results')) {
   const my = root._driveSeq = (root._driveSeq || 0) + 1;
   const stores = [...new Set(els.map(e => e.dataset.sk))].map(k => [k.slice(0, k.lastIndexOf(':')), +k.slice(k.lastIndexOf(':') + 1)]);
   let r;
-  try { r = await api('/api/drive', { method: 'POST', body: { home: S.prefs.home, stores } }); } catch { return; }
+  try { r = await api('/api/drive', { method: 'POST', body: { home: S.prefs.home, stores }, quiet: true }); } catch { return; }
   if (my !== root._driveSeq) return;
   els.forEach(e => {
     const m = r.times[e.dataset.sk];
     if (m == null) return;
-    e.textContent = ` · ${m < 1 ? '<1' : m} min ${r.live ? 'drive now' : 'drive'}`;
-    e.title = r.live ? 'Driving time in current traffic (Google Maps)' : 'Typical driving time, without live traffic';
+    e.textContent = ' · ' + t(r.live ? '{n} min drive now' : '{n} min drive', { n: m < 1 ? '<1' : m });
+    e.title = r.live ? t('Driving time in current traffic (Google Maps)') : t('Typical driving time, without live traffic');
   });
 }
 
 // What a chain costs in store, online, delivered — shared by the hero and the rows.
 function facts(c, skipHeadline) {
   const o = c.online, s = c.in_store, out = [], n = nCompared();
-  const of = v => v.complete || !n ? '' : ` · ${v.covered} of ${n}`;  // a total over only some products says so
-  if (s && !(skipHeadline && !delivery())) out.push(['In store', money(s.total) + of(s)]);
-  if (!o) { out.push(['', 'No online shop in the price files', true]); return out; }
-  out.push(['Groceries online', money(o.total) + of(o)]);
-  if (!o.area_confirmed) out.push(['', 'Delivery area not confirmed', true]);
-  else if (o.fee == null) out.push(['', o.fee_note || 'Delivery fee not set', true]);
+  const of = v => v.complete || !n ? '' : ` · ${t('{a} of {n}', { a: v.covered, n })}`;  // a total over only some products says so
+  if (s && !(skipHeadline && !delivery())) out.push([t('In store'), money(s.total) + of(s)]);
+  if (!o) { out.push(['', t('No online shop in the price files'), true]); return out; }
+  out.push([t('Groceries online'), money(o.total) + of(o)]);
+  if (!o.area_confirmed) out.push(['', t('Delivery area not confirmed'), true]);
+  else if (o.fee == null) out.push(['', serverText(o.fee_note) || t('Delivery fee not set'), true]);
   else {
-    out.push(['Delivery', o.fee === 0 ? 'Free' : money(o.fee)]);
-    if (!(skipHeadline && delivery())) out.push(['Delivered total', money(o.delivered)]);
-    if (o.fee_note) out.push(['', o.fee_note, true]);
+    out.push([t('Delivery'), o.fee === 0 ? t('Free') : money(o.fee)]);
+    if (!(skipHeadline && delivery())) out.push([t('Delivered total'), money(o.delivered)]);
+    if (o.fee_note) out.push(['', serverText(o.fee_note), true]);
   }
   if (o.price_vs_store != null) {
     const d = o.price_vs_store;
-    out.push(['Online vs in store', Math.abs(d) < 0.005 ? 'Same prices' : `₪${Math.abs(d).toFixed(2)} ${d > 0 ? 'dearer' : 'cheaper'}`]);
+    out.push([t('Online vs in store'), Math.abs(d) < 0.005 ? t('Same prices') : t(d > 0 ? '{price} dearer' : '{price} cheaper', { price: '₪' + Math.abs(d).toFixed(2) })]);
   }
   return out;
 }
 
-function fmtQty(q, kg) { return kg ? `${q} kg` : `${q}`; }
+function fmtQty(q, kg) { return kg ? t('{n} kg', { n: q }) : `${q}`; }
 
 // The name on this store's shelf (when it isn't the cart's name) and the barcode, under the product name
 const shelfLine = l => [l.shelf_name && bdi(l.shelf_name), l.code && `<span class="code">${esc(l.code)}</span>`].filter(Boolean).join(' · ');
@@ -1155,33 +1173,33 @@ function lineRow(l) {
   const it = S.cart.items.find(i => i.key === l.key), m = S.meta[l.key] || {}, kg = m.is_weighted;
   const name = `<span dir="auto">${esc(it?.name || m.name || l.key)}</span>`, qty = it?.qty ?? l.qty ?? 1;
   if (l.status === 'missing')
-    return `<tr class="missing"><td class="l-name">${name}<small>Not sold here</small></td><td class="l-cost">Missing</td></tr>`;
+    return `<tr class="missing"><td class="l-name">${name}<small>${t('Not sold here')}</small></td><td class="l-cost">${t('Missing')}</td></tr>`;
   if (l.status === 'unconfirmed')
-    return `<tr class="unconfirmed"><td class="l-name">${name}<small>${unconfText(l)} · Not counted</small>${l.code ? `<small>${shelfLine({ code: l.code })}</small>` : ''}</td>
+    return `<tr class="unconfirmed"><td class="l-name">${name}<small>${unconfText(l)} · ${t('Not counted')}</small>${l.code ? `<small>${shelfLine({ code: l.code })}</small>` : ''}</td>
       <td class="l-cost">${money(l.full ?? l.price * qty)}</td></tr>`;
   const shelf = shelfLine(l);
-  const chips = (l.promo ? ` <span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>`
-      + (l.promo.club ? ' <span class="chip">Club</span>' : '') : '')
+  const chips = (l.promo ? ` <span class="chip promo" dir="auto">${esc(l.promo.description || t('Promotion'))}</span>`
+      + (l.promo.club ? ` <span class="chip">${t('Club')}</span>` : '') : '')
     + (l.deals_more?.length ? ' ' + dealsMore(l) : '') + (l.deals_not_counted?.length ? ' ' + notCounted(l) : '');
   return `<tr><td class="l-name">${name}<small>${fmtQty(l.qty, kg)} × ${money(l.price)}${chips}</small>${shelf ? `<small class="shelf">${shelf}</small>` : ''}</td>
     <td class="l-cost${l.promo ? ' promo' : ''}">${l.promo ? `<s>${money(l.full)}</s>` : ''}${money(l.cost)}</td></tr>`;
 }
 // produce: never in a total; this store's own item, or items with the same name, for you to judge
 function ncRow(l) {
-  const it = S.cart.items.find(i => i.key === l.key), m = S.meta[l.key] || {}, kg = m.is_weighted, u = kg ? '/kg' : '';
+  const it = S.cart.items.find(i => i.key === l.key), m = S.meta[l.key] || {}, kg = m.is_weighted, u = kg ? perKg() : '';
   const name = `<span dir="auto">${esc(it?.name || m.name || l.key)}</span>`, qty = it?.qty ?? l.qty ?? 1;
   if (l.own && l.price != null)
     return `<tr><td class="l-name">${name}<small>${fmtQty(qty, kg)} × ${money(l.price)}${l.shelf_name ? ` · ${bdi(l.shelf_name)}` : ''}</small></td>
       <td class="l-cost">${money(l.price * qty)}</td></tr>`;
   if (l.similar?.length)
-    return `<tr><td class="l-name">${name}${l.similar.map(x => `<small>Similar: ${bdi(x.name)} ${money(x.price)}${u}</small>`).join('')}</td>
+    return `<tr><td class="l-name">${name}${l.similar.map(x => `<small>${t('Similar')}: ${bdi(x.name)} ${money(x.price)}${u}</small>`).join('')}</td>
       <td class="l-cost">${money(l.similar[0].price * qty)}</td></tr>`;
-  return `<tr class="missing"><td class="l-name">${name}<small>Not sold here</small></td><td class="l-cost">—</td></tr>`;
+  return `<tr class="missing"><td class="l-name">${name}<small>${t('Not sold here')}</small></td><td class="l-cost">—</td></tr>`;
 }
 function linesTable(ls) {
   const counted = ls.filter(l => l.status !== 'not_compared'), nc = ls.filter(l => l.status === 'not_compared');
   return (counted.length ? `<table class="lines"><tbody>${counted.map(lineRow).join('')}</tbody></table>` : '')
-    + (nc.length ? `<div class="nc"><p class="nc-h">Not compared</p><table class="lines"><tbody>${nc.map(ncRow).join('')}</tbody></table></div>` : '');
+    + (nc.length ? `<div class="nc"><p class="nc-h">${t('Not compared')}</p><table class="lines"><tbody>${nc.map(ncRow).join('')}</tbody></table></div>` : '');
 }
 
 function winner(c) {
@@ -1189,30 +1207,30 @@ function winner(c) {
   const [whole, ag] = total.toFixed(2).split('.');
   const next = S.result.chains.find(x => x !== c && full(x));  // the runner-up with everything too
   const lead = full(c) && next ? paid(next) - paid(c) : 0;
-  const all = n === 1 ? 'Your item' : `All ${n} items`;
   const sub = !full(c)
-    ? `<strong>${v.covered} of ${n}</strong> items here`
-    : `${all} here` + (lead > 0.005 ? ` · <strong>${money(lead)}</strong> less than ${esc(next.name)}` : '');
+    ? t('{part} items here', { part: `<strong>${t('{a} of {n}', { a: v.covered, n })}</strong>` })
+    : (n === 1 ? t('Your item here') : t('All {n} items here', { n }))
+      + (lead > 0.005 ? ` · ${t('{price} less than {chain}', { price: `<strong>${money(lead)}</strong>`, chain: esc(cn(next.name)) })}` : '');
   const foot = facts(c, true).map(([k, val, warn]) => warn
     ? `<div>${k ? esc(k) + ': ' : ''}${esc(val)}</div>`
     : `<div class="alt"><span>${esc(k)}</span><strong>${esc(val)}</strong></div>`).join('');
   const others = !delivery() && c.in_store.branches.length > 1
-    ? `<p class="note">Other branches: ${c.in_store.branches.slice(1, 4).map(b =>
-        `${bdi(storeName(b))} ${money(b.total)}${b.complete === false ? ` (${b.covered} of ${n})` : ''}${b.distance_km != null ? ` (${kmText(b.distance_km)}${driveSlot(b)})` : ''}`).join(' · ')}</p>` : '';
+    ? `<p class="note">${t('Other branches:')} ${c.in_store.branches.slice(1, 4).map(b =>
+        `${bdi(storeName(b))} ${money(b.total)}${b.complete === false ? ` (${t('{a} of {n}', { a: b.covered, n })})` : ''}${b.distance_km != null ? ` (${kmText(b.distance_km)}${driveSlot(b)})` : ''}`).join(' · ')}</p>` : '';
   const r = radius();
-  const branches = [delivery() ? 'Prices on the chain’s website'
-    : c.in_store.branch_count > 1 ? `Cheapest of ${c.in_store.branch_count} branches${r ? ` within ${r} km` : ''}`
-    : r ? `Only branch within ${r} km` : 'Only branch with prices', pricesFrom(v.last_price_ts)].filter(Boolean).join(' · ');
+  const branches = [delivery() ? t('Prices on the chain’s website')
+    : c.in_store.branch_count > 1 ? t('Cheapest of {n} branches', { n: c.in_store.branch_count }) + (r ? ' ' + t('within {n} km', { n: r }) : '')
+    : r ? t('Only branch within {n} km', { n: r }) : t('Only branch with prices'), pricesFrom(v.last_price_ts)].filter(Boolean).join(' · ');
   return `<article class="winner">
     <div class="tag-face">
-      <p class="tag-chain">${esc(c.name)}</p>
+      <p class="tag-chain">${esc(cn(c.name))}</p>
       <p class="tag-store">${place(v)}</p>
       <p class="tag-total" aria-label="${money(total)}"><span class="cur">₪</span>${whole}<span class="agorot">.${ag}</span></p>
       <p class="tag-sub">${sub}</p>
       <div class="tag-foot">${foot}</div>
     </div>
     <div class="winner-detail">
-      <div class="detail-head"><h3>${delivery() ? 'Online prices' : 'In-store prices'}</h3><span class="branches">${branches}</span></div>
+      <div class="detail-head"><h3>${delivery() ? t('Online prices') : t('In-store prices')}</h3><span class="branches">${branches}</span></div>
       ${linesTable(v.lines)}${others}
     </div>
   </article>`;
@@ -1223,9 +1241,9 @@ function row(c, hero) {
   const d = n && full(c) && hero && full(hero) ? paid(c) - paid(hero) : null;
   const promos = v.lines.filter(l => l.promo).length;
   const flags = [
-    n && !full(c) && `<span class="chip warn">${v.covered ? `${v.covered} of ${n}` : 'Not counted'}</span>`,
-    promos && `<span class="chip promo">${promos} on promotion</span>`,
-    delivery() && c.online.fee_note && `<span class="chip warn">${esc(c.online.fee_note)}</span>`,
+    n && !full(c) && `<span class="chip warn">${v.covered ? t('{a} of {n}', { a: v.covered, n }) : t('Not counted')}</span>`,
+    promos && `<span class="chip promo">${t('{n} on promotion', { n: promos })}</span>`,
+    delivery() && c.online.fee_note && `<span class="chip warn">${esc(serverText(c.online.fee_note))}</span>`,
   ].filter(Boolean).join('');
   const alt = (n ? facts(c) : []).map(([k, val, warn]) => warn
     ? `<span class="chip warn">${k ? esc(k) + ': ' : ''}${esc(val)}</span>`
@@ -1233,11 +1251,11 @@ function row(c, hero) {
     + (v.last_price_ts ? `<span class="muted">${pricesFrom(v.last_price_ts)}</span>` : '');
   return `<details class="row">
     <summary>
-      <span class="row-chain">${esc(c.name)}</span>
+      <span class="row-chain">${esc(cn(c.name))}</span>
       <span class="row-store">${place(v)}</span>
       ${flags ? `<span class="flags">${flags}</span>` : ''}
       <span class="row-total">${n && v.covered ? money(paid(c)) : n ? '—' : ''}</span>
-      <span class="row-delta">${d == null ? '' : d < 0.005 ? 'same' : '+' + money(d)}</span>
+      <span class="row-delta">${d == null ? '' : d < 0.005 ? t('same') : '+' + money(d)}</span>
       ${SVG.chev}
     </summary>
     <div class="row-body"><div class="row-alt">${alt}</div>${linesTable(v.lines)}</div>
@@ -1248,21 +1266,21 @@ function row(c, hero) {
 function staleHTML() {
   const st = S.result?.stale || [];
   if (!st.length) return '';
-  return `<details class="pricier stale"><summary>Prices over a day old (${st.length})</summary>
-    <ul class="stale-list">${st.map(s => `<li><span class="row-chain">${esc(s.chain)}</span>
+  return `<details class="pricier stale"><summary>${t('Prices over a day old')} (${st.length})</summary>
+    <ul class="stale-list">${st.map(s => `<li><span class="row-chain">${esc(cn(s.chain))}</span>
       <span class="row-store">${bdi(storeName(s))}${s.distance_km != null ? ` · ${kmText(s.distance_km)}` : ''}</span>
-      <span class="st-ts">${s.online ? 'Online · ' : ''}${pricesFrom(s.last_price_ts) || 'No current prices'}</span></li>`).join('')}</ul></details>`;
+      <span class="st-ts">${s.online ? t('Online') + ' · ' : ''}${pricesFrom(s.last_price_ts) || t('No current prices')}</span></li>`).join('')}</ul></details>`;
 }
 // delivery: chains whose online shop may not deliver to this address (the user hasn't confirmed it): never ranked
 function noAreaHTML() {
   const na = delivery() ? S.result?.no_area || [] : [];
   if (!na.length) return '';
   const n = nCompared();
-  return `<details class="pricier stale"><summary>Delivery area not confirmed (${na.length})</summary>
-    <ul class="stale-list">${na.map(a => `<li><span class="row-chain">${esc(a.chain)}</span>
+  return `<details class="pricier stale"><summary>${t('Delivery area not confirmed')} (${na.length})</summary>
+    <ul class="stale-list">${na.map(a => `<li><span class="row-chain">${esc(cn(a.chain))}</span>
       <span class="row-store">${bdi(storeName(a))}</span>
-      <span class="st-ts">${money(a.total)}${a.complete || !n ? '' : ` · ${a.covered} of ${n}`}</span></li>`).join('')}</ul>
-    <p class="note"><button class="linkish" type="button" data-open-fees>Delivery fees</button></p></details>`;
+      <span class="st-ts">${money(a.total)}${a.complete || !n ? '' : ` · ${t('{a} of {n}', { a: a.covered, n })}`}</span></li>`).join('')}</ul>
+    <p class="note"><button class="linkish" type="button" data-open-fees>${t('Delivery fees')}</button></p></details>`;
 }
 // up to 4 rows open; the rest (always including the dearest) collapsed under `label`
 function groupHTML(list, hero, open, label) {
@@ -1284,45 +1302,45 @@ function renderResults(loading) {
   if (st && !st.products) {
     const ix = st.index || {};
     const bar = ix.running && ix.total ? `<div class="progress"><span style="width:${Math.round(100 * ix.processed / ix.total)}%"></span></div>` : '';
-    el.innerHTML = emptyState('Prices are still downloading', '', bar);
+    el.innerHTML = emptyState(t('Prices are still downloading'), '', bar);
     return;
   }
   if (!S.cart.items.length) {
-    el.innerHTML = emptyState('Your cart is empty', '');
+    el.innerHTML = emptyState(t('Your cart is empty'), '');
     return;
   }
-  if (loading || !S.result) { el.innerHTML = '<div class="skeleton"></div>'; return; }
+  if (loading || !S.result) { el.innerHTML = resultsSkeleton(); return; }
   const chains = S.result.chains, n = nCompared();
   if (!chains.length) {
     const r = radius();
     el.innerHTML = (delivery()
-      ? emptyState(S.result.no_area?.length ? 'No confirmed delivery' : 'No online shop has these products', '') + noAreaHTML()
-      : r ? emptyState(`No stores within ${r} km`, '',
-          '<div class="actions"><button class="primary" type="button" data-open-loc>Change distance</button></div>')
-      : emptyState('No store has these products', '')) + staleHTML();
+      ? emptyState(S.result.no_area?.length ? t('No confirmed delivery') : t('No online shop has these products'), '') + noAreaHTML()
+      : r ? emptyState(t('No stores within {n} km', { n: r }), '',
+          `<div class="actions"><button class="primary" type="button" data-open-loc>${t('Change distance')}</button></div>`)
+      : emptyState(t('No store has these products'), '')) + staleHTML();
     return;
   }
   const branches = chains.reduce((t, c) => t + (c.in_store?.branch_count || 0), 0);
   const where = delivery() ? plural(chains.length, 'online shop')
-    : `${branches} ${branches === 1 ? 'branch' : 'branches'} · ${plural(chains.length, 'chain')}`;
+    : `${plural(branches, 'branch')} · ${plural(chains.length, 'chain')}`;
   if (!n) {  // only produce: nothing to rank; each store's own items, not compared
-    el.innerHTML = `<p class="co-sum">${where}</p><div class="group-label">Not compared</div>
+    el.innerHTML = `<p class="co-sum">${where}</p><div class="group-label">${t('Not compared')}</div>
       <div class="ranked">${chains.map(c => row(c, null)).join('')}</div>` + staleHTML();
     fillDrive();
     return;
   }
   const done = chains.filter(full), partial = chains.filter(c => !full(c) && counted(c));
   const none = chains.filter(c => !counted(c));  // nothing counts here (missing, or not confirmed yet): no total
-  const sum = `<p class="co-sum">${where} · ${done.length} with all ${n} ${n === 1 ? 'product' : 'products'}</p>`;
+  const sum = `<p class="co-sum">${where} · ${n === 1 ? t('{a} with your product', { a: done.length }) : t('{a} with all {n} products', { a: done.length, n })}</p>`;
   const hero = done[0] || partial[0];
-  const noneHTML = none.length ? `<details class="pricier"${hero ? '' : ' open'}><summary>Not counted (${none.length})</summary>
+  const noneHTML = none.length ? `<details class="pricier"${hero ? '' : ' open'}><summary>${t('Not counted')} (${none.length})</summary>
       <div class="ranked">${none.map(c => row(c, null)).join('')}</div></details>` : '';
   el.innerHTML = sum + (hero ? winner(hero) : '')
-    + groupHTML(done.filter(c => c !== hero), hero, 'Next cheapest', 'More expensive stores')
+    + groupHTML(done.filter(c => c !== hero), hero, t('Next cheapest'), t('More expensive stores'))
     + (done.length
-      ? (partial.length ? `<details class="pricier"><summary>Missing some products (${partial.length})</summary>
+      ? (partial.length ? `<details class="pricier"><summary>${t('Missing some products')} (${partial.length})</summary>
           <div class="ranked">${partial.map(c => row(c, hero)).join('')}</div></details>` : '')
-      : groupHTML(partial.filter(c => c !== hero), hero, 'Missing some products', 'More'))
+      : groupHTML(partial.filter(c => c !== hero), hero, t('Missing some products'), t('More')))
     + noneHTML + noAreaHTML() + staleHTML();
   fillDrive();
 }
@@ -1336,9 +1354,9 @@ async function loadTrend() {
   const ids = [...new Set([...fullChains(), ...sbsCols()].map(c => String(c.chain_id)))];
   if (!S.cart.items.length || !ids.length) { S.trend = null; renderTrend(); return; }
   const my = ++trendSeq;
-  const t = await api('/api/history/cart', { method: 'POST', body: { items: S.cart.items, chains: ids } }).catch(() => null);
+  const hist = await api('/api/history/cart', { method: 'POST', body: { items: S.cart.items, chains: ids }, quiet: true }).catch(() => null);
   if (my !== trendSeq) return;
-  S.trend = t;
+  S.trend = hist;
   renderTrend();
   renderSbs();
 }
@@ -1347,10 +1365,10 @@ function moveTag(c, l) {
   const m = S.trend?.changes?.[String(c.chain_id)]?.[l.key];
   if (!m) return '';
   const d = m[1] - m[0];
-  return ` <small class="mv ${d > 0 ? 'up' : 'down'}" title="30 days ago ${money(m[0])}">${d > 0 ? '▲' : '▼'}${money(Math.abs(d))}</small>`;
+  return ` <small class="mv ${d > 0 ? 'up' : 'down'}" title="${t('30 days ago {price}', { price: money(m[0]) })}">${d > 0 ? '▲' : '▼'}${money(Math.abs(d))}</small>`;
 }
 const dayDate = d => new Date(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100);
-const fmtDay = d => dayDate(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const fmtDay = d => dayDate(d).toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
 const todayNum = () => { const t = new Date(); return t.getFullYear() * 10000 + (t.getMonth() + 1) * 100 + t.getDate(); };
 // fixed colour per chain (validated categorical palette, light + dark): a chain keeps its colour whatever else is shown
 const SLOT = ['Rami Levy', 'Yohananof', 'Victory', 'Bareket', 'Osher Ad', 'Shufersal', 'Carrefour', 'Tiv Taam'];
@@ -1398,16 +1416,16 @@ function lineChart(series, title) {
   const id = ++chartId;
   charts.set(id, { series, x, y, days, t0, t1, L, R, W, today });
   return `<div class="lchart" data-chart="${id}">
-    ${series.length > 1 || ends.length < series.length ? `<div class="lc-legend">${series.map(sr => `<span><i style="background:${hue(sr.name)}"></i>${esc(sr.name)}</span>`).join('')}</div>` : ''}
+    ${series.length > 1 || ends.length < series.length ? `<div class="lc-legend">${series.map(sr => `<span><i style="background:${hue(sr.name)}"></i>${esc(cn(sr.name))}</span>`).join('')}</div>` : ''}
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">
       ${ticks.map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="axis" x="${L - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">₪${v.toFixed(v < 20 ? 2 : 0)}</text>`).join('')}
       ${xt.map(d => `<text class="axis" x="${x(d).toFixed(1)}" y="${H - 6}" text-anchor="middle">${fmtDay(d)}</text>`).join('')}
       ${series.map(sr => `<path class="ln" d="${path(sr.points)}" style="stroke:${hue(sr.name)}"/>${dots(sr.points, hue(sr.name))}`).join('')}
-      ${ends.map(e => `<path class="lead" d="M${x(today) + 3} ${e.y.toFixed(1)}L${x(today) + 9} ${e.ly.toFixed(1)}"/><text class="end" x="${x(today) + 12}" y="${(e.ly + 4).toFixed(1)}">${esc(e.sr.name)}</text>`).join('')}
+      ${ends.map(e => `<path class="lead" d="M${x(today) + 3} ${e.y.toFixed(1)}L${x(today) + 9} ${e.ly.toFixed(1)}"/><text class="end" x="${x(today) + 12}" y="${(e.ly + 4).toFixed(1)}">${esc(cn(e.sr.name))}</text>`).join('')}
       <line class="xhair" y1="${T}" y2="${H - B}" hidden/>
     </svg>
     <div class="lc-tip" hidden></div>
-    <table class="sr-only"><caption>${esc(title)}</caption><tr><th>Date</th>${series.map(sr => `<th>${esc(sr.name)}</th>`).join('')}</tr>
+    <table class="sr-only"><caption>${esc(title)}</caption><tr><th>${t('Date')}</th>${series.map(sr => `<th>${esc(cn(sr.name))}</th>`).join('')}</tr>
       ${days.map(d => `<tr><td>${fmtDay(d)}</td>${series.map(sr => `<td>${money(atDay(sr.points, d))}</td>`).join('')}</tr>`).join('')}</table>
   </div>`;
 }
@@ -1424,9 +1442,9 @@ document.addEventListener('pointermove', e => {
   const d = Math.min(c.today, dt.getFullYear() * 10000 + (dt.getMonth() + 1) * 100 + dt.getDate());
   hair.removeAttribute('hidden'); hair.setAttribute('x1', px); hair.setAttribute('x2', px);
   const rows = c.series.map(sr => [sr.name, atDay(sr.points, d)]).sort((a, b) => (a[1] ?? 1e9) - (b[1] ?? 1e9));
-  tip.innerHTML = `<b>${fmtDay(d)}</b>${rows.map(([n, v]) => `<span><i style="background:${hue(n)}"></i>${esc(n)}<em>${money(v)}</em></span>`).join('')}`;
+  tip.innerHTML = `<b>${fmtDay(d)}</b>${rows.map(([n, v]) => `<span><i style="background:${hue(n)}"></i>${esc(cn(n))}<em>${money(v)}</em></span>`).join('')}`;
   tip.hidden = false;
-  tip.style.left = `${Math.min(e.clientX - box.getBoundingClientRect().left + 14, box.clientWidth - tip.offsetWidth - 4)}px`;
+  tip.style.left = `${Math.max(4, Math.min(e.clientX - box.getBoundingClientRect().left + (rtl() ? -tip.offsetWidth - 14 : 14), box.clientWidth - tip.offsetWidth - 4))}px`;
 });
 document.addEventListener('pointerleave', e => {
   if (e.target.classList?.contains('lchart')) { e.target.querySelector('.xhair')?.setAttribute('hidden', ''); e.target.querySelector('.lc-tip').hidden = true; }
@@ -1435,19 +1453,19 @@ document.addEventListener('pointerleave', e => {
 // checkout: the whole cart over time at the chains that have all of it. The history is chain-wide (each product at
 // the chain's cheapest branch), so each line is scaled to end at today's price at your branch.
 function renderTrend() {
-  const el = $('#trend'), t = S.trend, ch = fullChains();
-  if (!el || !S.cart.items.length || !t || !ch.length || delivery()) { if (el) el.hidden = true; return; }
+  const el = $('#trend'), hist = S.trend, ch = fullChains();
+  if (!el || !S.cart.items.length || !hist || !ch.length || delivery()) { if (el) el.hidden = true; return; }
   const series = ch.map(c => {
-    const id = String(c.chain_id), pts = withGaps(t.series[id] || [], t.ends?.[id]), last = pts.at(-1)?.[1];
+    const id = String(c.chain_id), pts = withGaps(hist.series[id] || [], hist.ends?.[id]), last = pts.at(-1)?.[1];
     // a chain whose history stopped (a product without a confirmed price) isn't drawn as if it ran to today
     return { name: c.name, points: last ? pts.map(([d, v]) => [d, v == null ? null : v * paid(c) / last]) : [] };
   }).filter(sr => sr.points.length);
   if (!series.length) { el.hidden = true; return; }
   el.hidden = false;
   const days = new Set(series.flatMap(sr => sr.points.map(p => p[0])));
-  el.innerHTML = `<h2 id="trend-title">Price history</h2>` + (days.size < 2 && (t.since || 0) >= todayNum()
-    ? `<p class="trend-note">Tracking since ${fmtDay(t.since || todayNum())}.</p>`
-    : lineChart(series, `This cart over time at ${series.map(x => x.name).join(', ')}`));
+  el.innerHTML = `<h2 id="trend-title">${t('Price history')}</h2>` + (days.size < 2 && (hist.since || 0) >= todayNum()
+    ? `<p class="trend-note">${t('Tracking since {day}.', { day: fmtDay(hist.since || todayNum()) })}</p>`
+    : lineChart(series, t('This cart over time at {chains}', { chains: series.map(x => cn(x.name)).join(', ') })));
 }
 
 // ---------------------------------------------------------------- stores side by side, product by product
@@ -1461,12 +1479,13 @@ $('#sbs-picks').addEventListener('click', e => {
   const b = e.target.closest('[data-sbs]'); if (!b) return;
   const cur = sbsCols().map(c => String(c.chain_id)), id = b.dataset.sbs;
   if (cur.includes(id)) {
-    if (cur.length <= 2) return toast('Compare at least two stores');
+    if (cur.length <= 2) return toast(t('Compare at least two stores'), null, null, 'warn');
     sbsPick = cur.filter(x => x !== id);
   } else {
-    if (cur.length >= 5) return toast('Up to 5 stores side by side');
+    if (cur.length >= 5) return toast(t('Up to 5 stores side by side'), null, null, 'warn');
     sbsPick = [...cur, id];
   }
+  haptic('select');
   local.set('sbs', JSON.stringify(sbsPick));
   renderSbs();
   loadTrend();
@@ -1477,7 +1496,7 @@ function renderSbs() {
   if (box.hidden) return;
   const cols = sbsCols(), on = new Set(cols.map(c => String(c.chain_id)));
   $('#sbs-picks').innerHTML = ch.map(c => { const k = String(c.chain_id);
-    return `<button type="button" class="pill${on.has(k) ? ' on' : ''}" data-sbs="${esc(k)}" aria-pressed="${on.has(k)}">${esc(c.name)} <span>${money(paid(c))}</span></button>`; }).join('');
+    return `<button type="button" class="pill${on.has(k) ? ' on' : ''}" data-sbs="${esc(k)}" aria-pressed="${on.has(k)}">${esc(cn(c.name))} <span>${money(paid(c))}</span></button>`; }).join('');
   const wins = cols.map(() => 0);
   let split = 0, everywhere = true;
   const body = items.map(it => {
@@ -1486,29 +1505,29 @@ function renderSbs() {
     const have = ls.filter(l => l?.status === 'ok').map(l => l.cost), lo = have.length ? Math.min(...have) : null;
     const differ = have.length > 1 && Math.max(...have) - lo > 0.005;
     if (!produce) { if (lo == null) everywhere = false; else split += lo; }
-    return `<tr${produce ? ' class="unconfirmed"' : ''}><th scope="row"><div class="sb-prod"><span class="sb-thumb">${PH}${photo(m)}</span><span class="sb-name" dir="auto">${esc(it.name || m.name || it.key)}</span><small>${fmtQty(it.qty, m.is_weighted)}${m.is_weighted ? '' : ' ×'}${produce ? ' · Not compared' : ''}</small></div></th>${ls.map((l, j) => {
-      if (!l || l.status === 'missing') return '<td class="n miss">—<small>not sold here</small></td>';
+    return `<tr${produce ? ' class="unconfirmed"' : ''}><th scope="row"><div class="sb-prod"><span class="sb-thumb">${PH}${photo(m)}</span><span class="sb-name" dir="auto">${esc(it.name || m.name || it.key)}</span><small>${fmtQty(it.qty, m.is_weighted)}${m.is_weighted ? '' : ' ×'}${produce ? ` · ${t('Not compared')}` : ''}</small></div></th>${ls.map((l, j) => {
+      if (!l || l.status === 'missing') return `<td class="n miss">—<small>${t('not sold here')}</small></td>`;
       if (l.status === 'not_compared') {
         const p = ncPick(l);
-        return p ? `<td class="n unc">${money(p.price * it.qty)}<small>${l.own ? '' : 'Similar · '}${bdi(p.name || '')}</small></td>` : '<td class="n miss">—<small>not sold here</small></td>';
+        return p ? `<td class="n unc">${money(p.price * it.qty)}<small>${l.own ? '' : t('Similar') + ' · '}${bdi(p.name || '')}</small></td>` : `<td class="n miss">—<small>${t('not sold here')}</small></td>`;
       }
-      if (l.status === 'unconfirmed') return `<td class="n unc">${money(l.full ?? l.price * it.qty)}<small>${unconfText(l)} · Not counted</small></td>`;
+      if (l.status === 'unconfirmed') return `<td class="n unc">${money(l.full ?? l.price * it.qty)}<small>${unconfText(l)} · ${t('Not counted')}</small></td>`;
       const best = differ && l.cost - lo < 0.005;
       if (best) wins[j]++;
-      return `<td class="n${best ? ' best' : ''}">${money(l.cost)}${moveTag(cols[j], l)}${l.promo ? `<small class="promo" dir="auto">${esc(l.promo.description || 'deal')}</small>` : ''}${l.deals_more?.length ? `<small class="more">${l.deals_more.map(dealMoreText).join(' · ')}</small>` : ''}${l.deals_not_counted?.length ? `<small title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</small>` : ''}</td>`;
+      return `<td class="n${best ? ' best' : ''}">${money(l.cost)}${moveTag(cols[j], l)}${l.promo ? `<small class="promo" dir="auto">${esc(l.promo.description || t('deal'))}</small>` : ''}${l.deals_more?.length ? `<small class="more">${l.deals_more.map(dealMoreText).join(' · ')}</small>` : ''}${l.deals_not_counted?.length ? `<small title="${esc(l.deals_not_counted.join(' · '))}">${t('Deal not counted')}</small>` : ''}</td>`;
     }).join('')}</tr>`;
   }).join('');
   const doneCols = cols.filter(full), low = doneCols.length ? Math.min(...doneCols.map(paid)) : null;
-  $('#sbs-table').innerHTML = `<table class="sbs-table"><thead><tr><th scope="col">Product</th>${cols.map(c => { const v = view(c);
-      return `<th scope="col" class="n"><span class="sb-chain">${esc(c.name)}</span><small>${delivery() ? 'Online store' : bdi(storeName(v)) + (v.distance_km != null ? ` · ${kmText(v.distance_km)}` : '') + driveSlot(v)}</small></th>`; }).join('')}</tr></thead>
+  $('#sbs-table').innerHTML = `<table class="sbs-table"><thead><tr><th scope="col">${t('Product')}</th>${cols.map(c => { const v = view(c);
+      return `<th scope="col" class="n"><span class="sb-chain">${esc(cn(c.name))}</span><small>${delivery() ? t('Online store') : bdi(storeName(v)) + (v.distance_km != null ? ` · ${kmText(v.distance_km)}` : '') + driveSlot(v)}</small></th>`; }).join('')}</tr></thead>
     <tbody>${body}</tbody>
-    <tfoot><tr><th scope="row">Cheapest for</th>${wins.map(w => `<td class="n">${plural(w, 'product')}</td>`).join('')}</tr>
-      ${delivery() ? `<tr><th scope="row">Delivery</th>${cols.map(c => `<td class="n">${c.online.fee == null ? '—' : c.online.fee === 0 ? 'Free' : money(c.online.fee)}</td>`).join('')}</tr>` : ''}
-      <tr class="total"><th scope="row">Whole cart</th>${cols.map(c => { const v = view(c);
-        return `<td class="n${full(c) && paid(c) - low < 0.005 ? ' best' : ''}">${money(paid(c))}${full(c) ? '' : `<small>${v.covered} of ${n}</small>`}</td>`; }).join('')}</tr></tfoot></table>`;
+    <tfoot><tr><th scope="row">${t('Cheapest for')}</th>${wins.map(w => `<td class="n">${plural(w, 'product')}</td>`).join('')}</tr>
+      ${delivery() ? `<tr><th scope="row">${t('Delivery')}</th>${cols.map(c => `<td class="n">${c.online.fee == null ? '—' : c.online.fee === 0 ? t('Free') : money(c.online.fee)}</td>`).join('')}</tr>` : ''}
+      <tr class="total"><th scope="row">${t('Whole cart')}</th>${cols.map(c => { const v = view(c);
+        return `<td class="n${full(c) && paid(c) - low < 0.005 ? ' best' : ''}">${money(paid(c))}${full(c) ? '' : `<small>${t('{a} of {n}', { a: v.covered, n })}</small>`}</td>`; }).join('')}</tr></tfoot></table>`;
   const one = doneCols.length ? doneCols.reduce((a, b) => paid(a) <= paid(b) ? a : b) : null, save = one ? paid(one) - split : 0;
   $('#sbs-split').innerHTML = !delivery() && one && everywhere && save >= 1
-    ? `Buying each product where it’s cheapest among these stores comes to <strong>${money(split)}</strong> — ${money(save)} less than all of it at ${esc(one.name)}, if the extra stop is worth it to you.`
+    ? t('Buying each product where it’s cheapest among these stores comes to {total} — {save} less than all of it at {chain}, if the extra stop is worth it to you.', { total: `<strong>${money(split)}</strong>`, save: money(save), chain: esc(cn(one.name)) })
     : '';
   fillDrive($('#sbs-table'));
 }
@@ -1519,8 +1538,9 @@ function applyPrefsUI() {
   $('#club').checked = !!S.prefs.club;
   const h = S.prefs.home, btn = $('#near-btn');
   btn.classList.toggle('set', !!h);
-  $('#near-label').innerHTML = !h ? 'Set your location'
-    : `${S.prefs.max_km ? `Within ${S.prefs.max_km} km of` : 'Near'} ${bdi(h.label.split(',')[0])}`;
+  const place = h ? bdi(h.label.split(',')[0]) : '';
+  $('#near-label').innerHTML = !h ? t('Set your location')
+    : S.prefs.max_km ? t('Within {n} km of {place}', { n: S.prefs.max_km, place }) : t('Near {place}', { place });
   btn.title = h ? h.label : '';
 }
 function setPrefs(p) {
@@ -1529,89 +1549,32 @@ function setPrefs(p) {
   S.result = null;
   compareNow();
   if (document.body.dataset.view === 'product' && S.product) openProduct(S.product.p.key);
-  api('/api/settings', { method: 'PUT', body: { prefs: p } }).then(() => { if ('home' in p || 'max_km' in p) updateMap(); })
-    .catch(() => toast("Couldn't save your settings"));
+  const where = 'home' in p || 'max_km' in p;
+  return api('/api/settings', { method: 'PUT', body: { prefs: p } })
+    .then(() => { if (where) { updateMap(); if (document.body.dataset.view === 'home') dealRows(); } })
+    .catch(e => { if (e.message !== 'signed out') toast(t("Couldn't save your settings"), null, null, 'error'); });
 }
-$$('[data-mode]').forEach(b => { b.onclick = () => setPrefs({ mode: b.dataset.mode }); });
-$('#club').onchange = e => setPrefs({ club: e.target.checked });
-
-// location
-const RADII = [1, 2, 3, 5, 10, 20, null];
-function renderLocation() {
-  const h = S.prefs.home;
-  $('#loc-set').hidden = !h;
-  if (h) {
-    $('#loc-label').textContent = h.label;
-    $('#radius').innerHTML = RADII.map(r => `<button role="radio" type="button" data-km="${r ?? ''}" aria-checked="${(S.prefs.max_km ?? null) === r}">${r ? r + ' km' : 'Any distance'}</button>`).join('');
-  }
-  $('#traffic-state').textContent = S.traffic
-    ? 'Drive times: live traffic (Google Maps). Save an empty key for typical times.'
-    : 'Drive times: typical, without traffic. A Google Maps key (Routes API) adds live traffic.';
-  $('#loc-note').textContent = 'Address lookup © OpenStreetMap contributors';
-}
-function openLocation() {
-  $('#loc-results').hidden = true;
-  $('#loc-q').value = '';
-  renderLocation();
-  $('#location').showModal();
-  if (!S.prefs.home) $('#loc-q').focus();
-}
-$('#near-btn').onclick = openLocation;
-let locHits = [];
-$('#loc-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const text = $('#loc-q').value.trim(), out = $('#loc-results');
-  if (text.length < 3) return;
-  out.hidden = false;
-  out.innerHTML = '<li class="sr-empty">Looking up…</li>';
-  try { locHits = await api('/api/geocode?q=' + encodeURIComponent(text)); }
-  catch { out.innerHTML = '<li class="sr-empty">Address lookup isn’t reachable right now — try again in a minute.</li>'; return; }
-  out.innerHTML = locHits.length
-    ? locHits.map((h, i) => `<li><button type="button" data-loc="${i}">${bdi(h.label)}</button></li>`).join('')
-    : '<li class="sr-empty">No match — try the street, house number and city, e.g. הרצל 10 רמת גן.</li>';
-});
-$('#loc-results').addEventListener('click', e => {
-  const b = e.target.closest('[data-loc]'); if (!b) return;
-  const h = locHits[+b.dataset.loc];
-  setPrefs({ home: h, max_km: S.prefs.max_km ?? 5 });
-  $('#loc-results').hidden = true;
-  $('#loc-q').value = '';
-  renderLocation();
-});
-$('#radius').addEventListener('click', e => {
-  const b = e.target.closest('[data-km]'); if (!b) return;
-  setPrefs({ max_km: b.dataset.km ? +b.dataset.km : null });
-  renderLocation();
-});
-$('#key-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  try {
-    const d = await api('/api/settings', { method: 'PUT', body: { maps_key: $('#maps-key').value } });
-    S.traffic = d.traffic;
-    $('#maps-key').value = '';
-    renderLocation();
-    toast(S.traffic ? 'Live traffic is on' : 'Using typical drive times');
-    renderResults();
-  } catch { toast("Couldn't save the key"); }
-});
-$('#loc-clear').onclick = () => { setPrefs({ home: null }); renderLocation(); $('#loc-q').focus(); };
+$$('[data-mode]').forEach(b => { b.onclick = () => { haptic('select'); setPrefs({ mode: b.dataset.mode }); }; });
+$('#club').onchange = e => { haptic('select'); setPrefs({ club: e.target.checked }); };
+$('#near-btn').onclick = () => openLocation();  // the address picker lives in account.js
 
 // ---------------------------------------------------------------- status / freshness
 function renderFreshness() {
   const st = S.status, el = $('#freshness');
+  if (!st) return;
   const ix = st.index || {};
   const pct = ix.running && ix.total ? Math.round(100 * ix.processed / ix.total) : 0;
-  const updating = ix.running ? ` · updating${pct ? ` ${pct}%` : '…'}` : '';
+  const updating = ix.running ? ' · ' + (pct ? t('updating {n}%', { n: pct }) : t('updating…')) : '';
   const d = tsDate(st.data_ts);
-  if (!d) { el.innerHTML = `<span class="dot stale"></span>No prices yet${updating}`; return; }
+  if (!d) { el.innerHTML = `<span class="dot stale"></span>${t('No prices yet')}${updating}`; return; }
   const stale = Date.now() - d > 12 * 3600e3;
-  el.innerHTML = `<span class="dot${stale ? ' stale' : ''}"></span>Prices from ${fmtDate(d)} · ${st.chains} chains · ${st.stores.toLocaleString()} stores${updating}`;
+  el.innerHTML = `<span class="dot${stale ? ' stale' : ''}"></span>${t('Prices from {when}', { when: fmtDate(d) })} · ${plural(st.chains, 'chain')} · ${plural(st.stores, 'store')}${updating}`;
 }
 
 let lastStatusCompare = 0;
 async function pollStatus() {
   try {
-    const st = await api('/api/status'), prev = S.status;
+    const st = await api('/api/status', { quiet: true }), prev = S.status;
     S.status = st;
     renderFreshness();
     const changed = !prev || prev.data_ts !== st.data_ts || prev.products !== st.products || (S.prefs.home && prev.located !== st.located);
@@ -1626,21 +1589,22 @@ async function pollStatus() {
 
 // ---------------------------------------------------------------- dialogs
 $$('dialog').forEach(d => d.addEventListener('click', e => {
-  if (e.target === d || e.target.closest('[data-close]')) d.close();
+  if (e.target === d || e.target.closest('[data-close]')) closeSheet(d);
 }));
 
 // delivery fees
-const FEES = [['fee', 'Delivery fee'], ['reduced_fee', 'Lower fee'], ['reduced_above', '…for baskets over'],
-              ['free_above', 'Free over'], ['min_order', 'Minimum order']];
-const RESET = '<button class="ghost small reset" type="button" data-reset>Reset</button>';
+const FEES = () => [['fee', t('Delivery fee')], ['reduced_fee', t('Lower fee')], ['reduced_above', t('…for baskets over')],
+                    ['free_above', t('Free over')], ['min_order', t('Minimum order')]];
+const RESET = () => `<button class="ghost small reset" type="button" data-reset>${t('Reset')}</button>`;
 const feeVal = v => v == null ? '' : Number.isInteger(v) ? v : Number(v).toFixed(2);
 function renderFees(rows) {
-  $('#fee-table').innerHTML = `<thead><tr><th>Chain</th>${FEES.map(f => `<th>${f[1]}</th>`).join('')}<th>Delivers to me</th><th></th></tr></thead><tbody>`
+  const fees = FEES();
+  $('#fee-table').innerHTML = `<thead><tr><th>${t('Chain')}</th>${fees.map(f => `<th>${f[1]}</th>`).join('')}<th>${t('Delivers to me')}</th><th></th></tr></thead><tbody>`
     + rows.map(r => `<tr data-cid="${esc(r.chain_id)}">
-        <td>${esc(r.name)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</td>
-        ${FEES.map(([k, label]) => `<td><input type="number" min="0" step="0.01" data-f="${k}" value="${feeVal(r[k])}" aria-label="${esc(r.name)} ${label}"></td>`).join('')}
-        <td><input type="checkbox" data-f="delivers_here" ${r.delivers_here === true ? 'checked' : ''} aria-label="${esc(r.name)} delivers to me"></td>
-        <td>${r.custom ? RESET : ''}</td></tr>`).join('') + '</tbody>';
+        <td>${esc(cn(r.name))}${r.note ? `<small>${esc(serverText(r.note))}</small>` : ''}</td>
+        ${fees.map(([k, label]) => `<td><input type="number" inputmode="decimal" min="0" step="0.01" data-f="${k}" value="${feeVal(r[k])}" aria-label="${esc(cn(r.name))} ${label}"></td>`).join('')}
+        <td><input type="checkbox" data-f="delivers_here" ${r.delivers_here === true ? 'checked' : ''} aria-label="${esc(t('{chain} delivers to me', { chain: cn(r.name) }))}"></td>
+        <td>${r.custom ? RESET() : ''}</td></tr>`).join('') + '</tbody>';
 }
 async function saveFees(delivery) {
   try {
@@ -1648,21 +1612,22 @@ async function saveFees(delivery) {
     S.result = null;
     compareNow();
     return d;
-  } catch { toast("Couldn't save delivery fees"); }
+  } catch { toast(t("Couldn't save delivery fees"), null, null, 'error'); }
 }
 document.addEventListener('click', e => { if (e.target.closest('[data-open-fees]')) $('#open-settings').click(); });
 $('#open-settings').onclick = async () => {
   const d = await api('/api/settings').catch(() => null);
-  if (!d) return toast("Couldn't load delivery fees");
+  if (!d) return toast(t("Couldn't load delivery fees"), null, null, 'error');
   renderFees(d.delivery);
-  $('#settings').showModal();
+  openSheet($('#settings'));
 };
 $('#fee-table').addEventListener('change', e => {
   const tr = e.target.closest('tr[data-cid]'); if (!tr) return;
   const rule = {};
-  for (const [k] of FEES) { const v = tr.querySelector(`[data-f="${k}"]`).value; rule[k] = v === '' ? null : +v; }
+  for (const [k] of FEES()) { const v = tr.querySelector(`[data-f="${k}"]`).value; rule[k] = v === '' ? null : +v; }
   rule.delivers_here = tr.querySelector('[data-f="delivers_here"]').checked ? true : null;
-  tr.lastElementChild.innerHTML = RESET;  // don't re-render: keeps focus while tabbing through fields
+  if (e.target.type === 'checkbox') haptic('select');
+  tr.lastElementChild.innerHTML = RESET();  // don't re-render: keeps focus while tabbing through fields
   saveFees({ [tr.dataset.cid]: rule });
 });
 $('#fee-table').addEventListener('click', async e => {
@@ -1678,43 +1643,44 @@ async function openCompare() {
   const carts = await api('/api/carts').catch(() => []);
   const body = $('#compare-body');
   if (carts.length < 2) {
-    body.innerHTML = '<p class="sheet-note">Make another cart to compare.</p>';
-    return $('#compare').showModal();
+    body.innerHTML = `<p class="sheet-note">${t('Make another cart to compare.')}</p>`;
+    return openSheet($('#compare'));
   }
   const pre = new Set([...new Set([S.cart.id, ...carts.map(c => c.id)])].filter(Boolean).slice(0, 2));
   body.innerHTML = `    <div class="cmp-picks">${carts.map(c => `<label><input type="checkbox" value="${c.id}" ${pre.has(c.id) ? 'checked' : ''}><span dir="auto">${esc(c.name)}</span></label>`).join('')}</div>
     <div id="cmp-table" class="table-scroll"></div>`;
-  $('#compare').showModal();
+  openSheet($('#compare'));
   runCompare();
 }
 $('#compare-body').addEventListener('change', e => {
-  if ($$('#compare-body input:checked').length > 4) { e.target.checked = false; return toast('Up to 4 carts'); }
+  if ($$('#compare-body input:checked').length > 4) { e.target.checked = false; return toast(t('Up to 4 carts'), null, null, 'warn'); }
+  haptic('select');
   runCompare();
 });
 async function runCompare() {
   const ids = $$('#compare-body input:checked').map(i => +i.value), out = $('#cmp-table'), my = ++cmpSeq;
-  if (ids.length < 2) { out.innerHTML = '<p class="note">Pick two or more.</p>'; return; }
-  out.innerHTML = '<div class="skeleton"></div>';
+  if (ids.length < 2) { out.innerHTML = `<p class="note">${t('Pick two or more.')}</p>`; return; }
+  out.innerHTML = '<div class="skeleton short"></div>';
   let carts, res;
   try {
     carts = await Promise.all(ids.map(id => api(`/api/carts/${id}`)));
     res = await Promise.all(carts.map(c => comparePost({ items: c.items, prefs: S.prefs })));
-  } catch { out.innerHTML = '<p class="note">Couldn’t price these carts.</p>'; return; }
+  } catch { out.innerHTML = `<p class="note">${t('Couldn’t price these carts.')}</p>`; return; }
   if (my !== cmpSeq) return;
   const names = [...new Set(res.flatMap(r => r.chains.map(c => c.name)))];
   const cell = (r, n) => r.chains.find(c => c.name === n);
   // "together": what all the picked baskets cost at one chain; only chains that sell every basket count
   // only chains with a confirmed price for every compared product of every basket count
-  const together = n => res.every(r => cell(r, n) && full(cell(r, n))) ? res.reduce((t, r) => t + paid(cell(r, n)), 0) : null;
+  const together = n => res.every(r => cell(r, n) && full(cell(r, n))) ? res.reduce((s, r) => s + paid(cell(r, n)), 0) : null;
   names.sort((a, b) => (together(a) ?? 1e9) - (together(b) ?? 1e9));
   const bestTogether = names[0] && together(names[0]) != null ? names[0] : null;
-  out.innerHTML = `<table class="cmp-table"><thead><tr><th>Chain</th>${carts.map(c => `<th class="n"><bdi>${esc(c.name)}</bdi><br><small>${plural(c.items.length, 'product')}</small></th>`).join('')}
-      <th class="n">All together</th></tr></thead>
-    <tbody>${names.map(n => `<tr><td>${esc(n)}</td>${res.map(r => {
+  out.innerHTML = `<table class="cmp-table"><thead><tr><th>${t('Chain')}</th>${carts.map(c => `<th class="n"><bdi>${esc(c.name)}</bdi><br><small>${plural(c.items.length, 'product')}</small></th>`).join('')}
+      <th class="n">${t('All together')}</th></tr></thead>
+    <tbody>${names.map(n => `<tr><td>${esc(cn(n))}</td>${res.map(r => {
       const c = cell(r, n);
       if (!c) return '<td class="n">—</td>';
       const isBest = r.chains[0].name === n && full(c) && nCompared(r) > 0;
-      return `<td class="n${isBest ? ' best' : ''}">${nCompared(r) ? money(paid(c)) : '—'}${nCompared(r) && !full(c) ? `<br><span class="chip warn">${view(c).covered} of ${nCompared(r)}</span>` : ''}</td>`;
+      return `<td class="n${isBest ? ' best' : ''}">${nCompared(r) ? money(paid(c)) : '—'}${nCompared(r) && !full(c) ? `<br><span class="chip warn">${t('{a} of {n}', { a: view(c).covered, n: nCompared(r) })}</span>` : ''}</td>`;
     }).join('')}<td class="n${n === bestTogether ? ' best' : ''}">${money(together(n))}</td></tr>`).join('')}</tbody></table>`;
 }
 
@@ -1731,28 +1697,48 @@ function applyTheme() {
   else document.documentElement.dataset.theme = theme;
   const b = $('#theme-btn'), [name, icon] = THEMES[theme];
   b.innerHTML = icon;
-  b.title = b.ariaLabel = `Theme: ${name} (click to change)`;
+  b.title = b.ariaLabel = t('Theme: {name} (click to change)', { name: t(name) });
+  $$('[data-theme-pick]').forEach(x => x.setAttribute('aria-checked', x.dataset.themePick === theme));
+}
+function setTheme(name) {
+  theme = name;
+  local.set('theme', theme);
+  haptic('select');
+  applyTheme();
+  restyleMap();
 }
 $('#theme-btn').onclick = () => {
   const order = Object.keys(THEMES);
-  theme = order[(order.indexOf(theme) + 1) % order.length];
-  local.set('theme', theme);
-  applyTheme();
-  restyleMap();
+  setTheme(order[(order.indexOf(theme) + 1) % order.length]);
 };
 applyTheme();
 
-// ---------------------------------------------------------------- start
-(async function init() {
+// ---------------------------------------------------------------- language: everything on screen in the other language
+function relabel() {
+  applyTheme();
+  applyPrefsUI();
+  renderFreshness();
+  renderRail();
+  if (mapData) renderMapInfo();
+  renderBasket();
+  renderResults();
+  drawPins();
+  if (document.body.dataset.view === 'basket') renderStoreCard(false);
+  if (document.body.dataset.view === 'product' && S.product) { renderProduct(); }
+  else route();
+}
+
+// ---------------------------------------------------------------- start (account.js calls this once you're signed in)
+async function startApp() {
   const settings = await api('/api/settings').catch(() => null);
   if (settings) { S.prefs = { ...S.prefs, ...settings.prefs }; S.traffic = settings.traffic; }
   applyPrefsUI();
   route();
-  api('/api/categories').then(c => { cats = cats || c; renderRail(); }).catch(() => {});
+  api('/api/categories', { quiet: true }).then(c => { cats = cats || c; renderRail(); }).catch(() => {});
   await loadCarts();
   const carts = S.carts;
   const want = carts.find(c => c.id === +local.get('cart')) || carts[0];
   if (want) await openCart(want.id);
   else { renderBasket(); renderResults(); }
   pollStatus();
-})();
+}

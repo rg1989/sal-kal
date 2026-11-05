@@ -1,4 +1,4 @@
-# Sal — Israeli grocery basket price comparison
+# Sal-Kal (סל קל, "light basket"; formerly Sal) — Israeli grocery basket price comparison
 
 Handoff from a Claude cloud session (2026-11-04). Read this first, then continue from "What's left".
 
@@ -174,6 +174,41 @@ midnight; price_last = latest row per pair; settings.history_since = first day).
 per product. Page: product page "Price history" chart, checkout "Price history" (chains that have the whole cart, lines
 scaled to end at today's price at your branch), ▲/▼ 30-day arrows in Compare Stores. Charts: step lines, fixed colour per
 chain (validated categorical palette --s1..--s8), legend + end labels, hover readout, hidden table. Tests: tests/test_history.py.
+Accounts (2026-11-05, per user): sign in with Google or Facebook (`app/auth.py`, OAuth code flow on the standard library,
+PKCE for Google, appsecret_proof for Facebook). Config `/srv/sal/data/auth.json` (0600, re-read on change, no restart), set
+with `./set-login.sh google <client id>` / `facebook <app id>` (asks for the secret), `base-url https://<domain>`,
+`owner-email`, `status`. Redirect URIs to register: `<base>/auth/google/callback`, `<base>/auth/facebook/callback`; Meta also
+needs `/privacy` and `/data-deletion` (both served, he/en). No provider configured = "local" mode: everyone is user 1, no
+sign-in (as before). With one, every /api call except /api/me, /api/status, /api/logout needs the `sal_session` cookie
+(HttpOnly, SameSite=Lax, 180 days rolling; only its SHA-256 in u.sessions). user.db: `users` (prefs + delivery JSON per
+account, lang, onboarded, admin), `identities` (provider, subject, email, verified), `sessions`, `carts.user_id`. The
+household's pre-account carts/prefs/delivery became user 1; the first sign-in takes it over (only `owner_email` if set)
+and is admin (reindex, Google Maps key). Accounts join by email only through a verified address (Google);
+Facebook never joins by email. server.py: `me()` / `prefs()` / `overrides()` read a contextvar set by the `who`
+middleware; every cart query filters `user_id`; per-account rate limits on outside lookups (`limit()`).
+Tests: tests/test_accounts.py. Local testing: `SAL_DEV_LOGIN=1` adds a "Dev" provider (`/auth/dev?who=name`) — never on
+the server; a test copy of the DB can be made with `cp --reflink` (btrfs, no extra space).
+Address (onboarding + header pill): picked, never typed free-form: town and street from Israel's official lists
+(data.gov.il towns 5c78e9fa…, streets 9ad3862c…, kept in places.db, refreshed every 90 days, Hebrew + CBS English
+names, any word order, קרית/קריית folded, English matched by consonant skeleton) + a house-number stepper, or the phone's
+location (reverse-geocoded, matched to the lists). `app/places.py` locates the pick once via Nominatim (1 req/s server-wide,
+official name → OSM spellings, surname-first swap, then street, then town centre) and caches it. Endpoints
+/api/places/{towns,streets,locate,reverse}. Prefs.home keeps label, lat, lon, town, street, number, precision.
+First run (account not onboarded): 3 steps — address, distance (map + live branch count), what carts are + name the
+first cart. Hebrew is the default language (he/en): `app/static/i18n.js` (`t('English text', vars)`, `tn(n, noun)`,
+`cn(chain)` Hebrew chain names, `serverText` for engine/chains notes, data-i18n* attributes in index.html), the account's
+`lang` follows it across devices; `<html dir=rtl>` mirrors the page (CSS uses logical properties: rail on the right,
+cart on the left). Language: globe menu in the header (wide screens), the account sheet, a toggle on sign-in/onboarding.
+`app/static/ux.js`: haptics (Vibration API on Android, the hidden `<input switch>` tick on iOS 18, only after a first
+tap), the loading bar (every api() call), page fade-in, fly-to-cart, bottom sheets on phones with drag-to-close,
+skeletons, confirmSheet(). Script order: i18n.js, ux.js, app.js, account.js (account.js boots and calls startApp()).
+Public (2026-11-05): https://sal-kal.com (and www.) via the locally managed Cloudflare Tunnel `sal-kal`
+(id c3e83818-4866-4cd7-a919-22095cb88731; /etc/cloudflared/sal.yml + its credentials; `sal-tunnel.service`, sandboxed;
+DNS CNAMEs made with `cloudflared tunnel route dns`). The Cloudflare account has other tunnels:
+not Sal's, leave them. auth.json base_url = https://sal-kal.com. Requests through the tunnel carry Cf-Connecting-IP:
+they always need sign-in, so with no provider set up they get only the sign-in page ("sign-in opens soon") and /privacy,
+/data-deletion; the LAN and Tailscale (no such header) stay in local mode. Signing in works on sal-kal.com only (the
+redirect URIs and Secure cookies are https://sal-kal.com).
 Copy: the user dislikes filler text ("slop") — no taglines, explanatory notes or subtitles; labels only.
 Tailscale: also served at https://omarchy.<tailnet>.ts.net:8443 (tailscale serve, tailnet only; port 443 is another app).
 Cards (2026-11-05): server `_enrich()` (browse, picks, deals) adds `near` = cheapest shelf price at a branch within your

@@ -1,81 +1,100 @@
 <!doctype html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Sal — basket prices</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Sal-Kal</title>
 <meta name="theme-color" content="#EEF0EC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121715" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-title" content="Sal-Kal">
+<meta name="application-name" content="Sal-Kal">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD23F'/%3E%3Cg fill='none' stroke='%231C2321' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.3 13 14 8.2M20.7 13 18 8.2'/%3E%3Cpath d='M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z'/%3E%3Cpath d='M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles.css">
-<script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+<script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;var l=localStorage.getItem("lang");if(l==="en"){document.documentElement.lang="en";document.documentElement.dir="ltr"}}catch(e){}</script>
 </head>
-<body>
+<body class="booting">
+<div class="loadbar" id="loadbar" aria-hidden="true"><span></span></div>
+
+<!-- first paint: the brand while we check who you are -->
+<div class="boot" id="boot" aria-hidden="true">
+  <div class="boot-mark">
+    <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="9" class="tile"/><g class="ink-s" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path class="boot-bars" d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
+  </div>
+</div>
+
 <header class="top">
-  <a class="brand" href="#/" aria-label="Sal — home">
+  <a class="brand" href="#/" data-i18n-aria="Sal-Kal — home" aria-label="Sal-Kal — home">
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" class="tile"/><g class="ink-s" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
-    <span>Sal</span>
+    <span data-i18n="Sal-Kal">Sal-Kal</span>
   </a>
   <div class="search top-search" role="search">
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.2 13.2L17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-    <input id="top-q" type="search" placeholder="Search products — milk, eggs, a barcode" autocomplete="off" dir="auto"
-           enterkeyhint="search" aria-controls="b-cards" aria-label="Search products (results appear as you type)">
-    <button class="q-clear" id="q-clear" type="button" aria-label="Clear search"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+    <input id="top-q" type="search" data-i18n-ph="Search products — milk, eggs, a barcode" autocomplete="off" dir="auto"
+           enterkeyhint="search" aria-controls="b-cards" data-i18n-aria="Search products (results appear as you type)">
+    <button class="q-clear" id="q-clear" type="button" data-i18n-aria="Clear search"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   </div>
   <nav class="top-actions">
     <button class="near" id="near-btn" type="button" aria-haspopup="dialog">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17.6s5.6-5.1 5.6-9.4a5.6 5.6 0 0 0-11.2 0c0 4.3 5.6 9.4 5.6 9.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle class="dot" cx="10" cy="8.2" r="2.2"/></svg>
-        <span id="near-label">Set your location</span>
+        <span id="near-label"></span>
       </button>
-    <button class="icon" id="theme-btn" type="button"></button>
+    <button class="lang-btn wide-only" id="lang-btn" type="button" aria-haspopup="menu" aria-expanded="false"></button>
+    <button class="icon wide-only" id="theme-btn" type="button"></button>
+    <button class="avatar-btn" id="account-btn" type="button" aria-haspopup="dialog" data-i18n-aria="Your account"></button>
     <button class="basket-btn" id="basket-btn" type="button" aria-haspopup="dialog">
       <svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.1 8 8.8 4.8M12.9 8 11.2 4.8"/><path d="M3.8 8h12.4l-1.3 6.1a1.8 1.8 0 0 1-1.76 1.42H6.86a1.8 1.8 0 0 1-1.76-1.42z"/><path d="M8.2 10.6v2.4M11.8 10.6v2.4"/></g></svg>
-      <span class="label" id="cart-label">Cart</span><span class="n" id="basket-count"></span>
+      <span class="label" id="cart-label" data-i18n="Cart">Cart</span><span class="n" id="basket-count"></span>
     </button>
   </nav>
 </header>
+<div class="lang-menu" id="lang-menu" role="menu" hidden>
+  <button type="button" role="menuitemradio" data-lang="he" lang="he" dir="rtl">עברית</button>
+  <button type="button" role="menuitemradio" data-lang="en" lang="en" dir="ltr">English</button>
+</div>
 
 <div class="page">
-<nav class="rail" aria-label="Categories"><p class="rail-h">Categories</p><div id="rail-list"></div></nav>
+<nav class="rail" data-i18n-aria="Categories"><p class="rail-h" data-i18n="Categories">Categories</p><div id="rail-list"></div></nav>
 <div class="views">
 <main class="shop" id="view-home">
   <div class="map-slot" id="home-map">
-    <section class="mapbox" id="map-wrap" aria-label="Stores near you">
+    <section class="mapbox" id="map-wrap" data-i18n-aria="Stores near you">
       <div class="map" id="map"></div>
       <div class="map-info" id="map-info"></div>
     </section>
     <section class="store-card" id="store-card" aria-live="polite" hidden></section>
   </div>
   <section class="hero">
-    <div class="pills" id="recent-wrap" hidden><span class="pills-label">Recent:</span><span id="recent"></span></div>
+    <div class="pills" id="recent-wrap" hidden><span class="pills-label" data-i18n="Recent:">Recent:</span><span id="recent"></span></div>
   </section>
-  <section class="home-section home-cats"><h2>Shop by category</h2><nav class="cats" id="cats" aria-label="Categories"></nav></section>
-  <section class="home-section" id="biggest-wrap" hidden><h2>Biggest savings near you</h2><ul class="shelf" id="biggest"></ul></section>
-  <section class="home-section" id="fresh-wrap" hidden><h2>Started this week</h2><ul class="shelf" id="fresh"></ul></section>
-  <section class="home-section" id="ending-wrap" hidden><h2>Ending soon</h2><ul class="shelf" id="ending"></ul></section>
-  <section class="home-section" id="viewed-wrap" hidden><h2>Recently viewed</h2><ul class="shelf" id="viewed"></ul></section>
+  <section class="home-section home-cats"><h2 data-i18n="Shop by category">Shop by category</h2><nav class="cats" id="cats" data-i18n-aria="Categories"></nav></section>
+  <section class="home-section" id="biggest-wrap" hidden><h2 data-i18n="Biggest savings near you">Biggest savings near you</h2><ul class="shelf" id="biggest"></ul></section>
+  <section class="home-section" id="fresh-wrap" hidden><h2 data-i18n="Started this week">Started this week</h2><ul class="shelf" id="fresh"></ul></section>
+  <section class="home-section" id="ending-wrap" hidden><h2 data-i18n="Ending soon">Ending soon</h2><ul class="shelf" id="ending"></ul></section>
+  <section class="home-section" id="viewed-wrap" hidden><h2 data-i18n="Recently viewed">Recently viewed</h2><ul class="shelf" id="viewed"></ul></section>
 </main>
 
 <main class="shop" id="view-browse" hidden>
-  <nav class="cat-chips" id="b-cats" aria-label="Categories"></nav>
+  <nav class="cat-chips" id="b-cats" data-i18n-aria="Categories"></nav>
   <div class="filterbar">
     <div class="terms" id="b-terms">
       <span id="b-pills"></span>
-      <input id="b-add" type="search" dir="auto" autocomplete="off" aria-label="Add a word to narrow down">
+      <input id="b-add" type="search" dir="auto" autocomplete="off" data-i18n-aria="Add a word to narrow down">
     </div>
     <div class="facet" id="b-refine"></div>
     <div class="facet" id="b-sizes"></div>
     <div class="facet-row">
-      <button class="pill toggle" id="b-deal" type="button" aria-pressed="false">On deal now</button>
-      <label class="sort">Sort
+      <button class="pill toggle" id="b-deal" type="button" aria-pressed="false" data-i18n="On deal now">On deal now</button>
+      <label class="sort"><span data-i18n="Sort">Sort</span>
         <select id="b-sort">
-          <option value="">Best match</option>
-          <option value="price">Lowest price</option>
-          <option value="saving">Biggest saving</option>
-          <option value="stores">Sold in most stores</option>
+          <option value="" data-i18n="Best match">Best match</option>
+          <option value="price" data-i18n="Lowest price">Lowest price</option>
+          <option value="saving" data-i18n="Biggest saving">Biggest saving</option>
+          <option value="stores" data-i18n="Sold in most stores">Sold in most stores</option>
         </select>
       </label>
     </div>
@@ -88,24 +107,24 @@
 
 <main class="shop checkout" id="view-basket" hidden>
   <div class="checkout-head">
-    <h1>Where to buy <bdi id="co-name"></bdi></h1>
+    <h1><span data-i18n="Where to buy">Where to buy</span> <bdi id="co-name"></bdi></h1>
   </div>
     <div class="controls">
-    <div class="seg" role="radiogroup" aria-label="How you shop">
-      <button role="radio" data-mode="store" aria-checked="true" type="button">In store</button>
-      <button role="radio" data-mode="delivery" aria-checked="false" type="button">Delivered home</button>
+    <div class="seg" role="radiogroup" data-i18n-aria="How you shop">
+      <button role="radio" data-mode="store" aria-checked="true" type="button" data-i18n="In store">In store</button>
+      <button role="radio" data-mode="delivery" aria-checked="false" type="button" data-i18n="Delivered home">Delivered home</button>
     </div>
     <label class="switch">
-      <input type="checkbox" id="club">
+      <input type="checkbox" id="club" switch>
       <span class="track" aria-hidden="true"></span>
-      <span>Club member prices</span>
+      <span data-i18n="Club member prices">Club member prices</span>
     </label>
-    <button class="ghost small" id="open-settings" type="button">Delivery fees</button>
+    <button class="ghost small" id="open-settings" type="button" data-i18n="Delivery fees">Delivery fees</button>
   </div>
   <div class="map-slot" id="co-map"></div>
-  <section class="results" id="results-panel" aria-label="Where to buy" aria-live="polite"><div id="results"></div></section>
+  <section class="results" id="results-panel" data-i18n-aria="Where to buy" aria-live="polite"><div id="results"></div></section>
   <section class="sbs" id="sbs" aria-labelledby="sbs-title" hidden>
-    <h2 id="sbs-title">Compare Stores</h2>
+    <h2 id="sbs-title" data-i18n="Compare Stores">Compare Stores</h2>
     <div class="sbs-picks" id="sbs-picks"></div>
     <div class="table-scroll" id="sbs-table"></div>
     <p class="sbs-split" id="sbs-split"></p>
@@ -113,96 +132,162 @@
   <section class="trend" id="trend" aria-labelledby="trend-title" hidden></section>
 </main>
 
-<footer class="site-foot"><p class="freshness" id="freshness"></p></footer>
+<footer class="site-foot"><p class="freshness" id="freshness"></p><p class="foot-links"><a href="/privacy" data-i18n="Privacy">Privacy</a></p></footer>
 </div>
 
-<aside class="live-cart" id="cart" aria-label="Your cart" tabindex="-1">
+<aside class="live-cart" id="cart" data-i18n-aria="Your cart" tabindex="-1">
+  <div class="sheet-grab" aria-hidden="true"></div>
   <div class="lc-top">
-    <div class="cart-tabs" id="cart-tabs" role="tablist" aria-label="Your carts"></div>
-    <button class="icon lc-close" type="button" data-close-cart aria-label="Close the cart"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+    <div class="cart-tabs" id="cart-tabs" role="tablist" data-i18n-aria="Your carts"></div>
+    <button class="icon lc-close" type="button" data-close-cart data-i18n-aria="Close the cart"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   </div>
   <div class="cart-edit">
-    <input id="drawer-cart-name" class="cart-name" aria-label="Cart name" maxlength="80" spellcheck="false">
-    <button class="icon" type="button" data-cart="cmp" aria-label="Compare your carts" title="Compare your carts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5V8M8 15.5V4.5M12 15.5v-5M16 15.5V7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
-    <button class="icon" type="button" data-cart="empty" aria-label="Empty this cart" title="Empty this cart"><svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.1 6.2h9.2l-1.3 6.1a1.6 1.6 0 0 1-1.6 1.3H8.9a1.6 1.6 0 0 1-1.6-1.3L5.7 3.8H3.6"/><path d="M9.6 8.6l3 3M12.6 8.6l-3 3"/></g></svg></button>
-    <button class="icon" type="button" data-cart="dup" aria-label="Duplicate this cart" title="Duplicate this cart"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M13 4.5H6A1.5 1.5 0 0 0 4.5 6v7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
-    <button class="icon" type="button" data-cart="del" aria-label="Delete this cart" title="Delete this cart"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 9.5h6.6L14 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <input id="drawer-cart-name" class="cart-name" data-i18n-aria="Cart name" maxlength="80" spellcheck="false" dir="auto">
+    <button class="icon" type="button" data-cart="cmp" data-i18n-aria="Compare your carts" data-i18n-title="Compare your carts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5V8M8 15.5V4.5M12 15.5v-5M16 15.5V7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+    <button class="icon" type="button" data-cart="empty" data-i18n-aria="Empty this cart" data-i18n-title="Empty this cart"><svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.1 6.2h9.2l-1.3 6.1a1.6 1.6 0 0 1-1.6 1.3H8.9a1.6 1.6 0 0 1-1.6-1.3L5.7 3.8H3.6"/><path d="M9.6 8.6l3 3M12.6 8.6l-3 3"/></g></svg></button>
+    <button class="icon" type="button" data-cart="dup" data-i18n-aria="Duplicate this cart" data-i18n-title="Duplicate this cart"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M13 4.5H6A1.5 1.5 0 0 0 4.5 6v7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+    <button class="icon" type="button" data-cart="del" data-i18n-aria="Delete this cart" data-i18n-title="Delete this cart"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 9.5h6.6L14 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
   <p class="lc-sum" id="lc-sum"></p>
   <ol class="items" id="drawer-items"></ol>
   <div class="empty-basket" id="drawer-empty">
-    <p class="empty-title">This cart is empty</p>
+    <div class="empty-art" aria-hidden="true"></div>
+    <p class="empty-title" data-i18n="This cart is empty">This cart is empty</p>
   </div>
   <footer class="lc-foot" id="drawer-foot">
     <div class="lc-head">
-      <p class="lc-label" id="lc-label">Where this cart costs least</p>
-      <label class="switch small" title="Every branch near you, cheapest first">
-        <input type="checkbox" id="all-branches"><span class="track" aria-hidden="true"></span><span>All branches</span>
+      <p class="lc-label" id="lc-label" data-i18n="Where this cart costs least">Where this cart costs least</p>
+      <label class="switch small" data-i18n-title="Every branch near you, cheapest first">
+        <input type="checkbox" id="all-branches" switch><span class="track" aria-hidden="true"></span><span data-i18n="All branches">All branches</span>
       </label>
     </div>
     <div class="lc-stores" id="lc-stores"></div>
-    <a class="primary cta" href="#/basket" id="lc-cta">Compare stores</a>
+    <a class="primary cta" href="#/basket" id="lc-cta" data-i18n="Compare stores">Compare stores</a>
   </footer>
 </aside>
 </div>
 
 <button class="cart-bar" id="cart-bar" type="button" data-showcart hidden>
-  <span class="cb-n num" id="cb-n"></span><span class="cb-txt" id="cb-txt"></span><span class="cb-go">View cart</span>
+  <span class="cb-n num" id="cb-n"></span><span class="cb-txt" id="cb-txt"></span><span class="cb-go" data-i18n="View cart">View cart</span>
 </button>
 <div class="scrim" data-close-cart></div>
 
+<!-- sign in: shown instead of the shop until you're signed in (only when accounts are set up on the server) -->
+<section class="gate" id="gate" hidden>
+  <div class="gate-top"><button class="lang-btn" type="button" data-lang-toggle></button></div>
+  <div class="gate-body">
+    <div class="gate-art" aria-hidden="true"><span class="ga-tag a"><i>₪</i><b></b><b></b></span><span class="ga-tag b"><i>₪</i><b></b><b></b></span><span class="ga-tag c"><i>₪</i><b></b><b></b></span></div>
+    <h1 class="gate-title"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="9" class="tile"/><g class="ink-s" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg></span><span data-i18n="Sal-Kal">Sal-Kal</span></h1>
+    <p class="gate-lead" data-i18n="Supermarket price comparison">Supermarket price comparison</p>
+    <div class="gate-buttons" id="gate-buttons"></div>
+    <p class="gate-error" id="gate-error" role="alert" hidden></p>
+    <p class="gate-legal"><a href="/privacy" data-i18n="Privacy">Privacy</a> · <a href="/data-deletion" data-i18n="Deleting your data">Deleting your data</a></p>
+  </div>
+</section>
+
+<!-- first sign-in: where you shop from, how far, and what carts are -->
+<section class="onboard" id="onboard" hidden aria-live="polite">
+  <div class="ob-top">
+    <button class="icon ob-back" id="ob-back" type="button" data-i18n-aria="Back"><svg class="flip" viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <ol class="ob-dots" id="ob-dots" aria-hidden="true"><li></li><li></li><li></li></ol>
+    <button class="lang-btn" type="button" data-lang-toggle></button>
+  </div>
+  <div class="ob-steps" id="ob-steps">
+    <div class="ob-step" data-step="0">
+      <p class="ob-kicker" data-i18n="Step 1 of 3">Step 1 of 3</p>
+      <h2 data-i18n="Where do you shop from?">Where do you shop from?</h2>
+      <div class="addr" id="ob-addr"></div>
+    </div>
+    <div class="ob-step" data-step="1" hidden>
+      <p class="ob-kicker" data-i18n="Step 2 of 3">Step 2 of 3</p>
+      <h2 data-i18n="How far will you go?">How far will you go?</h2>
+      <div class="ob-map" id="ob-map"><div class="ob-map-canvas" id="ob-map-canvas"></div><p class="ob-count" id="ob-count"></p></div>
+      <div class="radius-picker" id="ob-radius" role="radiogroup" data-i18n-aria="Distance"></div>
+    </div>
+    <div class="ob-step" data-step="2" hidden>
+      <p class="ob-kicker" data-i18n="Step 3 of 3">Step 3 of 3</p>
+      <h2 data-i18n="Carts">Carts</h2>
+      <ol class="ob-how">
+        <li><span class="ob-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 9.6 10.5 5.8M15.5 9.6 13.5 5.8"/><path d="M4.6 9.6h14.8l-1.55 7.4a2.1 2.1 0 0 1-2.05 1.66H8.2A2.1 2.1 0 0 1 6.15 17z"/></g></svg></span>
+          <span><strong data-i18n="A cart is a list you name">A cart is a list you name</strong><small data-i18n="Weekly shop, Shabbat, a party — keep as many as you like.">Weekly shop, Shabbat, a party — keep as many as you like.</small></span></li>
+        <li><span class="ob-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/></g></svg></span>
+          <span><strong data-i18n="Add products">Add products</strong><small data-i18n="Search by name or barcode.">Search by name or barcode.</small></span></li>
+        <li><span class="ob-ico tag" aria-hidden="true"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V11M10 19V6M15 19v-6M20 19V9"/></g></svg></span>
+          <span><strong data-i18n="Compare">Compare</strong><small id="ob-compare-text"></small></span></li>
+      </ol>
+      <label class="ob-name"><span data-i18n="Name your first cart">Name your first cart</span>
+        <input id="ob-cart" maxlength="80" dir="auto" autocomplete="off" enterkeyhint="done"></label>
+    </div>
+  </div>
+  <div class="ob-foot">
+    <button class="primary big" id="ob-next" type="button" data-i18n="Continue">Continue</button>
+  </div>
+</section>
+
 <dialog id="location" class="sheet">
   <div class="sheet-inner">
+    <div class="sheet-grab" aria-hidden="true"></div>
     <header class="sheet-head">
-      <h2>Where do you shop from?</h2>
-      <button class="icon" data-close aria-label="Close" type="button"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      <h2 data-i18n="Where do you shop from?">Where do you shop from?</h2>
+      <button class="icon" data-close data-i18n-aria="Close" type="button"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
     </header>
-    <form class="loc-search" id="loc-form">
-      <input id="loc-q" type="search" placeholder="Street, number, city" dir="auto" autocomplete="street-address" aria-label="Your address">
-      <button class="primary" type="submit">Find</button>
-    </form>
-    <ul class="loc-results" id="loc-results" hidden></ul>
+    <div class="addr" id="loc-addr"></div>
     <div id="loc-set" hidden>
-      <p class="loc-current"><span class="loc-pin" aria-hidden="true"></span><bdi id="loc-label"></bdi>
-        <button class="ghost small" id="loc-clear" type="button">Remove</button></p>
-      <p class="loc-legend" id="radius-label">Show stores within</p>
-      <div class="seg radius" role="radiogroup" aria-labelledby="radius-label" id="radius"></div>
-      <div class="loc-traffic">
-        <p class="loc-legend">Drive times</p>
-        <p class="sheet-note" id="traffic-state"></p>
-        <form class="loc-search" id="key-form">
-          <input id="maps-key" type="password" autocomplete="off" spellcheck="false" placeholder="Google Maps API key (Routes API)" aria-label="Google Maps API key">
-          <button class="ghost" type="submit">Save key</button>
-        </form>
-      </div>
+      <p class="loc-legend" id="radius-label" data-i18n="Show stores within">Show stores within</p>
+      <div class="radius-picker" role="radiogroup" aria-labelledby="radius-label" id="radius"></div>
     </div>
-    <p class="note" id="loc-note"></p>
-    <div class="sheet-actions"><button class="primary" data-close type="button">Done</button></div>
+    <div class="sheet-actions"><button class="primary" data-close type="button" data-i18n="Done">Done</button></div>
+  </div>
+</dialog>
+
+<dialog id="account" class="sheet">
+  <div class="sheet-inner">
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <header class="sheet-head">
+      <h2 data-i18n="Account">Account</h2>
+      <button class="icon" data-close data-i18n-aria="Close" type="button"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+    </header>
+    <div id="account-body"></div>
   </div>
 </dialog>
 
 <dialog id="settings" class="sheet wide">
   <form method="dialog" class="sheet-inner">
+    <div class="sheet-grab" aria-hidden="true"></div>
     <header class="sheet-head">
-      <h2>Delivery fees</h2>
-      <button class="icon" value="close" aria-label="Close"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      <h2 data-i18n="Delivery fees">Delivery fees</h2>
+      <button class="icon" type="button" data-close data-i18n-aria="Close"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
     </header>
-    <p class="sheet-note">Not in the chains’ price files — edit to match their sites. Saved as you type.</p>
+    <p class="sheet-note" data-i18n="Not in the chains’ price files — edit to match their sites. Saved as you type.">Not in the chains’ price files — edit to match their sites. Saved as you type.</p>
     <div class="fee-table-wrap"><table class="fee-table" id="fee-table"></table></div>
   </form>
 </dialog>
 
 <dialog id="compare" class="sheet wide">
   <div class="sheet-inner">
+    <div class="sheet-grab" aria-hidden="true"></div>
     <header class="sheet-head">
-      <h2>Compare carts</h2>
-      <button class="icon" data-close aria-label="Close" type="button"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      <h2 data-i18n="Compare carts">Compare carts</h2>
+      <button class="icon" data-close data-i18n-aria="Close" type="button"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
     </header>
     <div id="compare-body"></div>
   </div>
 </dialog>
 
+<dialog id="confirm" class="sheet narrow">
+  <div class="sheet-inner">
+    <p class="confirm-q" id="confirm-q"></p>
+    <div class="sheet-actions">
+      <button class="ghost" type="button" data-answer="no" data-i18n="Cancel">Cancel</button>
+      <button class="primary danger" type="button" data-answer="yes" id="confirm-yes"></button>
+    </div>
+  </div>
+</dialog>
+
 <div class="toast" id="toast" role="status" hidden></div>
+<script src="/static/i18n.js"></script>
+<script src="/static/ux.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/account.js"></script>
 </body>
 </html>

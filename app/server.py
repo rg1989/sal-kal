@@ -1,4 +1,11 @@
-"""Basket web app: JSON API + static UI.  Run: uvicorn app.server:app --host 0.0.0.0 --port 8080"""
+"""Basket web app: JSON API + static UI.  Run: uvicorn app.server:app --host 0.0.0.0 --port 8080
+
+Accounts (app.auth): with Google or Facebook sign-in set up, every /api call except a few open ones needs a session,
+and carts, address, distance and delivery settings are each account's own. Without it ("local" mode) everything
+belongs to the household account, user 1, as before accounts existed."""
+import contextvars
+import hmac
+import html
 import json
 import os
 import re
@@ -8,14 +15,14 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections import Counter
+from collections import Counter, deque
 
-from fastapi import Body, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import catalog, engine, geo, trust
+from . import auth, catalog, engine, geo, places, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
@@ -34,9 +41,119 @@ def con():
     return c
 
 
+# ---------------------------------------------------------------- who is asking
+_user = contextvars.ContextVar("user", default=None)
+_public = contextvars.ContextVar("public", default=False)
+OPEN = {"/api/me", "/api/status", "/api/logout"}  # answered without signing in
+
+
+def _from_internet(request):
+    """Came in through the Cloudflare tunnel (Cloudflare sets this header on every request and overwrites any sent to
+    it); the LAN and Tailscale reach Sal without it. Sending it yourself only locks you out."""
+    return "cf-connecting-ip" in request.headers
+
+
+def me():
+    """The account this request is for: the signed-in one, or the household's in local mode. None = not signed in."""
+    return _user.get()
+
+
+def uid():
+    u = me()
+    if not u:
+        raise HTTPException(401, "sign in")
+    return u["id"]
+
+
+def _json(v, default):
+    try:
+        return json.loads(v) if v else default
+    except ValueError:
+        return default
+
+
+def prefs():
+    """This account's shopping preferences: home address, distance, club prices, in store / delivered."""
+    u = me()
+    return {**engine.DEFAULT_PREFS, **(_json(u.get("prefs"), {}) if u else {})}
+
+
+def overrides():
+    """This account's own delivery-fee edits (and the chains it confirmed deliver to it)."""
+    u = me()
+    return _json(u.get("delivery"), {}) if u else {}
+
+
+def _save_user(c, **cols):
+    c.execute(f"UPDATE users SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?", [*cols.values(), uid()])
+    c.commit()
+    me().update(cols)
+
+
+@app.middleware("http")
+async def who(request: Request, call_next):
+    path = request.url.path
+    u = None
+    public = _from_internet(request)
+    if path.startswith("/api/") or path.startswith("/auth/"):
+        c = con()
+        if auth.accounts_on():
+            u = auth.session_user(c, request.cookies.get(auth.SESSION_COOKIE))
+        elif not public:  # local mode: the household's own network and Tailscale
+            u = auth.user_row(c, 1)
+        # from the internet without sign-in set up: nobody, so the household's carts and address never leave home
+    token, ptoken = _user.set(u), _public.set(public)
+    try:
+        if path.startswith("/api/") and u is None and path not in OPEN:
+            resp = JSONResponse({"detail": "sign in"}, status_code=401)
+        else:
+            resp = await call_next(request)
+    finally:
+        _user.reset(token)
+        _public.reset(ptoken)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    if path.startswith("/api/"):
+        resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
+
+
+_limits, _limits_lock = {}, threading.Lock()
+
+
+def limit(name, n, per):
+    """At most n calls a `per` seconds per account to an endpoint that calls an outside service."""
+    k, now = (name, (me() or {}).get("id")), time.time()
+    with _limits_lock:
+        q = _limits.setdefault(k, deque())
+        while q and now - q[0] > per:
+            q.popleft()
+        if len(q) >= n:
+            raise HTTPException(429, "too many requests, wait a moment")
+        q.append(now)
+
+
+def _admin():
+    if not (me() or {}).get("admin"):
+        raise HTTPException(403, "admin only")
+
+
+_index = {}
+
+
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC, "index.html"), headers={"Cache-Control": "no-cache"})
+    """The page, with each script and stylesheet URL carrying its file's change time, so a deploy is picked up at once."""
+    p = os.path.join(STATIC, "index.html")
+    m = max(e.stat().st_mtime for e in os.scandir(STATIC) if e.name.endswith((".html", ".js", ".css")))
+    if _index.get("m") != m:
+        page = open(p, encoding="utf-8").read()
+        def stamp(mt):
+            f = os.path.join(STATIC, mt.group(2))
+            return f'{mt.group(1)}/static/{mt.group(2)}?v={int(os.stat(f).st_mtime) if os.path.exists(f) else 0}"'
+        _index.update(m=m, html=re.sub(r'(src="|href=")/static/([\w.-]+\.(?:js|css))"', stamp, page))
+    return HTMLResponse(_index["html"], headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -62,6 +179,7 @@ def status():
 
 @app.post("/api/reindex")
 def reindex():
+    _admin()
     st = engine.get_setting(con(), "index_status", {})
     if st.get("running") and time.time() - st.get("started", 0) < 3 * 3600:
         return {"started": False, "reason": "already running"}
@@ -173,8 +291,8 @@ _near_cache = {}
 def _near_stores(c):
     """Branches you'd walk into, with their distance: inside your distance limit (15 km without one), like the map.
     None when no home address is set. Cached for 10 minutes per address + limit."""
-    prefs = engine.get_prefs(c)
-    home, max_km = prefs.get("home"), prefs.get("max_km")
+    p = prefs()
+    home, max_km = p.get("home"), p.get("max_km")
     if not home:
         return None
     k = (home["lat"], home["lon"], max_km, int(time.time() // 600))
@@ -187,7 +305,8 @@ def _near_stores(c):
                 d = geo.km(home["lat"], home["lon"], lat, lon)
                 if d <= float(max_km or 15):
                     near[sk] = round(d, 1)
-        _near_cache.clear()
+        if len(_near_cache) > 200:  # one entry per address + distance in use
+            _near_cache.clear()
         _near_cache[k] = near
     return near
 
@@ -379,7 +498,7 @@ def browse(terms: str = "", cat: str = "", size: str = "", deal: int = 0, sort: 
     if not rows and len(words) == 1 and len(toks) > 1 and not cdef:  # one typed phrase: best partial match
         rows = c.execute(sql, (" OR ".join('"' + t.replace('"', '""') + '"*' for t in toks),)).fetchall()
     items = _present(c, rows, 1500, toks or None)
-    pct = deal_pct(c, engine.get_prefs(c).get("club"))
+    pct = deal_pct(c, prefs().get("club"))
     for d in items:
         d["size"] = catalog.size_of(d["name"], d["quantity"], d["unit"])
         d["save"] = pct.get(d["key"])
@@ -420,11 +539,12 @@ def classics():
 
 @app.get("/api/picks")
 def picks(limit: int = 12):
-    """What this household adds to its carts most (and most recently)."""
+    """What this account adds to its carts most (and most recently)."""
     c = con()
     rows = c.execute("""SELECT p.*, count(*) n, max(ca.updated) last FROM cart_items i
                          JOIN carts ca ON ca.id=i.cart_id JOIN products p ON p.key=i.key
-                         WHERE p.store_count > 0 GROUP BY i.key ORDER BY n DESC, last DESC LIMIT ?""", (limit,)).fetchall()
+                         WHERE p.store_count > 0 AND ca.user_id=? GROUP BY i.key ORDER BY n DESC, last DESC LIMIT ?""",
+                     (uid(), limit)).fetchall()
     return _enrich(c, _present(c, rows, limit))
 
 
@@ -452,13 +572,15 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: i
     c = con()
     if not c.execute("SELECT 1 FROM sqlite_master WHERE name='deals'").fetchone():
         return []
-    prefs = engine.get_prefs(c)
-    home, max_km = prefs.get("home"), prefs.get("max_km")
+    p = prefs()
+    home, max_km = p.get("home"), p.get("max_km")
     want = [k for k in keys.split(",") if k][:100]
-    if kind == "basket":  # the basket = every product in any of the household's carts
-        want = [r[0] for r in c.execute("SELECT DISTINCT key FROM cart_items")][:300]
+    mine = lambda: [r[0] for r in c.execute("""SELECT DISTINCT i.key FROM cart_items i JOIN carts ca ON ca.id=i.cart_id
+                                                 WHERE ca.user_id=?""", (uid(),))]
+    if kind == "basket":  # the basket = every product in any of this account's carts
+        want = mine()[:300]
         kind = "mine"
-    basket = tuple(sorted(r[0] for r in c.execute("SELECT DISTINCT key FROM cart_items"))) if skip_basket else ()
+    basket = tuple(sorted(mine()))[:500] if skip_basket else ()
     nearby = bool(home and max_km)  # the nearby stores are joined below, current ones only
     live, live_args, sig = _live_deals(c, stores=not nearby)
     checked, cutoff = _confirmed_through(c), trust.fresh_cutoff()
@@ -477,7 +599,7 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: i
         c.execute("DELETE FROM near")
         c.executemany("INSERT INTO near VALUES(?,?)", [sk for sk in coords if sk in fresh and dist(sk) <= float(max_km)])
         join = "JOIN near n ON n.chain_id=d.chain_id AND n.store_id=d.store_id"
-    if not prefs.get("club"):
+    if not p.get("club"):
         where.append("d.description NOT LIKE '%מועדון%'")
     if kind == "mine":
         if not want:
@@ -491,7 +613,8 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: i
         where.append("d.end_ts IS NOT NULL AND d.end_ts <= ?")
         params.append(int(time.strftime("%Y%m%d2359", time.localtime(time.time() + 2 * 86400))))
     if basket:
-        where.append("d.key NOT IN (SELECT key FROM cart_items)")
+        where.append(f"d.key NOT IN ({','.join('?' * len(basket))})")
+        params += list(basket)
     # everyday products first: savings weighted by how widely the product is sold
     weighted = "g.save_pct * (0.5 + 0.5 * min(p.store_count, 100) / 100.0) DESC"
     order = ("g.start_ts DESC, g.save_pct DESC" if kind == "new"
@@ -564,8 +687,8 @@ def stores_near(limit: int = 600):
     """Branches with prices around the user's home, for the map: inside the distance limit,
     or the nearest ones when there is no limit."""
     c = con()
-    prefs = engine.get_prefs(c)
-    home, max_km = prefs.get("home"), prefs.get("max_km")
+    p = prefs()
+    home, max_km = p.get("home"), p.get("max_km")
     if not home:
         return {"home": None, "max_km": None, "stores": []}
     names = {r["chain_id"]: r["name_he"] for r in c.execute("SELECT chain_id, name_he FROM chains")}
@@ -585,18 +708,53 @@ def stores_near(limit: int = 600):
                        for d, sk, lat, lon in near[:limit]]}
 
 
-@app.get("/api/geocode")
-def geocode(q: str):
-    """Look up the user's address (OpenStreetMap). Only the chosen result is stored, in prefs."""
-    q = q.strip()
-    if len(q) < 3:
-        return []
+# ---------------------------------------------------------------- your address: picked from the official lists
+@app.on_event("startup")
+def _places_lists():
+    """The official town and street lists, downloaded once in the background (a few seconds) when they're missing."""
+    threading.Thread(target=places.ready, daemon=True).start()
+
+
+@app.get("/api/places/towns")
+def places_towns(q: str = ""):
+    return places.towns(q[:60])
+
+
+@app.get("/api/places/streets")
+def places_streets(town: int, q: str = ""):
+    return places.streets(town, q[:60])
+
+
+@app.get("/api/places/locate")
+def places_locate(town: int, street: int = 0, number: int = 0):
+    """Where an address picked from the lists is: {label, lat, lon, precision, town, street, number}."""
+    if number and not 0 < number < 10000:
+        raise HTTPException(422, "house number out of range")
+    limit("locate", 30, 60)
     try:
-        hits = geo.lookup(q, limit=5)
-    except Exception:
-        raise HTTPException(502, "Address lookup is unavailable right now")
-    return [{"label": geo.label(h), "lat": float(h["lat"]), "lon": float(h["lon"])}
-            for h in hits]
+        return places.locate(town, street or None, number or None)
+    except ValueError:
+        raise HTTPException(404, "no such town")
+    except LookupError:
+        raise HTTPException(404, "not on the map")
+    except Exception as e:
+        print("locate failed:", e, file=sys.stderr)
+        raise HTTPException(502, "map lookup unavailable")
+
+
+@app.get("/api/places/reverse")
+def places_reverse(lat: float, lon: float):
+    """The address at your phone's location, when it's in Israel."""
+    if not (29.3 <= lat <= 33.5 and 34.2 <= lon <= 35.95):
+        raise HTTPException(422, "outside Israel")
+    limit("locate", 30, 60)
+    try:
+        return places.reverse(lat, lon)
+    except LookupError:
+        raise HTTPException(404, "no address here")
+    except Exception as e:
+        print("reverse failed:", e, file=sys.stderr)
+        raise HTTPException(502, "map lookup unavailable")
 
 
 @app.post("/api/drive")
@@ -605,6 +763,7 @@ def drive(body: dict = Body(...)):
     home = body.get("home") or {}
     if "lat" not in home:
         return {"times": {}, "live": False}
+    limit("drive", 40, 60)
     c = con()
     coords = geo.store_coords(c)
     want = {(str(cid), int(sid)) for cid, sid in (body.get("stores") or [])[:60]}
@@ -742,34 +901,39 @@ def cart_history(body: dict = Body(...)):
 
 # ---------------------------------------------------------------- one store: address, opening hours, route from home
 HOURS_FILE = os.path.join(os.path.dirname(PHOTO_DIR), "hours.json")
-_area, _area_retry, _area_lock = None, 0, threading.Lock()
+_areas, _area_retry, _area_lock = None, 0, threading.Lock()
+MAX_AREAS = 300  # one per address + distance in use; the oldest go first
 
 
 def _osm_area(home, max_km):
-    """Every food shop with opening hours around home (OpenStreetMap), fetched in one query and kept in hours.json
-    for two weeks; refetched when the address or distance changes. After a failure, waits 10 minutes."""
-    global _area, _area_retry
+    """Every food shop with opening hours around an address (OpenStreetMap), fetched in one query and kept in
+    hours.json for two weeks, per address and distance. After a failure, waits 10 minutes."""
+    global _areas, _area_retry
     with _area_lock:
-        if _area is None:
+        if _areas is None:
             try:
                 with open(HOURS_FILE) as f:
-                    _area = json.load(f)
-            except (OSError, ValueError):
-                _area = {}
-        key = [round(home["lat"], 3), round(home["lon"], 3), max_km]
-        fresh = _area.get("key") == key and _area.get("until", 0) > time.time()
+                    saved = json.load(f)
+                _areas = saved.get("areas") or ({json.dumps(saved["key"]): saved} if saved.get("key") else {})
+            except (OSError, ValueError, KeyError):
+                _areas = {}
+        key = json.dumps([round(home["lat"], 3), round(home["lon"], 3), max_km])
+        area = _areas.get(key) or {}
+        fresh = area.get("until", 0) > time.time()
         if not fresh and time.time() > _area_retry:
             try:
                 shops = geo.osm_shops(home["lat"], home["lon"], (float(max_km or 15) + 1) * 1000)
-                _area = {"key": key, "until": time.time() + 14 * 86400, "shops": shops}
+                area = _areas[key] = {"until": time.time() + 14 * 86400, "shops": shops}
+                for k in sorted(_areas, key=lambda k: _areas[k].get("until", 0))[:max(0, len(_areas) - MAX_AREAS)]:
+                    del _areas[k]
                 tmp = HOURS_FILE + ".tmp"
                 with open(tmp, "w") as f:
-                    json.dump(_area, f, ensure_ascii=False)
+                    json.dump({"areas": _areas}, f, ensure_ascii=False)
                 os.replace(tmp, HOURS_FILE)
             except Exception as e:
                 print("opening hours unavailable:", e, file=sys.stderr)
                 _area_retry = time.time() + 600
-        return _area.get("shops") or [], _area.get("key") == key
+        return area.get("shops") or [], bool(area)
 
 
 def _store_row(c, chain_id, store_id):
@@ -794,8 +958,9 @@ def store_info(chain_id: str, store_id: int):
     ll = geo.store_coords(c).get((chain_id, store_id))
     if ll:
         out["lat"], out["lon"] = ll
-        home = engine.get_prefs(c).get("home")
+        home = prefs().get("home")
         if home:
+            limit("route", 60, 60)
             try:
                 out["route"] = geo.route((home["lat"], home["lon"]), ll)
             except Exception as e:
@@ -808,11 +973,11 @@ def store_hours(chain_id: str, store_id: int):
     """Opening hours from OpenStreetMap, when someone has mapped them for this branch."""
     c = con()
     _, chain, he = _store_row(c, chain_id, store_id)
-    prefs = engine.get_prefs(c)
+    p = prefs()
     ll = geo.store_coords(c).get((chain_id, store_id))
-    if not ll or not prefs.get("home"):
+    if not ll or not p.get("home"):
         return {"hours": None, "week": None, "checked": False}
-    shops, ok = _osm_area(prefs["home"], prefs.get("max_km"))
+    shops, ok = _osm_area(p["home"], p.get("max_km"))
     hours, name = geo.match_hours(shops, ll[0], ll[1], [chain, BRAND_HE.get(chain, ""), he])
     return {"hours": hours, "week": geo.parse_hours(hours), "name": name, "checked": ok}
 
@@ -821,8 +986,7 @@ def store_hours(chain_id: str, store_id: int):
 @app.post("/api/compare")
 def compare(body: dict = Body(...)):
     c = con()
-    prefs = {**engine.get_prefs(c), **(body.get("prefs") or {})}
-    res = engine.compare(c, body.get("items") or [], prefs)
+    res = engine.compare(c, (body.get("items") or [])[:400], {**prefs(), **(body.get("prefs") or {})}, overrides=overrides())
     for it in res["items"]:
         it["img"] = _img(it["key"])
     return res
@@ -834,7 +998,7 @@ def get_settings():
     c = con()
     chains = c.execute("""SELECT DISTINCT s.chain_id, ch.name_he FROM stores s LEFT JOIN chains ch
                           ON ch.chain_id=s.chain_id WHERE s.price_full_ts > 0""").fetchall()
-    table = engine.delivery_table(c)
+    table = engine.delivery_table(c, overrides())
     seen, rows = set(), []
     for r in chains:
         name = chain_name(r["chain_id"], r["name_he"])
@@ -843,18 +1007,47 @@ def get_settings():
         seen.add(name)
         rows.append({"chain_id": r["chain_id"], "name": name, **table.get(r["chain_id"], {})})
     rows.sort(key=lambda r: (r.get("fee") is None, r["name"]))
-    return {"prefs": engine.get_prefs(c), "delivery": rows, "traffic": bool(engine.get_setting(c, "maps_key", None))}
+    return {"prefs": prefs(), "delivery": rows, "traffic": bool(engine.get_setting(c, "maps_key", None))}
+
+
+PREF_KEYS = {"home", "max_km", "club", "mode"}
+
+
+def _clean_home(h):
+    """An address as the picker returns it; nothing else is kept."""
+    if not h:
+        return None
+    try:
+        lat, lon = float(h["lat"]), float(h["lon"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "bad address")
+    if not (29.3 <= lat <= 33.5 and 34.2 <= lon <= 35.95):
+        raise HTTPException(422, "outside Israel")
+    out = {"label": str(h.get("label") or "")[:120], "lat": lat, "lon": lon}
+    for k in ("town", "street", "number"):
+        if isinstance(h.get(k), int):
+            out[k] = h[k]
+    for k in ("town_name", "street_name", "precision"):
+        if isinstance(h.get(k), str):
+            out[k] = h[k][:80]
+    return out
 
 
 @app.put("/api/settings")
 def put_settings(body: dict = Body(...)):
     c = con()
     if "prefs" in body:
-        engine.put_setting(c, "prefs", {**engine.get_prefs(c), **body["prefs"]})
-    if "maps_key" in body:  # write-only: GET only says whether one is set
+        p = {k: v for k, v in (body["prefs"] or {}).items() if k in PREF_KEYS}
+        if "home" in p:
+            p["home"] = _clean_home(p["home"])
+        if "max_km" in p and p["max_km"] is not None:
+            p["max_km"] = max(0.5, min(100.0, float(p["max_km"])))
+        _save_user(c, prefs=json.dumps({**_json(me().get("prefs"), {}), **p}, ensure_ascii=False))
+    if "maps_key" in body:  # write-only: GET only says whether one is set. Billed per use: the admin's call
+        _admin()
         engine.put_setting(c, "maps_key", (body["maps_key"] or "").strip() or None)
     if "delivery" in body:
-        cur = engine.get_setting(c, "delivery", {})
+        cur = overrides()
         for cid, rule in body["delivery"].items():
             clean = {k: rule.get(k) for k in ("fee", "reduced_fee", "reduced_above", "free_above", "min_order", "delivers",
                                                     "delivers_here")
@@ -862,14 +1055,15 @@ def put_settings(body: dict = Body(...)):
             if rule.get("reset"):
                 cur.pop(cid, None)
             else:
-                cur[cid] = clean
-        engine.put_setting(c, "delivery", cur)
+                cur[str(cid)[:20]] = clean
+        _save_user(c, delivery=json.dumps(cur))
     return get_settings()
 
 
 # ---------------------------------------------------------------- carts
 def _cart(c, cid):
-    row = c.execute("SELECT * FROM carts WHERE id=?", (cid,)).fetchone()
+    """One of this account's carts (someone else's is "not found")."""
+    row = c.execute("SELECT * FROM carts WHERE id=? AND user_id=?", (cid, uid())).fetchone()
     if not row:
         raise HTTPException(404, "cart not found")
     return {**dict(row), "items": engine.cart_items(c, cid)}
@@ -879,16 +1073,21 @@ def _cart(c, cid):
 def list_carts():
     c = con()
     rows = c.execute("""SELECT c.*, count(i.key) n FROM carts c LEFT JOIN cart_items i ON i.cart_id=c.id
-                        GROUP BY c.id ORDER BY c.updated DESC""").fetchall()
+                        WHERE c.user_id=? GROUP BY c.id ORDER BY c.updated DESC""", (uid(),)).fetchall()
     return [dict(r) for r in rows]
+
+
+MAX_CARTS, MAX_ITEMS = 50, 400
 
 
 @app.post("/api/carts")
 def create_cart(body: dict = Body(default={})):
     c = con()
+    if c.execute("SELECT count(*) FROM carts WHERE user_id=?", (uid(),)).fetchone()[0] >= MAX_CARTS:
+        raise HTTPException(409, "too many carts")
     now = int(time.time())
-    cur = c.execute("INSERT INTO carts(name, created, updated) VALUES(?,?,?)",
-                    (body.get("name") or "New basket", now, now))
+    cur = c.execute("INSERT INTO carts(name, created, updated, user_id) VALUES(?,?,?,?)",
+                    ((body.get("name") or "New basket").strip()[:80], now, now, uid()))
     cid = cur.lastrowid
     _write_items(c, cid, body.get("items") or [])
     c.commit()
@@ -896,10 +1095,12 @@ def create_cart(body: dict = Body(default={})):
 
 
 def _write_items(c, cid, items):
+    items = [i for i in items if isinstance(i, dict) and isinstance(i.get("key"), str) and len(i["key"]) <= 40][:MAX_ITEMS]
     want_photos([i["key"] for i in items if ":" not in (i.get("key") or "")])  # cart products' photos first
     c.execute("DELETE FROM cart_items WHERE cart_id=?", (cid,))
     c.executemany("INSERT OR REPLACE INTO cart_items(cart_id, key, qty, name, position) VALUES(?,?,?,?,?)",
-                  [(cid, i["key"], float(i.get("qty") or 1), i.get("name") or "", n) for n, i in enumerate(items)])
+                  [(cid, i["key"], max(0.01, min(999.0, float(i.get("qty") or 1))), str(i.get("name") or "")[:200], n)
+                   for n, i in enumerate(items)])
 
 
 @app.get("/api/carts/{cid}")
@@ -923,6 +1124,7 @@ def update_cart(cid: int, body: dict = Body(...)):
 @app.delete("/api/carts/{cid}")
 def delete_cart(cid: int):
     c = con()
+    _cart(c, cid)
     for t, col in (("cart_items", "cart_id"), ("carts", "id")):
         c.execute(f"DELETE FROM {t} WHERE {col}=?", (cid,))
     c.commit()
@@ -934,3 +1136,168 @@ def duplicate_cart(cid: int):
     c = con()
     src = _cart(c, cid)
     return create_cart({"name": f"{src['name']} (copy)", "items": src["items"]})
+
+
+# ---------------------------------------------------------------- accounts: sign in with Google / Facebook
+def _base(request):
+    """This site's address as the browser sees it (auth.json base_url when set: providers need it exact)."""
+    b = auth.config().get("base_url")
+    if b:
+        return b.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}"
+
+
+def _cookie(resp, request, name, value, max_age, path="/"):
+    resp.set_cookie(name, value, max_age=max_age, httponly=True, samesite="lax", path=path,
+                    secure=_base(request).startswith("https://"))
+
+
+def _back(why=None):
+    resp = RedirectResponse("/#/signin" + (f"?signin={why}" if why else ""), status_code=303)
+    resp.delete_cookie(auth.STATE_COOKIE, path="/auth")
+    return resp
+
+
+@app.get("/auth/{provider}")
+def auth_start(provider: str, request: Request, lang: str = "", who: str = ""):
+    if provider not in auth.providers():
+        raise HTTPException(404, "sign-in not set up")
+    url, state = auth.start(provider, f"{_base(request)}/auth/{provider}/callback", who=who if provider == "dev" else None)
+    state["l"] = lang if lang in ("he", "en") else request.cookies.get("lang") if request.cookies.get("lang") in ("he", "en") else None
+    resp = RedirectResponse(url, status_code=303)
+    _cookie(resp, request, auth.STATE_COOKIE, auth.sign(state), 900, path="/auth")
+    return resp
+
+
+@app.get("/auth/{provider}/callback")
+def auth_callback(provider: str, request: Request, code: str = "", state: str = "", error: str = ""):
+    st = auth.unsign(request.cookies.get(auth.STATE_COOKIE, ""), 900)
+    if error:
+        return _back("cancelled")
+    if not st or st.get("p") != provider or not code or not hmac.compare_digest(str(st.get("s", "")), state):
+        return _back("failed")
+    try:
+        sub, email, verified, name, avatar = auth.finish(provider, code, f"{_base(request)}/auth/{provider}/callback", st.get("v"))
+    except Exception as e:
+        print(f"{provider} sign-in failed:", e, file=sys.stderr)
+        return _back("failed")
+    c = con()
+    user_id = auth.sign_in(c, provider, str(sub), email, verified, (name or "")[:80], avatar, lang=st.get("l"))
+    resp = RedirectResponse("/#/", status_code=303)
+    _cookie(resp, request, auth.SESSION_COOKIE, auth.new_session(c, user_id), auth.SESSION_DAYS * 86400)
+    resp.delete_cookie(auth.STATE_COOKIE, path="/auth")
+    return resp
+
+
+@app.get("/api/me")
+def get_me():
+    """Who you are, whether sign-in is on (and with what), and your shopping preferences."""
+    u, c = me(), con()
+    out = {"mode": "accounts" if auth.accounts_on() or _public.get() else "local", "providers": auth.providers(),
+           "user": None, "prefs": None}
+    if u:
+        u["providers"] = [r[0] for r in c.execute("SELECT provider FROM identities WHERE user_id=? ORDER BY created", (u["id"],))]
+        out.update(user=auth.public(u), prefs=prefs())
+    return out
+
+
+@app.put("/api/me")
+def put_me(body: dict = Body(...)):
+    c = con()
+    cols = {}
+    if body.get("lang") in ("he", "en"):
+        cols["lang"] = body["lang"]
+    if "onboarded" in body:
+        cols["onboarded"] = int(bool(body["onboarded"]))
+    if isinstance(body.get("name"), str) and body["name"].strip():
+        cols["name"] = body["name"].strip()[:80]
+    if cols:
+        _save_user(c, **cols)
+    return get_me()
+
+
+@app.delete("/api/me")
+def delete_me(request: Request):
+    """Erase this account: carts, address, settings, sign-ins and sessions."""
+    if not auth.accounts_on():
+        raise HTTPException(400, "no accounts in local mode")
+    auth.delete_user(con(), uid())
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.post("/api/logout")
+def logout(request: Request):
+    auth.end_session(con(), request.cookies.get(auth.SESSION_COOKIE))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+    return resp
+
+
+# ---------------------------------------------------------------- privacy and data deletion (Facebook requires both pages)
+LEGAL = {
+    "he": {
+        "privacy": ("פרטיות", [
+            ("מה נשמר", "כשנכנסים עם Google או Facebook נשמרים השם, כתובת הדוא״ל ותמונת הפרופיל שהם מעבירים, ומזהה החשבון אצלם. "
+                        "בנוסף נשמרים הסלים שיצרת, הכתובת שבחרת (רחוב, מספר, יישוב ונקודה במפה), המרחק, השפה והגדרות דמי המשלוח."),
+            ("למה", "רק כדי להציג לך את הסלים שלך ואת המחירים בחנויות שליד הכתובת שבחרת. אין פרסומות, אין מעקב ואין מכירה או מסירה של מידע."),
+            ("שירותים חיצוניים", "הכתובת שבחרת נשלחת פעם אחת ל־OpenStreetMap (Nominatim) כדי לסמן אותה במפה, בלי שם או דוא״ל. "
+                                 "זמני נסיעה ומסלולים מחושבים ב־OSRM לפי נקודות במפה. Google ו־Facebook מעורבים רק ברגע הכניסה."),
+            ("עוגיות", "עוגיית כניסה אחת (HttpOnly) שומרת אותך מחובר/ת עד 180 יום, ועוגייה של בחירת השפה."),
+            ("מחיקה", "אפשר למחוק את החשבון ואת כל המידע בכל רגע: חשבון ← מחיקת החשבון שלי. המחיקה מיידית ומלאה."),
+        ]),
+        "data-deletion": ("מחיקת המידע שלך", [
+            ("איך מוחקים", "נכנסים לסל קל, לוחצים על תמונת הפרופיל בכותרת, ובוחרים ״מחיקת החשבון שלי״. "
+                           "הסלים, הכתובת, ההגדרות, פרטי הכניסה וכל החיבורים הפעילים נמחקים מיד ולצמיתות."),
+            ("גם ב־Facebook", "אפשר להסיר את סל קל מהאפליקציות המחוברות בהגדרות Facebook (הגדרות ופרטיות ← אפליקציות ואתרים)."),
+        ]),
+    },
+    "en": {
+        "privacy": ("Privacy", [
+            ("What is kept", "When you sign in with Google or Facebook, Sal-Kal keeps the name, email address and profile photo they pass on, "
+                             "and your account id there. It also keeps the carts you make, the address you choose (street, number, town "
+                             "and a point on the map), your distance, language and delivery-fee settings."),
+            ("Why", "Only to show you your carts and their prices at the stores near the address you chose. No ads, no tracking, "
+                    "and nothing is sold or passed on."),
+            ("Outside services", "The address you choose is sent once to OpenStreetMap (Nominatim) to put it on the map, without your "
+                                 "name or email. Drive times and routes are worked out by OSRM from map points. Google and Facebook "
+                                 "are involved only when you sign in."),
+            ("Cookies", "One sign-in cookie (HttpOnly) keeps you signed in for up to 180 days, and one remembers your language."),
+            ("Deleting", "You can delete your account and everything in it at any time: Account → Delete my account. It is immediate and complete."),
+        ]),
+        "data-deletion": ("Deleting your data", [
+            ("How", "Open Sal-Kal, tap your profile picture in the header and choose “Delete my account”. Your carts, address, settings, "
+                    "sign-ins and every open session are erased at once and for good."),
+            ("On Facebook too", "You can also remove Sal-Kal from your connected apps in Facebook’s settings (Settings & privacy → Apps and websites)."),
+        ]),
+    },
+}
+
+
+def _legal_page(kind, request, lang):
+    lang = lang if lang in ("he", "en") else request.cookies.get("lang") if request.cookies.get("lang") in ("he", "en") else "he"
+    title, parts = LEGAL[lang][kind]
+    contact = auth.config().get("contact_email")
+    other = "en" if lang == "he" else "he"
+    body = "".join(f"<h2>{html.escape(h)}</h2><p>{html.escape(p)}</p>" for h, p in parts)
+    if contact:
+        body += f"<h2>{'יצירת קשר' if lang == 'he' else 'Contact'}</h2><p><a href=\"mailto:{html.escape(contact)}\">{html.escape(contact)}</a></p>"
+    page = f"""<!doctype html><html lang="{lang}" dir="{'rtl' if lang == 'he' else 'ltr'}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} · {'סל קל' if lang == 'he' else 'Sal-Kal'}</title>
+<link rel="stylesheet" href="/static/styles.css"></head><body class="legal"><main class="legal-page">
+<p class="legal-top"><a href="/">{'← סל קל' if lang == 'he' else '← Sal-Kal'}</a><a href="?lang={other}" lang="{other}">{'English' if lang == 'he' else 'עברית'}</a></p>
+<h1>{html.escape(title)}</h1>{body}</main></body></html>"""
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/privacy")
+def privacy(request: Request, lang: str = ""):
+    return _legal_page("privacy", request, lang)
+
+
+@app.get("/data-deletion")
+def data_deletion(request: Request, lang: str = ""):
+    return _legal_page("data-deletion", request, lang)

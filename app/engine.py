@@ -63,10 +63,10 @@ def get_prefs(con):
     return p
 
 
-def delivery_table(con):
-    """Defaults merged with the user's overrides, keyed by chain id."""
+def delivery_table(con, overrides=None):
+    """Defaults merged with an account's overrides (the household's stored setting when none are given), by chain id."""
     out = {k: dict(v) for k, v in DELIVERY_DEFAULTS.items()}
-    for k, v in get_setting(con, "delivery", {}).items():
+    for k, v in (get_setting(con, "delivery", {}) if overrides is None else overrides).items():
         out.setdefault(k, {}).update(v)
         out[k]["custom"] = True
     return out
@@ -206,7 +206,7 @@ def ph(seq):
     return ",".join("?" * len(seq))
 
 
-def compare(con, items, prefs=None, now_int=None):
+def compare(con, items, prefs=None, now_int=None, overrides=None):
     prefs = {**DEFAULT_PREFS, **(prefs or {})}
     items = [i for i in items if i.get("key") and float(i.get("qty") or 0) > 0]
     now_int = now_int or int(time.strftime("%Y%m%d%H%M"))
@@ -279,7 +279,7 @@ def compare(con, items, prefs=None, now_int=None):
     def in_range(dist):  # stores not located yet can't be shown to be within range, so a distance cap hides them
         return max_km is None or (dist is not None and dist <= max_km)
 
-    delivery = delivery_table(con)
+    delivery = delivery_table(con, overrides)
     physical = {sk for sk, st in stores.items() if _is_physical(st) and in_range(loc[sk][0])}
     online_by_chain = defaultdict(list)
     for sk, st in stores.items():
