@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
 from . import catalog, engine, geo, trust
-from .images import PHOTO_DIR, photo_path
+from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
 app = FastAPI(title="Basket")
@@ -554,6 +554,8 @@ def product(key: str):
     row = con().execute("SELECT * FROM products WHERE key=?", (key,)).fetchone()
     if not row:
         raise HTTPException(404, "product not found")
+    if row["scope"] == "global" and not _img(row["code"]):
+        want_photos([row["code"]])  # fetched in the background; it shows on the next look
     return {**dict(row), "img": _img(row["code"]) if row["scope"] == "global" else None}
 
 
@@ -894,6 +896,7 @@ def create_cart(body: dict = Body(default={})):
 
 
 def _write_items(c, cid, items):
+    want_photos([i["key"] for i in items if ":" not in (i.get("key") or "")])  # cart products' photos first
     c.execute("DELETE FROM cart_items WHERE cart_id=?", (cid,))
     c.executemany("INSERT OR REPLACE INTO cart_items(cart_id, key, qty, name, position) VALUES(?,?,?,?,?)",
                   [(cid, i["key"], float(i.get("qty") or 1), i.get("name") or "", n) for n, i in enumerate(items)])
