@@ -84,7 +84,7 @@ const HE = {
   'Cheapest': 'הכי זול', 'Cheapest stores': 'החנויות הזולות', 'top {a} of {n}': '{a} הראשונות מתוך {n}',
   'Delivered · fee not set': 'משלוח · דמי המשלוח לא הוגדרו', 'Free delivery': 'משלוח חינם',
   'incl. {fee} delivery': 'כולל משלוח {fee}', "Couldn't save the cart": 'לא הצלחנו לשמור את הסל',
-  'Removed {name}': '{name} הוסר', 'item': 'פריט', 'Undo': 'ביטול', 'New cart': 'סל חדש', '+ New cart': '+ סל חדש', 'Cart {n}': 'סל {n}',
+  'Removed {name}': '{name} הוסר', 'item': 'פריט', 'Undo': 'ביטול', 'New cart': 'סל חדש', 'Scroll left': 'גלילה שמאלה', 'Scroll right': 'גלילה ימינה', '+ New cart': '+ סל חדש', 'Cart {n}': 'סל {n}',
   "Couldn't create a cart": 'לא הצלחנו ליצור סל', 'Untitled': 'ללא שם', 'Emptied {cart}': 'הסל "{cart}" רוקן',
   'Made “{cart}”': 'נוצר "{cart}"', 'Delete the cart “{cart}”?': 'למחוק את הסל "{cart}"?', 'Delete': 'מחיקה',
   'Cart deleted': 'הסל נמחק', 'Started the cart “{cart}”': 'פתחנו את הסל "{cart}"',

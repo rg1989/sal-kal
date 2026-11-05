@@ -390,7 +390,7 @@ function renderCartTabs() {
   $('#cart-tabs').innerHTML = list.map(c => {
     const on = c.id === S.cart.id, n = on ? S.cart.items.length : c.n;
     return `<button class="pill${on ? ' on' : ''}" type="button" role="tab" aria-selected="${on}" data-cartid="${c.id}"><bdi>${esc(on ? S.cart.name : c.name)}</bdi>${n ? ` <span>${n}</span>` : ""}</button>`;
-  }).join('') + `<button class="pill add" type="button" data-cart="new"><span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>${t('New cart')}</button>`;
+  }).join('') + `<button class="pill new-btn" type="button" data-cart="new"><span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>${t('New cart')}</button>`;
 }
 $('#cart-tabs').addEventListener('click', async e => {
   const tab = e.target.closest('[data-cartid]');
@@ -627,6 +627,69 @@ async function renderHome() {
   $('#cats').innerHTML = (cats || []).map(catTile).join('');
   sizeMapExt();
 }
+// every row that scrolls sideways (deal shelves, filter and size chips, categories, cart tabs) for a mouse without a
+// trackpad: a ‹ and a › at its ends that go about a screen that way (and hide once it can't go further), and grab and
+// pull with the mouse. Touch screens keep their own swipe.
+const CHEV = { left: 'M12.5 4.5 7 10l5.5 5.5', right: 'M7.5 4.5 13 10l-5.5 5.5' };
+function scrollNav(el) {
+  const box = document.createElement('div');
+  box.className = `scroll-box${el.matches('.shelf') ? ' big' : ''}`;
+  el.before(box);
+  box.append(el);
+  el.classList.add('scroll-x');
+  const btn = {};
+  for (const side of ['left', 'right']) {
+    const b = btn[side] = document.createElement('button');
+    b.type = 'button';
+    b.className = `scroll-go ${side}`;
+    b.hidden = true;
+    b.dataset.i18nAria = side === 'left' ? 'Scroll left' : 'Scroll right';
+    b.setAttribute('aria-label', t(b.dataset.i18nAria));
+    b.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="${CHEV[side]}" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    b.addEventListener('click', () => { haptic('tap'); el.scrollBy({ left: (side === 'left' ? -1 : 1) * el.clientWidth * 0.85, behavior: 'smooth' }); });
+    box.append(b);
+  }
+  const update = () => {
+    const max = el.scrollWidth - el.clientWidth;
+    // how far the row is from its left end (right-to-left pages count scrollLeft from the right, negative)
+    const x = getComputedStyle(el).direction === 'rtl' ? max + el.scrollLeft : el.scrollLeft;
+    btn.left.hidden = !(max > 2 && x > 2);
+    btn.right.hidden = !(max > 2 && x < max - 2);
+  };
+  el.addEventListener('scroll', update, { passive: true });
+  new ResizeObserver(update).observe(el);
+  new MutationObserver(update).observe(el, { childList: true, subtree: true });
+  new MutationObserver(update).observe(document.documentElement, { attributes: true, attributeFilter: ['dir'] });
+  update();
+  // grab and pull (a mouse only): past a few pixels it's a drag, and the click it ends with doesn't open what it began on
+  let from = null, dragged = false;
+  el.addEventListener('pointerdown', e => {
+    dragged = false;
+    if (e.pointerType !== 'mouse' || e.button !== 0 || el.scrollWidth <= el.clientWidth || e.target.closest('input, select, textarea')) return;
+    from = { x: e.clientX, left: el.scrollLeft, id: e.pointerId };
+  });
+  el.addEventListener('pointermove', e => {
+    if (!from || e.pointerId !== from.id) return;
+    const dx = e.clientX - from.x;
+    if (!dragged) {
+      if (Math.abs(dx) < 6) return;
+      dragged = true;
+      el.classList.add('dragging');
+      el.setPointerCapture(e.pointerId);
+    }
+    el.scrollLeft = from.left - dx;
+  });
+  const end = e => {
+    if (!from) return;
+    from = null;
+    if (dragged) { el.classList.remove('dragging'); if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); }
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  el.addEventListener('click', e => { if (dragged) { e.preventDefault(); e.stopPropagation(); dragged = false; } }, true);
+  el.addEventListener('dragstart', e => e.preventDefault());  // photos and links would start the browser's own drag
+}
+document.querySelectorAll('.shelf, .facet, .cat-chips, .cart-tabs').forEach(scrollNav);
 async function dealRows() {
   const my = ++homeSeq;
   const got = await Promise.all(HOME_ROWS.map(([, kind]) => api(`/api/deals?kind=${kind}&limit=20&skip_basket=1`).catch(() => [])));
@@ -797,7 +860,7 @@ function renderWhere() {
   const off = DETOURS.map(d => `<option value="${d}"${Math.abs(detour() - d) < 1e-9 ? ' selected' : ''}>${d < 1 ? t('{n} m', { n: d * 1000 }) : t('{n} km', { n: d })}</option>`).join('');
   const how = Object.entries(TRAVEL).map(([k, [label]]) => `<option value="${k}"${(S.prefs.travel || 'car') === k ? ' selected' : ''}>${t(label)}</option>`).join('');
   const pick = !way ? `<div class="where-row">${sel('at', placeOptions(S.prefs.at), t('Around'), ' place')}${sel('km', km, t('Within'))}</div>`
-    : pl.length < 2 ? `<div class="where-row"><button type="button" class="pill add" data-add-place><span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>${t('Add a second place')}</button></div>`
+    : pl.length < 2 ? `<div class="where-row"><button type="button" class="pill new-btn" data-add-place><span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>${t('Add a second place')}</button></div>`
     : `<div class="where-row trip">${sel('from', placeOptions(S.prefs.from), t('From'), ' place')}
         <button type="button" class="where-swap" data-swap aria-label="${esc(t('Swap'))}" title="${esc(t('Swap'))}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 7h11.5M12.5 4l3 3-3 3M16 13H4.5M7.5 10l-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         ${sel('to', placeOptions(S.prefs.to), t('To'), ' place')}</div>
@@ -1173,13 +1236,21 @@ async function openBrowse(live) {
   $('#b-cats').innerHTML = cats.map(c => `<a class="pill${c.slug === B.cat ? ' on' : ''}" href="${browseHash({ ...B, cat: c.slug === B.cat ? '' : c.slug, sizes: [] })}">${catIcon(c)} ${esc(catName(c))}</a>`).join('');
   renderTerms();
   markRail();
-  if (live && grid.querySelector('.card:not(.skel)')) grid.classList.add('busy');
+  // a list seen in the last minutes shows at once (and is refreshed behind it); otherwise the page waits for it
+  const qs = listQuery(B), seen = lists.get(qs), age = seen?.r ? Date.now() - seen.at : Infinity;
+  if (age < LIST_TTL) showList(seen.r);
+  else if (live && grid.querySelector('.card:not(.skel)')) grid.classList.add('busy');
   else { $('#b-title').textContent = t('Searching…'); grid.innerHTML = skeletons(12); }
-  const qs = new URLSearchParams({ terms: B.terms.join('|'), cat: B.cat, size: B.sizes.join('|'), deal: B.deal ? 1 : 0, sort: B.sort, limit: 120 });
-  const r = await api('/api/browse?' + qs).catch(() => null);
+  let r = age < LIST_FRESH ? seen.r : null;
+  if (!r) r = await fetchList(qs, age < LIST_TTL).catch(() => null);
   if (my !== listSeq) return;
   grid.classList.remove('busy');
-  if (!r) { $('#b-title').textContent = t('Couldn’t load products — try again in a moment'); $('#b-cards').innerHTML = ''; return; }
+  if (!r) { if (age >= LIST_TTL) { $('#b-title').textContent = t('Couldn’t load products — try again in a moment'); $('#b-cards').innerHTML = ''; } return; }
+  if (r !== seen?.r) showList(r);
+  Usage.results(B.terms, r.total, B.cat);
+}
+function showList(r) {
+  const grid = $('#b-cards');
   $('#b-title').innerHTML = r.total
     ? (r.total === 1 ? t('1 product') : t('{n} products', { n: r.total.toLocaleString(locale()) + (r.more ? '+' : '') }))
       + (r.total > r.products.length ? ` <small>${t('top {n} shown', { n: r.products.length })}</small>` : '')
@@ -1191,10 +1262,37 @@ async function openBrowse(live) {
   $('#b-deal').setAttribute('aria-pressed', B.deal);
   $('#b-deal').innerHTML = `${t('On deal now')} <span>${r.deal_n}</span>`;
   $('#b-sort').value = B.sort;
-  $('#b-cards').innerHTML = r.products.length ? r.products.map(card).join('')
-    : '';
-  Usage.results(B.terms, r.total, B.cat);
+  grid.innerHTML = r.products.length ? r.products.map(card).join('') : '';
 }
+// lists by query: shown at once when you come back within LIST_TTL (refreshed behind them after LIST_FRESH), and a
+// category is fetched as soon as you point at or touch its link, so it's usually there by the time you click.
+// Forgotten when your places or settings change (prices near you differ) and when new prices arrive.
+const lists = new Map();  // query -> {r, at} or {p} while on its way
+const LIST_TTL = 10 * 60e3, LIST_FRESH = 60e3;
+const listQuery = st => new URLSearchParams({ terms: (st.terms || []).join('|'), cat: st.cat || '', size: (st.sizes || []).join('|'),
+                                              deal: st.deal ? 1 : 0, sort: st.sort || '', limit: 120 }).toString();
+function fetchList(qs, quiet) {
+  const had = lists.get(qs);
+  if (had?.p) return had.p;  // already on its way (a prefetch): the click waits for that one
+  const p = api('/api/browse?' + qs, { quiet }).then(r => { lists.set(qs, { r, at: Date.now() }); return r; },
+                                                     e => { if (lists.get(qs)?.p === p) lists.delete(qs); throw e; });
+  lists.set(qs, { ...(had || {}), p });
+  if (lists.size > 60) lists.delete(lists.keys().next().value);
+  return p;
+}
+let prefetchT = null;
+function prefetchCat(a, wait) {
+  const m = (a.getAttribute('href') || '').match(/^#\/c\/([a-z0-9-]+)$/);
+  if (!m) return;
+  clearTimeout(prefetchT);
+  prefetchT = setTimeout(() => {
+    const qs = listQuery({ cat: m[1] }), had = lists.get(qs);
+    if (!had || (!had.p && Date.now() - had.at > LIST_FRESH)) fetchList(qs, true).catch(() => {});
+  }, wait);
+}
+document.addEventListener('pointerover', e => { const a = e.target.closest?.('a[href^="#/c/"]'); if (a && !a.contains(e.relatedTarget)) prefetchCat(a, 80); });
+document.addEventListener('pointerdown', e => { const a = e.target.closest?.('a[href^="#/c/"]'); if (a) prefetchCat(a, 0); }, { passive: true });
+document.addEventListener('focusin', e => { const a = e.target.closest?.('a[href^="#/c/"]'); if (a) prefetchCat(a, 80); });
 
 $('#b-add').addEventListener('keydown', e => {
   const v = e.target.value.trim();
@@ -1882,6 +1980,7 @@ function setPrefs(p) {
   compareNow();
   if (document.body.dataset.view === 'product' && S.product) openProduct(S.product.p.key);
   const where = ['home', 'max_km', 'work', 'area', 'travel', 'detour_km', 'places', 'at', 'from', 'to'].some(k => k in p);
+  if (where || 'club' in p) lists.clear();  // lists carry prices near you and club deals
   if (where) { S.trip = null; S.sel = null; }
   return api('/api/settings', { method: 'PUT', body: { prefs: p } })
     .then(() => { if (where) { updateMap(); if (document.body.dataset.view === 'home') dealRows(); } })
@@ -1912,6 +2011,7 @@ async function pollStatus() {
     renderFreshness();
     const changed = !prev || prev.data_ts !== st.data_ts || prev.products !== st.products || (S.prefs.home && prev.located !== st.located);
     // while indexing, counts change every poll: re-price at most once a minute, keeping the current view until then
+    if (changed) lists.clear();  // new prices: lists are fetched again
     if (changed && (!prev || Date.now() - lastStatusCompare > 60000)) {
       lastStatusCompare = Date.now();
       compareNow();

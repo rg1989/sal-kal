@@ -323,7 +323,7 @@ function renderLoc() {
       <p class="loc-legend" id="detour-label">${t('How far off the way')}</p><div class="radius-picker" role="radiogroup" aria-labelledby="detour-label">${
         DETOURS.map(km => `<button role="radio" type="button" data-detour="${km}" aria-checked="${Math.abs(detour() - km) < 1e-9}" aria-label="${km < 1 ? t('{n} m', { n: km * 1000 }) : t('{n} km', { n: km })}">
           <b class="num">${km < 1 ? km * 1000 : km}</b><small>${km < 1 ? t('m') : t('km')}</small></button>`).join('')}</div>`;
-  else if (pl.length) pick = `<button type="button" class="pill add wide-add" data-add>${PLUS}${t('Add a second place')}</button>`;
+  else if (pl.length) pick = `<button type="button" class="pill new-btn" data-add>${PLUS}${t('Add a second place')}</button>`;
   const rows = pl.map(x => LOC.edit === x.id ? `<li>${placeEditor(x)}</li>` : `<li class="pl-row">
       <span class="pl-dot" aria-hidden="true"></span><span class="pl-text"><b dir="auto">${esc(placeLabel(x))}</b><small><bdi>${esc(x.label)}</bdi></small></span>
       <button type="button" class="pl-btn" data-edit="${esc(x.id)}">${t('Edit')}</button>
@@ -333,7 +333,7 @@ function renderLoc() {
       <button role="radio" type="button" data-area="route" aria-checked="${way}">${t('On the way')}</button></div>
       <div class="loc-pick">${pick}</div>` : '')
     + `<h3 class="loc-h">${t('Your places')}</h3>${rows ? `<ul class="place-list">${rows}</ul>` : ''}`
-    + (LOC.edit === 'new' ? placeEditor(null) : pl.length < MAX_PLACES ? `<button type="button" class="pill add" data-add>${PLUS}${t('Add a place')}</button>` : '');
+    + (LOC.edit === 'new' ? placeEditor(null) : pl.length < MAX_PLACES ? `<button type="button" class="pill new-btn" data-add>${PLUS}${t('Add a place')}</button>` : '');
   if (pl.length && !way) radiusPicker($('#radius'), S.prefs.max_km ?? null, km => setPrefs({ max_km: km }));
   const ed = el.querySelector('.place-edit');
   if (ed) {
