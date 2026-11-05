@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import statistics
 import sys
 import time
 import zipfile
@@ -22,6 +23,7 @@ from collections import defaultdict
 from lxml import etree
 
 from . import db as dbmod
+from . import trust
 from .chains import chain_name
 
 log = logging.getLogger("indexer")
@@ -142,7 +144,7 @@ def is_global_code(code):
         return False
     if len(code) == 13 and code[0] == "2":  # in-store / weighed barcode range
         return False
-    return True
+    return trust.gs1_ok(code)  # chain-internal codes that only look like barcodes usually fail the check digit
 
 
 NORM_DROP = re.compile(r'(במשקל|לק"ג|לק״ג|ק"ג|ק״ג|קג|ארוז|טרי|טריים|טריות|מובחר|מובחרות|בתפזורת|\bkg\b)', re.I)
@@ -218,9 +220,10 @@ SIZE_GAP = """(coalesce(products.unit, '') IN ('', 'לא ידוע') OR coalesce(
               AND coalesce(excluded.unit, '') NOT IN ('', 'לא ידוע') AND coalesce(CAST(excluded.quantity AS REAL), 0) > 0"""
 
 
-def index_prices(con, path, meta, scoped_cache):
+def index_prices(con, path, meta, scoped_cache, names_seen=None):
     chain, store, ts = meta["chain"], meta["store"], meta["ts"]
-    prices, products = [], []
+    prices, products, names = [], [], []
+    names_seen = set() if names_seen is None else names_seen
     for el, _ in iter_records(path, {"item", "product", "line"}, "itemcode"):
         d = children(el)
         code = d.get("itemcode")
@@ -233,6 +236,9 @@ def index_prices(con, path, meta, scoped_cache):
             scoped_cache[chain].add(code)
         prices.append((key, chain, store, price, ts))
         pname = d.get("itemname") or d.get("itemnm") or ""
+        if scope == "global" and pname.strip() and (key, chain) not in names_seen:
+            names_seen.add((key, chain))
+            names.append((key, chain, pname.strip()))
         products.append((key, code, pname,
                          d.get("manufacturername") or d.get("manufactureritemdescription") or "",
                          d.get("quantity") or "", d.get("unitqty") or d.get("unitofmeasure") or "",
@@ -250,7 +256,14 @@ def index_prices(con, path, meta, scoped_cache):
              quantity=CASE WHEN {SIZE_GAP} THEN excluded.quantity ELSE products.quantity END,
              unit=CASE WHEN {SIZE_GAP} THEN excluded.unit ELSE products.unit END""".replace("{SIZE_GAP}", SIZE_GAP),
         products)
+    write_names(con, names)
     return len(prices)
+
+
+def write_names(con, names):
+    con.executemany("""INSERT INTO item_names(key, chain_id, name) VALUES(?,?,?)
+                       ON CONFLICT(key, chain_id) DO UPDATE SET name=excluded.name WHERE item_names.name != excluded.name""",
+                    names)
 
 
 def _promo_fields(el):
@@ -298,17 +311,20 @@ def index_promos(con, path, meta, scoped_cache, now_int):
         club_ids = [re.match(r"\d*", c).group(0) for c in clubs if c]
         club_only = 1 if club_ids and any(c not in ("", "0") for c in club_ids) else 0
         promos[pid] = (chain, store, pid, (d.get("promotiondescription") or "")[:200], start, end,
-                       num(d.get("minqty"), 1) or 1, dp, rate, club_only, ts)
+                       num(d.get("minqty"), 1) or 1, dp, rate, club_only, ts,
+                       num(d.get("maxqty")) or None, (d.get("remarks") or "")[:200] or None)
         for code in codes:
             weighted = code in scoped_cache[chain]
             key, _ = product_key(chain, code, weighted)
             items.append((key, chain, store, pid, ts))
     con.executemany(
-        """INSERT INTO promos VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        """INSERT INTO promos(chain_id, store_id, promo_id, description, start_ts, end_ts, min_qty, discounted_price,
+                              discount_rate, club_only, ts, max_qty, remarks) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(chain_id, store_id, promo_id) DO UPDATE SET description=excluded.description,
              start_ts=excluded.start_ts, end_ts=excluded.end_ts, min_qty=excluded.min_qty,
              discounted_price=excluded.discounted_price, discount_rate=excluded.discount_rate,
-             club_only=excluded.club_only, ts=excluded.ts""", list(promos.values()))
+             club_only=excluded.club_only, ts=excluded.ts, max_qty=excluded.max_qty, remarks=excluded.remarks""",
+        list(promos.values()))
     con.executemany(
         """INSERT INTO promo_items VALUES(?,?,?,?,?)
            ON CONFLICT DO UPDATE SET ts=excluded.ts""", items)
@@ -345,7 +361,7 @@ def set_status(con, **kw):
     con.commit()
 
 
-def run(dumps, db_path=None, only=None):
+def run(dumps, db_path=None, only=None, confirm_always=False):
     con = dbmod.connect(db_path)
     started = time.time()
     now_int = int(time.strftime("%Y%m%d%H%M"))
@@ -356,7 +372,7 @@ def run(dumps, db_path=None, only=None):
         files = [f for f in files if f["kind"] in only]
     state = {(r["chain_id"], r["store_id"]): (r["price_full_ts"], r["promo_full_ts"])
              for r in con.execute("SELECT chain_id, store_id, price_full_ts, promo_full_ts FROM stores")}
-    scoped_cache = defaultdict(set)
+    scoped_cache, names_seen = defaultdict(set), set()
     for r in con.execute("SELECT code, substr(key, 1, instr(key, ':')-1) AS chain FROM products WHERE scope='chain'"):
         scoped_cache[r["chain"]].add(r["code"])
     before_products = con.execute("SELECT count(*) FROM products").fetchone()[0]
@@ -398,7 +414,7 @@ def run(dumps, db_path=None, only=None):
                 if f["ts"] < pf:
                     rows = 0
                 else:
-                    rows = index_prices(con, f["path"], f, scoped_cache)
+                    rows = index_prices(con, f["path"], f, scoped_cache, names_seen)
                     con.execute("UPDATE stores SET price_full_ts=?, last_price_ts=max(last_price_ts, ?) WHERE chain_id=? AND store_id=?",
                                 (f["ts"], f["ts"], *key))
                     state[key] = (f["ts"], mf)
@@ -406,7 +422,7 @@ def run(dumps, db_path=None, only=None):
                 if f["ts"] <= pf:
                     rows = 0
                 else:
-                    rows = index_prices(con, f["path"], f, scoped_cache)
+                    rows = index_prices(con, f["path"], f, scoped_cache, names_seen)
                     con.execute("UPDATE stores SET last_price_ts=max(last_price_ts, ?) WHERE chain_id=? AND store_id=?", (f["ts"], *key))
             elif kind == "promofull":
                 if f["ts"] < mf:
@@ -440,23 +456,13 @@ def run(dumps, db_path=None, only=None):
         con.commit()
 
     cleanup(con)
-    if plan:
-        log.info("updating product availability stats")
-        con.execute("DROP TABLE IF EXISTS temp.agg")
-        con.execute("""CREATE TEMP TABLE agg AS SELECT p.key, count(*) n, count(DISTINCT p.chain_id) c,
-                       min(p.price) mn, max(p.price) mx FROM prices p JOIN stores s
-                       ON s.chain_id=p.chain_id AND s.store_id=p.store_id WHERE p.ts >= s.price_full_ts
-                       GROUP BY p.key""")
-        con.execute("CREATE INDEX temp.agg_key ON agg(key)")
-        con.execute("""UPDATE products SET store_count=coalesce((SELECT n FROM agg WHERE agg.key=products.key),0),
-                       chain_count=coalesce((SELECT c FROM agg WHERE agg.key=products.key),0),
-                       min_price=(SELECT mn FROM agg WHERE agg.key=products.key),
-                       max_price=(SELECT mx FROM agg WHERE agg.key=products.key)""")
-        con.commit()
-    try:
-        record_history(con)
-    except Exception:
-        log.exception("price history failed")
+    if plan or confirm_always:
+        confirm(con)
+    else:
+        try:
+            record_history(con)
+        except Exception:
+            log.exception("price history failed")
     set_status(con, running=False, finished=int(time.time()), processed=len(plan),
                rows=n_rows, seconds=int(time.time() - started))
     con.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # fold the write-ahead log back in; it otherwise grows by GBs
@@ -464,15 +470,156 @@ def run(dumps, db_path=None, only=None):
     log.info("done: %d files, %d rows in %ds", len(plan), n_rows, time.time() - started)
 
 
-def record_history(con, day=None):
+# ---------------------------------------------------------------- what counts (app.trust)
+# A shelf price is confirmed when its store's file is current, the price isn't an outlier, and (for a barcode) this
+# chain's name for the product agrees with the other chains'. Stats, history, cards and deals use confirmed prices.
+CONFIRMED = """p.ts >= s.price_full_ts AND s.last_price_ts >= :cutoff
+    AND NOT EXISTS (SELECT 1 FROM price_flags f WHERE f.key=p.key AND f.chain_id=p.chain_id AND f.store_id=p.store_id)
+    AND NOT EXISTS (SELECT 1 FROM name_flags nf WHERE nf.key=p.key AND nf.chain_id=p.chain_id)"""
+
+
+def confirm(con):
+    """After an index run: outlier prices, chains that name a barcode differently, then stats and history from
+    confirmed prices only."""
+    cutoff = trust.fresh_cutoff()
+    for step in (build_price_flags, build_name_flags):
+        try:
+            step(con, cutoff)
+        except Exception:
+            log.exception("%s failed", step.__name__)
+    log.info("updating product availability stats")
+    t = time.time()
+    con.execute("DROP TABLE IF EXISTS temp.agg")
+    con.execute(f"""CREATE TEMP TABLE agg AS SELECT p.key, count(*) n, count(DISTINCT p.chain_id) c,
+                   min(p.price) mn, max(p.price) mx FROM prices p JOIN stores s
+                   ON s.chain_id=p.chain_id AND s.store_id=p.store_id WHERE {CONFIRMED}
+                   GROUP BY p.key""", {"cutoff": cutoff})
+    con.execute("CREATE INDEX temp.agg_key ON agg(key)")
+    con.execute("""UPDATE products SET store_count=coalesce((SELECT n FROM agg WHERE agg.key=products.key),0),
+                   chain_count=coalesce((SELECT c FROM agg WHERE agg.key=products.key),0),
+                   min_price=(SELECT mn FROM agg WHERE agg.key=products.key),
+                   max_price=(SELECT mx FROM agg WHERE agg.key=products.key)""")
+    con.commit()
+    log.info("stats in %.0fs", time.time() - t)
+    try:
+        record_history(con, cutoff=cutoff)
+    except Exception:
+        log.exception("price history failed")
+
+
+def build_price_flags(con, cutoff):
+    """Each product's median shelf price at current stores (products.median), and the prices far from it
+    (price_flags): outside trust.OUTLIER of the median, judged only with trust.OUTLIER_MIN_STORES or more stores."""
+    t = time.time()
+    stores = {(r[0], r[1]): (r[2] or 0, r[3] or 0)
+              for r in con.execute("SELECT chain_id, store_id, price_full_ts, last_price_ts FROM stores")}
+    lo, hi = trust.OUTLIER
+    flags, medians, cur, rows = [], [], None, []
+
+    def flush():
+        if not rows:
+            return
+        med = statistics.median(p for _, _, p in rows)
+        medians.append((cur, med))
+        if len(rows) >= trust.OUTLIER_MIN_STORES:
+            flags.extend((cur, ch, st, med) for ch, st, p in rows if p < med * lo or p > med * hi)
+
+    for key, ch, st, price, ts in con.execute("SELECT key, chain_id, store_id, price, ts FROM prices ORDER BY key"):
+        full, last = stores.get((ch, st), (None, 0))
+        if full is None or ts < full or last < cutoff or not price or price <= 0:
+            continue
+        if key != cur:
+            flush()
+            cur, rows = key, []
+        rows.append((ch, st, price))
+    flush()
+    with con:
+        con.execute("DELETE FROM price_flags")
+        con.executemany("INSERT OR REPLACE INTO price_flags VALUES(?,?,?,?)", flags)
+        con.execute("DROP TABLE IF EXISTS temp.med")
+        con.execute("CREATE TEMP TABLE med(key TEXT PRIMARY KEY, m REAL) WITHOUT ROWID")
+        con.executemany("INSERT INTO med VALUES(?,?)", medians)
+        con.execute("UPDATE products SET median=(SELECT round(m, 2) FROM med WHERE med.key=products.key)")
+    log.info("price flags: %d of %d products' prices look wrong somewhere (%.0fs)",
+             len({f[0] for f in flags}), len(medians), time.time() - t)
+    return len(flags)
+
+
+def build_name_flags(con, cutoff=None):
+    """Barcode products a chain names differently from the other chains (trust.odd_names) -> name_flags.
+    When the product card's own name is the odd one, it takes a name the other chains agree on."""
+    t = time.time()
+    flags, renames, cur, card, names = [], [], None, "", {}
+
+    def flush():
+        if len(names) >= 2:
+            odd, better = trust.odd_names(names, card)
+            flags.extend((cur, ch, names[ch]) for ch in odd)
+            if better:
+                renames.append((better, cur))
+
+    for key, ch, name, pname in con.execute("""SELECT i.key, i.chain_id, i.name, p.name FROM item_names i
+                                               JOIN products p ON p.key=i.key ORDER BY i.key"""):
+        if key != cur:
+            flush()
+            cur, card, names = key, pname or "", {}
+        names[ch] = name
+    flush()
+    with con:
+        con.execute("DELETE FROM name_flags")
+        con.executemany("INSERT OR REPLACE INTO name_flags VALUES(?,?,?)", flags)
+        if renames:
+            con.executemany("UPDATE products SET name=? WHERE key=?", renames)
+            con.execute("DROP TABLE IF EXISTS temp.renamed")
+            con.execute("CREATE TEMP TABLE renamed(key TEXT PRIMARY KEY) WITHOUT ROWID")
+            con.executemany("INSERT OR IGNORE INTO renamed VALUES(?)", [(k,) for _, k in renames])
+            con.execute("DELETE FROM products_fts WHERE key IN (SELECT key FROM temp.renamed)")
+            con.execute("""INSERT INTO products_fts(key, name, manufacturer, code) SELECT key, name, manufacturer, code
+                           FROM products WHERE key IN (SELECT key FROM temp.renamed)""")
+    log.info("name flags: %d chain names disagree, %d product names fixed (%.0fs)", len(flags), len(renames),
+             time.time() - t)
+    return len(flags)
+
+
+def backfill_names(con, dumps, per_chain=4):
+    """Fill item_names from each chain's largest current full price files, without re-indexing prices.
+    Regular runs keep it up to date as new files arrive."""
+    latest = {}
+    for f in scan(dumps):
+        if f["kind"] == "pricefull":
+            k = (f["chain"], f["store"])
+            if k not in latest or f["ts"] > latest[k]["ts"]:
+                latest[k] = f
+    by_chain = defaultdict(list)
+    for f in latest.values():
+        by_chain[f["chain"]].append(f)
+    seen = set()
+    for chain, fs in sorted(by_chain.items()):
+        for f in sorted(fs, key=lambda f: -f["size"])[:per_chain]:
+            names = []
+            for el, _ in iter_records(f["path"], {"item", "product", "line"}, "itemcode"):
+                d = children(el)
+                weighted = (d.get("bisweighted") or d.get("blsweighted") or "0").strip() in ("1", "true", "True")
+                key, scope = product_key(chain, d.get("itemcode"), weighted)
+                pname = (d.get("itemname") or d.get("itemnm") or "").strip()
+                if scope == "global" and pname and (key, chain) not in seen:
+                    seen.add((key, chain))
+                    names.append((key, chain, pname))
+            write_names(con, names)
+            con.commit()
+        log.info("names: %s done (%d so far)", chain, len(seen))
+
+
+def record_history(con, day=None, cutoff=None):
     """Price history for every product: its cheapest and dearest current shelf price at each chain, written as a row
     only on days it changes (today's row is rewritten until midnight). price_last holds the latest row per pair."""
     day = day or int(time.strftime("%Y%m%d"))
     t = time.time()
     con.execute("DROP TABLE IF EXISTS temp.cur")
-    con.execute("""CREATE TEMP TABLE cur AS SELECT p.key, p.chain_id, min(p.price) mn, max(p.price) mx, count(*) n
+    con.execute(f"""CREATE TEMP TABLE cur AS SELECT p.key, p.chain_id, min(p.price) mn, max(p.price) mx, count(*) n
                    FROM prices p JOIN stores s ON s.chain_id=p.chain_id AND s.store_id=p.store_id
-                   WHERE p.price > 0 AND p.ts >= s.price_full_ts GROUP BY p.key, p.chain_id""")
+                   WHERE p.price > 0 AND {CONFIRMED} GROUP BY p.key, p.chain_id""",
+                {"cutoff": trust.fresh_cutoff() if cutoff is None else cutoff})
     n = con.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
                        SELECT c.key, c.chain_id, ?, c.mn, c.mx, c.n FROM cur c
                        LEFT JOIN price_last l ON l.key=c.key AND l.chain_id=c.chain_id
@@ -511,9 +658,15 @@ def main():
     ap.add_argument("--dumps", default=os.environ.get("DUMPS_PATH", os.path.expanduser("~/il-prices/dumps")))
     ap.add_argument("--db", default=None)
     ap.add_argument("--only", help="comma-separated file kinds to index, e.g. promofull,promo")
+    ap.add_argument("--names", action="store_true", help="fill shelf names from current files first (one-off)")
+    ap.add_argument("--confirm", action="store_true", help="rebuild flags, stats and history even with no new files")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
-    run(a.dumps, a.db, only=set(a.only.split(",")) if a.only else None)
+    if a.names:
+        con = dbmod.connect(a.db)
+        backfill_names(con, a.dumps)
+        con.close()
+    run(a.dumps, a.db, only=set(a.only.split(",")) if a.only else None, confirm_always=a.confirm)
 
 
 if __name__ == "__main__":

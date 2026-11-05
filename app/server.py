@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import catalog, engine, geo
+from . import catalog, engine, geo, trust
 from .images import PHOTO_DIR, photo_path
 from .chains import BRAND_HE, chain_name
 
@@ -201,8 +201,14 @@ def _enrich(c, items):
                                    AND norm IN ({','.join('?' * len(norms))})""", list(norms)):
                 keys.setdefault(r[0], norms[r[1]])
         best = {}
-        for k, chain, store, price in c.execute(f"SELECT key, chain_id, store_id, price FROM prices WHERE key IN ({','.join('?' * len(keys))})",
-                                                list(keys)):
+        # confirmed shelf prices only: current store files, no outliers, no chain that names the barcode differently
+        for k, chain, store, price in c.execute(
+                f"""SELECT p.key, p.chain_id, p.store_id, p.price FROM prices p
+                    JOIN stores s ON s.chain_id=p.chain_id AND s.store_id=p.store_id
+                    WHERE p.key IN ({','.join('?' * len(keys))}) AND p.ts >= s.price_full_ts AND s.last_price_ts >= ?
+                      AND NOT EXISTS (SELECT 1 FROM price_flags f WHERE f.key=p.key AND f.chain_id=p.chain_id AND f.store_id=p.store_id)
+                      AND NOT EXISTS (SELECT 1 FROM name_flags nf WHERE nf.key=p.key AND nf.chain_id=p.chain_id)""",
+                [*keys, trust.fresh_cutoff()]):
             km = near.get((chain, store))
             if km is None or not price:
                 continue

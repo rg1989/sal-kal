@@ -42,7 +42,7 @@ async function api(path, opts = {}) {
 
 const S = {
   cart: { id: null, name: 'Weekly shop', items: [] },  // items: [{key, qty, name}]
-  meta: {},           // product key -> {name, manufacturer, is_weighted, min, max, median, stores}
+  meta: {},           // product key -> {name, manufacturer, is_weighted, min, max, stores}
   prefs: { mode: 'store', club: false, home: null, max_km: null },
   result: null,       // last /api/compare response for the current basket + prefs
   status: null,
@@ -53,13 +53,24 @@ const S = {
 };
 const delivery = () => S.prefs.mode === 'delivery';
 const view = c => delivery() ? c.online : c.in_store;
-// what this chain costs here, before estimating missing items
+// what this chain costs: confirmed lines only (online: with the delivery fee). Nothing is ever estimated.
 const paid = c => delivery() ? (c.online.delivered ?? c.online.total) : c.in_store.total;
-// the number chains are compared on: when items are missing, add their typical price elsewhere ("≈")
-const approx = c => view(c).missing.length > 0;
-const head = c => !approx(c) ? paid(c) : delivery() ? (c.online.delivered_comparable ?? c.online.comparable) : c.in_store.comparable;
-const headText = c => (approx(c) ? '≈' : '') + money(head(c));
-const comparable = c => delivery() ? c.online.delivered_comparable : c.in_store.comparable;
+// every compared (barcode) product has a confirmed price here; produce is never compared
+const full = c => !!(view(c)?.complete ?? c.complete);
+const nCompared = (r = S.result) => r?.n ?? 0;
+// "all 4" / "3 of 4" / "Not compared" (only produce in the cart)
+const countText = (covered, isFull, n = nCompared(), noun = '') => !n ? 'Not compared'
+  : isFull ? (n === 1 ? 'has it' : `all ${n}${noun}`) : `${covered} of ${n}${noun}`;
+const priceUnit = key => S.meta[key]?.is_weighted ? '/kg' : '';
+function pricesFrom(ts) {  // "Prices from 09:30" today, "Prices from 4 Nov 22:10" before
+  const d = tsDate(ts);
+  if (!d) return '';
+  const t = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return 'Prices from ' + (d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${t}`);
+}
+const unconfText = l => l.reason === 'price' ? 'Price looks wrong' : `Named differently: ${bdi(l.shelf_name || '')}`;
+// produce at one store: its own item, or items with the same name; null when it has neither
+const ncPick = l => l.own && l.price != null ? { name: l.shelf_name, price: l.price } : l.similar?.[0] || null;
 const radius = () => S.prefs.home && S.prefs.max_km ? S.prefs.max_km : null;
 
 // ---------------------------------------------------------------- toast
@@ -93,16 +104,25 @@ const wide = () => matchMedia('(min-width: 1100px)').matches;
 function itemNote(it, c, l) {
   const m = S.meta[it.key] || {}, kg = m.is_weighted;
   if (!l) return metaHTML(it);
-  if (!l.available) return `<span class="warn">Not at ${esc(c.name)}${m.median != null ? ` · usually ≈${money(m.median * it.qty)}` : ''}</span>`;
-  return (it.qty !== 1 ? `${fmtQty(it.qty, kg)} × ${money(l.price)}` : money(l.price) + (kg ? '/kg' : ''))
-    + (l.promo ? ` · <span class="promo" dir="auto">${esc(l.promo.description || 'deal')}</span>` : '');
+  const each = p => it.qty !== 1 ? `${fmtQty(it.qty, kg)} × ${money(p)}` : money(p) + (kg ? '/kg' : '');
+  if (l.status === 'missing') return `<span class="warn">Not at ${esc(c.name)}</span>`;
+  if (l.status === 'unconfirmed') return `<span class="unc">${unconfText(l)} · Not counted</span>`;
+  if (l.status === 'not_compared') {
+    const p = ncPick(l);
+    return `<span class="unc">Not compared${p ? ` · ${l.own ? '' : 'Similar · '}${each(p.price)}` : ` · Not at ${esc(c.name)}`}</span>`;
+  }
+  return each(l.price)
+    + (l.promo ? ` · <span class="promo" dir="auto">${esc(l.promo.description || 'deal')}</span>` : '')
+    + (l.deals_not_counted?.length ? ` · <span class="unc" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>` : '');
 }
 function itemPrice(it, l) {
-  const m = S.meta[it.key] || {};
   if (!l) return '';
-  if (!l.available) return m.median != null ? '≈' + money(m.median * it.qty) : '—';
-  return money(l.cost);
+  if (l.status === 'ok') return money(l.cost);
+  if (l.status === 'unconfirmed') return money(l.full ?? l.price * it.qty);
+  if (l.status === 'not_compared') { const p = ncPick(l); return p ? money(p.price * it.qty) : '—'; }
+  return '—';
 }
+const itemClass = l => !l ? '' : l.status === 'missing' ? ' missing' : l.status !== 'ok' ? ' unconfirmed' : l.promo ? ' deal' : '';
 
 function renderBasket() {
   const items = S.cart.items, c = pinned();
@@ -111,7 +131,7 @@ function renderBasket() {
                        sel: a.matches('input') ? 'input' : `[data-step="${a.dataset.step}"]` };
   $('#drawer-items').innerHTML = items.map((it, i) => {
     const m = S.meta[it.key] || {}, kg = m.is_weighted, l = lineAt(c, it.key), last = it.qty <= (kg ? 0.5 : 1);
-    return `<li class="item${it.key === S.lastAdded ? ' added' : ''}${l && !l.available ? ' missing' : ''}${l?.promo ? ' deal' : ''}" data-i="${i}">
+    return `<li class="item${it.key === S.lastAdded ? ' added' : ''}${itemClass(l)}" data-i="${i}">
       <span class="lc-thumb">${PH}${photo(m)}</span>
       <span class="item-name" dir="auto">${esc(it.name || m.name || it.key)}</span>
       <span class="item-meta">${itemNote(it, c, l)}</span>
@@ -148,14 +168,17 @@ function updateTotals() {
     + (c ? ` · prices at <strong>${esc(c.name)}</strong>` : '');
   $('#cart-bar').hidden = !n;
   $('#cb-n').textContent = n;
-  $('#cb-txt').innerHTML = c ? `<strong class="num">${headText(c)}</strong> at ${esc(c.name)}` : 'Finding the cheapest store…';
+  const v = c && view(c);
+  $('#cb-txt').innerHTML = !c ? 'Finding the cheapest store…' : !nCompared() ? 'Not compared'
+    : `<strong class="num">${money(paid(c))}</strong> at ${esc(c.name)}${full(c) ? '' : ` · ${v.covered} of ${nCompared()}`}`;
   renderStores();
 }
 
 // the stores the cart costs least at; tap one to see every line priced there
 function renderStores() {
-  const el = $('#lc-stores'), ch = S.result?.chains || [], n = S.cart.items.length, p = pinned();
-  if (!n) { el.innerHTML = ''; return; }
+  const el = $('#lc-stores'), ch = S.result?.chains || [], p = pinned();
+  if (!S.cart.items.length) { el.innerHTML = ''; return; }
+  const n = nCompared();
   if (!S.result) { el.innerHTML = '<p class="lc-wait">Finding the cheapest store…</p>'; return; }
   if (!ch.length) {
     el.innerHTML = `<p class="lc-wait">No store${radius() && !delivery() ? ` within ${radius()} km` : ''} has these products. <button class="linkish" type="button" data-open-loc>Change distance</button></p>`;
@@ -169,12 +192,13 @@ function renderStores() {
     let gap = false;
     const sel = selStore();
     el.innerHTML = '<div class="lc-scroll">' + bs.map((b, i) => {
-      const sep = !gap && b.missing ? (gap = true, '<p class="lc-sep">Missing some products</p>') : '';
+      const sep = n && !gap && !b.complete ? (gap = true, '<p class="lc-sep">Missing some products</p>') : '';
       const on = sel && String(sel.chain_id) === String(b.chain_id) && sel.store_id === b.store_id;
-      return sep + `<button type="button" class="lc-store${i === 0 && !b.missing ? ' best' : ''}${on ? ' on' : ''}" data-branch="${i}" aria-pressed="${!!on}">
-        <span class="ls-name">${esc(b.chain)}${i === 0 && !b.missing ? ' <em>Cheapest</em>' : ''}</span>
-        <span class="ls-sub">${bdi(storeName(b))}${b.distance_km != null ? ` · ${kmText(b.distance_km)}` : ''} · ${b.missing ? `${b.covered} of ${n}` : n === 1 ? 'has it' : `all ${n}`}</span>
-        <span class="ls-total num">${b.missing ? '≈' : ''}${money(b.missing ? b.comparable : b.total)}</span></button>`;
+      const best = i === 0 && b.complete && n > 0;
+      return sep + `<button type="button" class="lc-store${best ? ' best' : ''}${on ? ' on' : ''}" data-branch="${i}" aria-pressed="${!!on}">
+        <span class="ls-name">${esc(b.chain)}${best ? ' <em>Cheapest</em>' : ''}</span>
+        <span class="ls-sub">${bdi(storeName(b))}${b.distance_km != null ? ` · ${kmText(b.distance_km)}` : ''} · ${countText(b.covered, b.complete, n)}</span>
+        <span class="ls-total num">${n ? money(b.total) : ''}</span></button>`;
     }).join('') + '</div>';
     return;
   }
@@ -183,13 +207,13 @@ function renderStores() {
   // the map counts branches; this ranks chains, each at its cheapest branch near you — say so, with the totals
   $('#lc-label').innerHTML = `Cheapest stores${ch.length > list.length ? ` <span>· top ${list.length} of ${ch.length}</span>` : ''}`;
   el.innerHTML = list.map(c => {
-    const v = view(c), best = c === ch[0];
+    const v = view(c), best = c === ch[0] && full(c) && n > 0;
     const where = delivery() ? (v.fee == null ? 'Delivered · fee not set' : v.fee === 0 ? 'Free delivery' : `incl. ${money(v.fee)} delivery`)
       : bdi(storeName(v)) + (v.distance_km != null ? ` · ${kmText(v.distance_km)}` : '');
     return `<button type="button" class="lc-store${c === p ? ' on' : ''}${best ? ' best' : ''}" data-pin="${esc(c.chain_id)}" aria-pressed="${c === p}">
       <span class="ls-name">${esc(c.name)}${best ? ' <em>Cheapest</em>' : ''}</span>
-      <span class="ls-sub">${where} · ${v.missing.length ? `${v.covered} of ${n} products` : n === 1 ? 'has it' : `all ${n}`}</span>
-      <span class="ls-total num">${headText(c)}</span></button>`;
+      <span class="ls-sub">${where} · ${countText(v.covered, full(c), n, full(c) ? '' : ' products')}</span>
+      <span class="ls-total num">${n ? money(paid(c)) : ''}</span></button>`;
   }).join('');
 }
 function pin(id) { S.pin = id; S.sel = null; renderBasket(); drawPins(); renderStoreCard(true); }
@@ -635,15 +659,15 @@ function drawPins() {
   if (!map) return;
   pins.forEach(m => m.remove());
   pins = [];
-  if (delivery() || !S.cart.items.length) return;
-  const ch = (S.result?.chains || []).slice(0, 4), p = pinned();
+  if (delivery() || !S.cart.items.length || !nCompared()) return;
+  const ch = (S.result?.chains || []).slice(0, 4), p = pinned(), n = nCompared();
   [...ch].reverse().forEach(c => {  // the cheapest last, so it's drawn on top
     const v = c.in_store;
     if (v?.lat == null) return;
-    const best = c === ch[0], el = document.createElement('button');
+    const best = c === ch[0] && full(c), el = document.createElement('button');
     el.type = 'button';
     el.className = `price-pin${best ? ' best' : ''}${c === p ? ' on' : ''}`;
-    el.innerHTML = `${best ? '<em>Cheapest</em>' : ''}<b class="num">${headText(c)}</b><span>${esc(c.name)}</span>`;
+    el.innerHTML = `${best ? '<em>Cheapest</em>' : ''}<b class="num">${money(v.total)}</b><span>${esc(c.name)}${full(c) ? '' : ` · ${v.covered}/${n}`}</span>`;
     el.title = `${c.name} · ${storeName(v)}${v.distance_km != null ? ' · ' + kmText(v.distance_km) : ''} — price the cart here`;
     el.addEventListener('click', e => { e.stopPropagation(); pin(String(c.chain_id)); });
     pins.push(new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] }).setLngLat([v.lon, v.lat]).addTo(map));
@@ -664,7 +688,7 @@ function selStore() {
   const b = S.sel && (S.result.branches || []).find(x => String(x.chain_id) === S.sel.chain_id && x.store_id === S.sel.store_id);
   if (b) return b;
   const c = pinned();
-  return c?.in_store ? { ...c.in_store, chain: c.name, missing: c.in_store.missing.length } : null;
+  return c?.in_store ? { ...c.in_store, chain: c.name, missing: c.in_store.missing.length, complete: full(c) } : null;
 }
 const mins = t => { const [h, m] = t.split(':'); return +h * 60 + +m; };
 function openNow(day) {  // "07:00–23:00, 16:00–20:00" | "Closed" | "Open 24 hours"
@@ -686,16 +710,16 @@ function hoursHTML(h, gsearch) {
     <a href="${gsearch}" target="_blank" rel="noopener">see them on Google Maps</a></span>`;
 }
 function storeCardHTML(v, d, h) {
-  const best = S.result.chains[0].in_store, n = S.cart.items.length;
-  const isBest = String(best.chain_id) === String(v.chain_id) && best.store_id === v.store_id;
+  const top = S.result.chains[0], best = top.in_store, n = nCompared();
+  const isBest = n > 0 && !!top.in_store?.complete && String(best.chain_id) === String(v.chain_id) && best.store_id === v.store_id;
   const addr = d ? [d.address, d.city].filter(Boolean).join(', ') : '';
   const home = S.prefs.home, dest = d?.lat != null ? `${d.lat},${d.lon}` : '';
   const gsearch = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([d?.brand_he || v.chain, addr].filter(Boolean).join(' '));
   const gdir = `https://www.google.com/maps/dir/?api=1${home ? `&origin=${home.lat},${home.lon}` : ''}&destination=${dest}&travelmode=driving`;
   return `<div class="sc-head">
-      <div><p class="sc-chain">${esc(v.chain)}${isBest ? ' <em>Cheapest for this cart</em>' : ''}</p><p class="sc-branch">${bdi(storeName(v))}</p></div>
-      <p class="sc-total"><span class="num">${v.missing ? '≈' : ''}${money(v.missing ? v.comparable : v.total)}</span>
-        <small>${v.missing ? `${v.covered} of ${n} products here` : n === 1 ? 'for your product' : `all ${n} products`}</small></p>
+      <div><p class="sc-chain">${esc(v.chain)}${isBest ? ' <em>Cheapest for this cart</em>' : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
+      ${n ? `<p class="sc-total"><span class="num">${money(v.total)}</span>
+        <small>${!v.complete ? `${v.covered} of ${n} products here` : n === 1 ? 'for your product' : `all ${n} products`}</small></p>` : ''}
     </div>
     <ul class="sc-rows">
       <li>${ICO.pin}<span>${d ? (addr ? bdi(addr) : '<span class="muted">Address not listed</span>') : '<span class="muted">Finding the address…</span>'}</span></li>
@@ -844,7 +868,7 @@ async function openProduct(key) {
   try {
     [p, res] = await Promise.all([
       S.hits[key] || api('/api/product?key=' + encodeURIComponent(key)),
-      api('/api/compare', { method: 'POST', body: { items: [{ key, qty: 1 }], prefs: { ...S.prefs, mode: 'store' } } }),
+      comparePost({ items: [{ key, qty: 1 }], prefs: { ...S.prefs, mode: 'store' } }),
     ]);
   } catch {
     el.innerHTML = '<a class="back" href="#/" data-back>← Back</a>' + emptyState('Couldn’t load this product', '');
@@ -865,15 +889,34 @@ async function openProduct(key) {
   $('#p-deal').hidden = false;
 }
 
+// the product page prices one unit: a counted line costs `cost`; produce at its own chain costs its shelf price
+const offerLine = c => c.in_store?.lines?.[0];
+const offerPrice = l => l?.status === 'ok' ? l.cost : l?.status === 'not_compared' && l.own ? l.price : null;
 function offer(c, best) {
-  const s = c.in_store, l = s.lines[0], kg = S.product.p.is_weighted;
-  const promo = l?.promo ? `<span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>` : '';
+  const s = c.in_store, l = offerLine(c), kg = S.product.p.is_weighted, ol = c.online?.lines?.[0];
+  const flags = [
+    l?.promo && `<span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>`,
+    l?.deals_not_counted?.length && `<span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>`,
+  ].filter(Boolean).join(' ');
+  const online = ol && offerPrice(ol) != null ? `<small>Online ${money(offerPrice(ol))}</small>` : '';
   return `<li class="offer${best ? ' best' : ''}">
     <span class="o-chain">${esc(c.name)}${best ? ' <span class="o-badge">Cheapest</span>' : ''}</span>
-    <span class="o-store">${storePlace(s)}${s.branch_count > 1 ? ` · cheapest of ${s.branch_count} branches` : ''}</span>
-    ${promo ? `<span class="o-flags">${promo}</span>` : ''}
-    <span class="o-price">${l?.promo ? `<s>${money(l.full)}</s>` : ''}${money(s.total)}${kg ? '<em>/kg</em>' : ''}
-      ${c.online ? `<small>Online ${money(c.online.total)}</small>` : ''}</span>
+    <span class="o-store">${storePlace(s)}${s.branch_count > 1 ? ` · cheapest of ${s.branch_count} branches` : ''}${l?.shelf_name ? ` · ${bdi(l.shelf_name)}` : ''}</span>
+    ${flags ? `<span class="o-flags">${flags}</span>` : ''}
+    <span class="o-price">${l?.promo ? `<s>${money(l.full)}</s>` : ''}${money(offerPrice(l))}${kg ? '<em>/kg</em>' : ''}${online}</span>
+  </li>`;
+}
+// a chain whose price can't be confirmed (or produce matched only by name): greyed, below the offers
+function offerOther(c) {
+  const s = c.in_store, l = offerLine(c), kg = S.product.p.is_weighted;
+  const what = l.status === 'unconfirmed' ? `${unconfText(l)} · Not counted`
+    : (l.similar || []).map(x => `Similar: ${bdi(x.name)} ${money(x.price)}${kg ? '/kg' : ''}`).join(' · ');
+  const price = l.status === 'unconfirmed' ? l.price : l.similar?.[0]?.price;
+  return `<li class="offer unconfirmed">
+    <span class="o-chain">${esc(c.name)}</span>
+    <span class="o-store">${storePlace(s)}</span>
+    <span class="o-flags">${what}</span>
+    <span class="o-price">${money(price)}${kg ? '<em>/kg</em>' : ''}</span>
   </li>`;
 }
 
@@ -885,8 +928,12 @@ function renderBuy() {
 }
 
 function renderProduct() {
-  const { p, res } = S.product, el = $('#view-product'), kg = !!p.is_weighted;
-  const chains = res.chains, r = radius();
+  const { p, res } = S.product, el = $('#view-product'), kg = !!p.is_weighted, r = radius();
+  // counted prices first (barcode: confirmed lines, ranked by the engine; produce: its own chain's branches)
+  const chains = res.chains.filter(c => offerPrice(offerLine(c)) != null)
+    .sort((a, b) => res.n ? 0 : offerPrice(offerLine(a)) - offerPrice(offerLine(b)));
+  const others = res.chains.filter(c => { const l = offerLine(c); return l && !chains.includes(c)
+    && (l.status === 'unconfirmed' || (l.status === 'not_compared' && l.similar?.length)); });
   const meta = [clean(p.manufacturer), qtyText(p.quantity, p.unit), kg ? 'sold by weight' : ''].filter(Boolean);
   const shown = chains.slice(0, 6), more = chains.slice(6);
   el.innerHTML = `<a class="back" href="#/" data-back>← Back</a>
@@ -895,7 +942,7 @@ function renderProduct() {
       <div class="p-info">
         <h1 dir="auto">${esc(p.name)}</h1>
         ${meta.length ? `<p class="p-meta">${meta.map(bdi).join(' · ')}</p>` : ''}
-        ${chains.length ? `<p class="p-from">From <strong class="num">${money(chains[0].in_store.total)}${kg ? '/kg' : ''}</strong> at ${esc(chains[0].name)}</p>` : ''}
+        ${chains.length ? `<p class="p-from">From <strong class="num">${money(offerPrice(offerLine(chains[0])))}${kg ? '/kg' : ''}</strong> at ${esc(chains[0].name)}</p>` : ''}
         <div class="buy" id="p-buy"></div>
       </div>
     </div>
@@ -903,10 +950,12 @@ function renderProduct() {
     ${chains.length ? `<h2 class="p-h">Price at ${plural(chains.length, 'chain')}${r ? ` within ${r} km` : ''} · cheapest first</h2>
       <ol class="offers">${shown.map((c, i) => offer(c, i === 0)).join('')}</ol>
       ${more.length ? `<details class="pricier"><summary>More expensive (${more.length})
-        <span class="range">${money(more[0].in_store.total)}${more.length > 1 ? ' – ' + money(more.at(-1).in_store.total) : ''}</span></summary>
+        <span class="range">${money(offerPrice(offerLine(more[0])))}${more.length > 1 ? ' – ' + money(offerPrice(offerLine(more.at(-1)))) : ''}</span></summary>
         <ol class="offers">${more.map(c => offer(c, false)).join('')}</ol></details>` : ''}`
     : emptyState(r ? `Not sold within ${r} km` : 'Not on sale right now', '',
         r ? '<div class="actions"><button class="primary" type="button" data-open-loc>Change distance</button></div>' : '')}
+    ${others.length ? `<details class="pricier"><summary>${res.n ? 'Not counted' : 'Not compared'} (${others.length})</summary>
+      <ol class="offers">${others.map(offerOther).join('')}</ol></details>` : ''}
     <section class="p-history"></section>`;
   renderBuy();
   fillDrive(el);
@@ -954,19 +1003,20 @@ function route() {
 window.addEventListener('hashchange', route);
 
 // ---------------------------------------------------------------- compare
+const comparePost = body => api('/api/compare', { method: 'POST', body });
 let compareSeq = 0;
 async function compareNow() {
   const my = ++compareSeq;
   if (!S.cart.items.length) { S.result = null; drawPins(); drawDots(); if (mapData) renderMapInfo(); renderStoreCard(false); updateTotals(); return renderResults(); }
   if (!S.result) renderResults(true);
   try {
-    const r = await api('/api/compare', { method: 'POST', body: { items: S.cart.items, prefs: S.prefs } });
+    const r = await comparePost({ items: S.cart.items, prefs: S.prefs });
     if (my !== compareSeq) return;
     S.result = r;
     for (const it of r.items) {
       const m = S.meta[it.key] || {};
       S.meta[it.key] = { ...m, name: m.name || it.name, manufacturer: it.manufacturer, is_weighted: it.is_weighted,
-                         min: it.min, max: it.max, median: it.median, stores: it.stores, img: it.img || m.img };
+                         min: it.min, max: it.max, stores: it.stores, compared: it.compared, img: it.img || m.img };
     }
     renderBasket();
     renderResults();
@@ -1031,45 +1081,66 @@ function facts(c, skipHeadline) {
 
 function fmtQty(q, kg) { return kg ? `${q} kg` : `${q}`; }
 
+// The name on this store's shelf (when it isn't the cart's name) and the barcode, under the product name
+const shelfLine = l => [l.shelf_name && bdi(l.shelf_name), l.code && `<span class="code">${esc(l.code)}</span>`].filter(Boolean).join(' · ');
+
+function lineRow(l) {
+  const it = S.cart.items.find(i => i.key === l.key), m = S.meta[l.key] || {}, kg = m.is_weighted;
+  const name = `<span dir="auto">${esc(it?.name || m.name || l.key)}</span>`, qty = it?.qty ?? l.qty ?? 1;
+  if (l.status === 'missing')
+    return `<tr class="missing"><td class="l-name">${name}<small>Not sold here</small></td><td class="l-cost">Missing</td></tr>`;
+  if (l.status === 'unconfirmed')
+    return `<tr class="unconfirmed"><td class="l-name">${name}<small>${unconfText(l)} · Not counted</small>${l.code ? `<small>${shelfLine({ code: l.code })}</small>` : ''}</td>
+      <td class="l-cost">${money(l.full ?? l.price * qty)}</td></tr>`;
+  const shelf = shelfLine(l);
+  const chips = (l.promo ? ` <span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>`
+      + (l.promo.club ? ' <span class="chip">Club</span>' : '') : '')
+    + (l.deals_not_counted?.length ? ` <span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>` : '');
+  return `<tr><td class="l-name">${name}<small>${fmtQty(l.qty, kg)} × ${money(l.price)}${chips}</small>${shelf ? `<small class="shelf">${shelf}</small>` : ''}</td>
+    <td class="l-cost${l.promo ? ' promo' : ''}">${l.promo ? `<s>${money(l.full)}</s>` : ''}${money(l.cost)}</td></tr>`;
+}
+// produce: never in a total; this store's own item, or items with the same name, for you to judge
+function ncRow(l) {
+  const it = S.cart.items.find(i => i.key === l.key), m = S.meta[l.key] || {}, kg = m.is_weighted, u = kg ? '/kg' : '';
+  const name = `<span dir="auto">${esc(it?.name || m.name || l.key)}</span>`, qty = it?.qty ?? l.qty ?? 1;
+  if (l.own && l.price != null)
+    return `<tr><td class="l-name">${name}<small>${fmtQty(qty, kg)} × ${money(l.price)}${l.shelf_name ? ` · ${bdi(l.shelf_name)}` : ''}</small></td>
+      <td class="l-cost">${money(l.price * qty)}</td></tr>`;
+  if (l.similar?.length)
+    return `<tr><td class="l-name">${name}${l.similar.map(x => `<small>Similar: ${bdi(x.name)} ${money(x.price)}${u}</small>`).join('')}</td>
+      <td class="l-cost">${money(l.similar[0].price * qty)}</td></tr>`;
+  return `<tr class="missing"><td class="l-name">${name}<small>Not sold here</small></td><td class="l-cost">—</td></tr>`;
+}
 function linesTable(ls) {
-  return `<table class="lines"><tbody>${ls.map(l => {
-    const it = S.cart.items.find(i => i.key === l.key), m = S.meta[l.key] || {};
-    const name = esc(it?.name || m.name || l.key);
-    if (!l.available) {
-      const est = m.median != null ? ` — about ${money(m.median * (it?.qty ?? 1))} elsewhere` : '';
-      return `<tr class="missing"><td class="l-name"><span dir="auto">${name}</span><small>Not sold here${est}</small></td><td class="l-cost">Missing</td></tr>`;
-    }
-    const sub = `${fmtQty(l.qty, m.is_weighted)} × ${money(l.price)}${l.by_name ? ' · matched by name' : ''}`;
-    const promo = l.promo ? ` <span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>`
-      + (l.promo.club ? ' <span class="chip">Club</span>' : '') : '';
-    return `<tr><td class="l-name"><span dir="auto">${name}</span><small>${sub}${promo}</small></td>
-      <td class="l-cost${l.promo ? ' promo' : ''}">${l.promo ? `<s>${money(l.full)}</s>` : ''}${money(l.cost)}</td></tr>`;
-  }).join('')}</tbody></table>`;
+  const counted = ls.filter(l => l.status !== 'not_compared'), nc = ls.filter(l => l.status === 'not_compared');
+  return (counted.length ? `<table class="lines"><tbody>${counted.map(lineRow).join('')}</tbody></table>` : '')
+    + (nc.length ? `<div class="nc"><p class="nc-h">Not compared</p><table class="lines"><tbody>${nc.map(ncRow).join('')}</tbody></table></div>` : '');
 }
 
 function winner(c) {
-  const v = view(c), total = head(c), n = S.cart.items.length, next = S.result.chains[1];
+  const v = view(c), total = paid(c), n = nCompared();
   const [whole, ag] = total.toFixed(2).split('.');
-  const lead = next && comparable(next) != null && comparable(c) != null ? comparable(next) - comparable(c) : 0;
+  const next = S.result.chains.find(x => x !== c && full(x));  // the runner-up with everything too
+  const lead = full(c) && next ? paid(next) - paid(c) : 0;
   const all = n === 1 ? 'Your item' : `All ${n} items`;
-  const sub = v.missing.length
-    ? `<strong>${v.covered} of ${n}</strong> items here for ${money(paid(c))} · ≈${money(v.estimate_missing)} more for the ${v.missing.length} missing elsewhere`
+  const sub = !full(c)
+    ? `<strong>${v.covered} of ${n}</strong> items here`
     : `${all} here` + (lead > 0.005 ? ` · <strong>${money(lead)}</strong> less than ${esc(next.name)}` : '');
   const foot = facts(c, true).map(([k, val, warn]) => warn
     ? `<div>${k ? esc(k) + ': ' : ''}${esc(val)}</div>`
     : `<div class="alt"><span>${esc(k)}</span><strong>${esc(val)}</strong></div>`).join('');
   const others = !delivery() && c.in_store.branches.length > 1
     ? `<p class="note">Other branches: ${c.in_store.branches.slice(1, 4).map(b =>
-        `${bdi(storeName(b))} ${money(b.total)}${b.distance_km != null ? ` (${kmText(b.distance_km)}${driveSlot(b)})` : ''}`).join(' · ')}</p>` : '';
+        `${bdi(storeName(b))} ${money(b.total)}${b.complete === false ? ` (${b.covered} of ${n})` : ''}${b.distance_km != null ? ` (${kmText(b.distance_km)}${driveSlot(b)})` : ''}`).join(' · ')}</p>` : '';
   const r = radius();
-  const branches = delivery() ? 'Prices on the chain’s website'
+  const branches = [delivery() ? 'Prices on the chain’s website'
     : c.in_store.branch_count > 1 ? `Cheapest of ${c.in_store.branch_count} branches${r ? ` within ${r} km` : ''}`
-    : r ? `Only branch within ${r} km` : 'Only branch with prices';
+    : r ? `Only branch within ${r} km` : 'Only branch with prices', pricesFrom(v.last_price_ts)].filter(Boolean).join(' · ');
   return `<article class="winner">
     <div class="tag-face">
       <p class="tag-chain">${esc(c.name)}</p>
       <p class="tag-store">${place(v)}</p>
-      <p class="tag-total" aria-label="${headText(c)}"><span class="cur">${approx(c) ? '≈' : ''}₪</span>${whole}<span class="agorot">.${ag}</span></p>
+      <p class="tag-total" aria-label="${money(total)}"><span class="cur">₪</span>${whole}<span class="agorot">.${ag}</span></p>
       <p class="tag-sub">${sub}</p>
       <div class="tag-foot">${foot}</div>
     </div>
@@ -1081,28 +1152,50 @@ function winner(c) {
 }
 
 function row(c, hero) {
-  const v = view(c);
-  const d = comparable(c) != null && comparable(hero) != null ? comparable(c) - comparable(hero) : null;
+  const v = view(c), n = nCompared();
+  const d = n && full(c) && hero && full(hero) ? paid(c) - paid(hero) : null;
   const promos = v.lines.filter(l => l.promo).length;
   const flags = [
-    v.missing.length && `<span class="chip warn">${v.missing.length} missing · ${money(paid(c))} for the rest</span>`,
+    n && !full(c) && `<span class="chip warn">${v.covered} of ${n}</span>`,
     promos && `<span class="chip promo">${promos} on promotion</span>`,
     delivery() && c.online.fee_note && `<span class="chip warn">${esc(c.online.fee_note)}</span>`,
   ].filter(Boolean).join('');
-  const alt = facts(c).map(([k, val, warn]) => warn
+  const alt = (n ? facts(c) : []).map(([k, val, warn]) => warn
     ? `<span class="chip warn">${k ? esc(k) + ': ' : ''}${esc(val)}</span>`
-    : `<span>${esc(k)} <strong class="num">${esc(val)}</strong></span>`).join('');
+    : `<span>${esc(k)} <strong class="num">${esc(val)}</strong></span>`).join('')
+    + (v.last_price_ts ? `<span class="muted">${pricesFrom(v.last_price_ts)}</span>` : '');
   return `<details class="row">
     <summary>
       <span class="row-chain">${esc(c.name)}</span>
       <span class="row-store">${place(v)}</span>
       ${flags ? `<span class="flags">${flags}</span>` : ''}
-      <span class="row-total">${headText(c)}</span>
+      <span class="row-total">${n ? money(paid(c)) : ''}</span>
       <span class="row-delta">${d == null ? '' : d < 0.005 ? 'same' : '+' + money(d)}</span>
       ${SVG.chev}
     </summary>
     <div class="row-body"><div class="row-alt">${alt}</div>${linesTable(v.lines)}</div>
   </details>`;
+}
+
+// stores whose newest price file is over a day old: listed, never ranked
+function staleHTML() {
+  const st = S.result?.stale || [];
+  if (!st.length) return '';
+  return `<details class="pricier stale"><summary>Prices over a day old (${st.length})</summary>
+    <ul class="stale-list">${st.map(s => `<li><span class="row-chain">${esc(s.chain)}</span>
+      <span class="row-store">${bdi(storeName(s))}${s.distance_km != null ? ` · ${kmText(s.distance_km)}` : ''}</span>
+      <span class="st-ts">${pricesFrom(s.last_price_ts)}</span></li>`).join('')}</ul></details>`;
+}
+// up to 4 rows open; the rest (always including the dearest) collapsed under `label`
+function groupHTML(list, hero, open, label) {
+  if (!list.length) return '';
+  const cut = list.length > 1 ? Math.min(4, list.length - 1) : list.length;
+  const rows = list.slice(0, cut), more = list.slice(cut);
+  return (open ? `<div class="group-label">${open}</div>` : '')
+    + (rows.length ? `<div class="ranked">${rows.map(c => row(c, hero)).join('')}</div>` : '')
+    + (more.length ? `<details class="pricier"><summary>${label} (${more.length})
+        <span class="range">${money(paid(more[0]))}${more.length > 1 ? ' – ' + money(paid(more.at(-1))) : ''}</span></summary>
+        <div class="ranked">${more.map(c => row(c, hero)).join('')}</div></details>` : '');
 }
 
 function renderResults(loading) {
@@ -1121,30 +1214,35 @@ function renderResults(loading) {
     return;
   }
   if (loading || !S.result) { el.innerHTML = '<div class="skeleton"></div>'; return; }
-  const chains = S.result.chains;
+  const chains = S.result.chains, n = nCompared();
   if (!chains.length) {
     const r = radius();
-    el.innerHTML = delivery()
+    el.innerHTML = (delivery()
       ? emptyState('No online shop has these products', '')
       : r ? emptyState(`No stores within ${r} km`, '',
           '<div class="actions"><button class="primary" type="button" data-open-loc>Change distance</button></div>')
-      : emptyState('No store has these products', '');
+      : emptyState('No store has these products', '')) + staleHTML();
     return;
   }
-  const [hero, ...rest] = chains;
-  const n = S.cart.items.length, full = chains.filter(c => !view(c).missing.length).length;
   const branches = chains.reduce((t, c) => t + (c.in_store?.branch_count || 0), 0);
-  const sum = `<p class="co-sum">${delivery() ? plural(chains.length, 'online shop')
-    : `${branches} ${branches === 1 ? 'branch' : 'branches'} · ${plural(chains.length, 'chain')}`} · ${full} with all ${n} ${n === 1 ? 'product' : 'products'}</p>`;
-  // next ~4 as rows; the rest — always including the most expensive — collapsed
-  const cut = rest.length ? Math.min(4, rest.length - 1) : 0;
-  const rows = rest.slice(0, cut), pricier = rest.slice(cut);
-  const r = radius();
+  const where = delivery() ? plural(chains.length, 'online shop')
+    : `${branches} ${branches === 1 ? 'branch' : 'branches'} · ${plural(chains.length, 'chain')}`;
+  if (!n) {  // only produce: nothing to rank; each store's own items, not compared
+    el.innerHTML = `<p class="co-sum">${where}</p><div class="group-label">Not compared</div>
+      <div class="ranked">${chains.map(c => row(c, null)).join('')}</div>` + staleHTML();
+    fillDrive();
+    return;
+  }
+  const done = chains.filter(full), partial = chains.filter(c => !full(c));
+  const sum = `<p class="co-sum">${where} · ${done.length} with all ${n} ${n === 1 ? 'product' : 'products'}</p>`;
+  const hero = done[0] || chains[0];
   el.innerHTML = sum + winner(hero)
-    + (rows.length ? `<div class="group-label">Next cheapest</div><div class="ranked">${rows.map(c => row(c, hero)).join('')}</div>` : '')
-    + (pricier.length ? `<details class="pricier"><summary>More expensive stores (${pricier.length})
-        <span class="range">${headText(pricier[0])}${pricier.length > 1 ? ' – ' + headText(pricier.at(-1)) : ''}</span></summary>
-        <div class="ranked">${pricier.map(c => row(c, hero)).join('')}</div></details>` : '');
+    + groupHTML(done.filter(c => c !== hero), hero, 'Next cheapest', 'More expensive stores')
+    + (done.length
+      ? (partial.length ? `<details class="pricier"><summary>Missing some products (${partial.length})</summary>
+          <div class="ranked">${partial.map(c => row(c, hero)).join('')}</div></details>` : '')
+      : groupHTML(partial.filter(c => c !== hero), hero, 'Missing some products', 'More'))
+    + staleHTML();
   fillDrive();
 }
 
@@ -1152,7 +1250,7 @@ function renderResults(loading) {
 // The indexer records each product's cheapest and dearest shelf price per chain on every day it changes.
 S.trend = null;
 let trendSeq = 0;
-const fullChains = () => (S.result?.chains || []).filter(c => !view(c).missing.length).slice(0, 4);
+const fullChains = () => nCompared() ? (S.result?.chains || []).filter(full).slice(0, 4) : [];
 async function loadTrend() {
   const ids = [...new Set([...fullChains(), ...sbsCols()].map(c => String(c.chain_id)))];
   if (!S.cart.items.length || !ids.length) { S.trend = null; renderTrend(); return; }
@@ -1270,36 +1368,42 @@ $('#sbs-picks').addEventListener('click', e => {
   loadTrend();
 });
 function renderSbs() {
-  const box = $('#sbs'), ch = S.result?.chains || [], items = S.cart.items;
-  box.hidden = !items.length || ch.length < 2;
+  const box = $('#sbs'), ch = S.result?.chains || [], items = S.cart.items, n = nCompared();
+  box.hidden = !items.length || ch.length < 2 || !n;
   if (box.hidden) return;
   const cols = sbsCols(), on = new Set(cols.map(c => String(c.chain_id)));
   $('#sbs-picks').innerHTML = ch.map(c => { const k = String(c.chain_id);
-    return `<button type="button" class="pill${on.has(k) ? ' on' : ''}" data-sbs="${esc(k)}" aria-pressed="${on.has(k)}">${esc(c.name)} <span>${headText(c)}</span></button>`; }).join('');
+    return `<button type="button" class="pill${on.has(k) ? ' on' : ''}" data-sbs="${esc(k)}" aria-pressed="${on.has(k)}">${esc(c.name)} <span>${money(paid(c))}</span></button>`; }).join('');
   const wins = cols.map(() => 0);
   let split = 0, everywhere = true;
   const body = items.map(it => {
     const m = S.meta[it.key] || {}, ls = cols.map(c => lineAt(c, it.key));
-    const have = ls.filter(l => l?.available).map(l => l.cost), lo = have.length ? Math.min(...have) : null;
+    const produce = ls.some(l => l?.status === 'not_compared');
+    const have = ls.filter(l => l?.status === 'ok').map(l => l.cost), lo = have.length ? Math.min(...have) : null;
     const differ = have.length > 1 && Math.max(...have) - lo > 0.005;
-    if (lo == null) everywhere = false; else split += lo;
-    return `<tr><th scope="row"><div class="sb-prod"><span class="sb-thumb">${PH}${photo(m)}</span><span class="sb-name" dir="auto">${esc(it.name || m.name || it.key)}</span><small>${fmtQty(it.qty, m.is_weighted)}${m.is_weighted ? '' : ' ×'}</small></div></th>${ls.map((l, j) => {
-      if (!l?.available) return '<td class="n miss">—<small>not sold here</small></td>';
+    if (!produce) { if (lo == null) everywhere = false; else split += lo; }
+    return `<tr${produce ? ' class="unconfirmed"' : ''}><th scope="row"><div class="sb-prod"><span class="sb-thumb">${PH}${photo(m)}</span><span class="sb-name" dir="auto">${esc(it.name || m.name || it.key)}</span><small>${fmtQty(it.qty, m.is_weighted)}${m.is_weighted ? '' : ' ×'}${produce ? ' · Not compared' : ''}</small></div></th>${ls.map((l, j) => {
+      if (!l || l.status === 'missing') return '<td class="n miss">—<small>not sold here</small></td>';
+      if (l.status === 'not_compared') {
+        const p = ncPick(l);
+        return p ? `<td class="n unc">${money(p.price * it.qty)}<small>${l.own ? '' : 'Similar · '}${bdi(p.name || '')}</small></td>` : '<td class="n miss">—<small>not sold here</small></td>';
+      }
+      if (l.status === 'unconfirmed') return `<td class="n unc">${money(l.full ?? l.price * it.qty)}<small>${unconfText(l)} · Not counted</small></td>`;
       const best = differ && l.cost - lo < 0.005;
       if (best) wins[j]++;
-      return `<td class="n${best ? ' best' : ''}">${money(l.cost)}${moveTag(cols[j], l)}${l.promo ? `<small class="promo" dir="auto">${esc(l.promo.description || 'deal')}</small>` : ''}</td>`;
+      return `<td class="n${best ? ' best' : ''}">${money(l.cost)}${moveTag(cols[j], l)}${l.promo ? `<small class="promo" dir="auto">${esc(l.promo.description || 'deal')}</small>` : ''}${l.deals_not_counted?.length ? `<small title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</small>` : ''}</td>`;
     }).join('')}</tr>`;
   }).join('');
-  const low = Math.min(...cols.map(head));
+  const doneCols = cols.filter(full), low = doneCols.length ? Math.min(...doneCols.map(paid)) : null;
   $('#sbs-table').innerHTML = `<table class="sbs-table"><thead><tr><th scope="col">Product</th>${cols.map(c => { const v = view(c);
       return `<th scope="col" class="n"><span class="sb-chain">${esc(c.name)}</span><small>${delivery() ? 'Online store' : bdi(storeName(v)) + (v.distance_km != null ? ` · ${kmText(v.distance_km)}` : '') + driveSlot(v)}</small></th>`; }).join('')}</tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr><th scope="row">Cheapest for</th>${wins.map(w => `<td class="n">${plural(w, 'product')}</td>`).join('')}</tr>
       ${delivery() ? `<tr><th scope="row">Delivery</th>${cols.map(c => `<td class="n">${c.online.fee == null ? '—' : c.online.fee === 0 ? 'Free' : money(c.online.fee)}</td>`).join('')}</tr>` : ''}
-      <tr class="total"><th scope="row">Whole cart</th>${cols.map(c => { const miss = view(c).missing.length;
-        return `<td class="n${head(c) - low < 0.005 ? ' best' : ''}">${headText(c)}${miss ? `<small>${miss} missing, at the usual price</small>` : ''}</td>`; }).join('')}</tr></tfoot></table>`;
-  const one = cols.reduce((a, b) => head(a) <= head(b) ? a : b), save = head(one) - split;
-  $('#sbs-split').innerHTML = !delivery() && everywhere && save >= 1
+      <tr class="total"><th scope="row">Whole cart</th>${cols.map(c => { const v = view(c);
+        return `<td class="n${full(c) && paid(c) - low < 0.005 ? ' best' : ''}">${money(paid(c))}${full(c) ? '' : `<small>${v.covered} of ${n}</small>`}</td>`; }).join('')}</tr></tfoot></table>`;
+  const one = doneCols.length ? doneCols.reduce((a, b) => paid(a) <= paid(b) ? a : b) : null, save = one ? paid(one) - split : 0;
+  $('#sbs-split').innerHTML = !delivery() && one && everywhere && save >= 1
     ? `Buying each product where it’s cheapest among these stores comes to <strong>${money(split)}</strong> — ${money(save)} less than all of it at ${esc(one.name)}, if the extra stop is worth it to you.`
     : '';
   fillDrive($('#sbs-table'));
@@ -1489,13 +1593,14 @@ async function runCompare() {
   let carts, res;
   try {
     carts = await Promise.all(ids.map(id => api(`/api/carts/${id}`)));
-    res = await Promise.all(carts.map(c => api('/api/compare', { method: 'POST', body: { items: c.items, prefs: S.prefs } })));
+    res = await Promise.all(carts.map(c => comparePost({ items: c.items, prefs: S.prefs })));
   } catch { out.innerHTML = '<p class="note">Couldn’t price these carts.</p>'; return; }
   if (my !== cmpSeq) return;
   const names = [...new Set(res.flatMap(r => r.chains.map(c => c.name)))];
   const cell = (r, n) => r.chains.find(c => c.name === n);
   // "together": what all the picked baskets cost at one chain; only chains that sell every basket count
-  const together = n => res.every(r => cell(r, n)) ? res.reduce((t, r) => t + head(cell(r, n)), 0) : null;
+  // only chains with a confirmed price for every compared product of every basket count
+  const together = n => res.every(r => cell(r, n) && full(cell(r, n))) ? res.reduce((t, r) => t + paid(cell(r, n)), 0) : null;
   names.sort((a, b) => (together(a) ?? 1e9) - (together(b) ?? 1e9));
   const bestTogether = names[0] && together(names[0]) != null ? names[0] : null;
   out.innerHTML = `<table class="cmp-table"><thead><tr><th>Chain</th>${carts.map(c => `<th class="n"><bdi>${esc(c.name)}</bdi><br><small>${plural(c.items.length, 'product')}</small></th>`).join('')}
@@ -1503,8 +1608,8 @@ async function runCompare() {
     <tbody>${names.map(n => `<tr><td>${esc(n)}</td>${res.map(r => {
       const c = cell(r, n);
       if (!c) return '<td class="n">—</td>';
-      const miss = view(c).missing.length;
-      return `<td class="n${r.chains[0].name === n ? ' best' : ''}">${headText(c)}${miss ? `<br><span class="chip warn">${miss} missing</span>` : ''}</td>`;
+      const isBest = r.chains[0].name === n && full(c) && nCompared(r) > 0;
+      return `<td class="n${isBest ? ' best' : ''}">${nCompared(r) ? money(paid(c)) : '—'}${nCompared(r) && !full(c) ? `<br><span class="chip warn">${view(c).covered} of ${nCompared(r)}</span>` : ''}</td>`;
     }).join('')}<td class="n${n === bestTogether ? ' best' : ''}">${money(together(n))}</td></tr>`).join('')}</tbody></table>`;
 }
 

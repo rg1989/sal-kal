@@ -98,6 +98,7 @@ button { cursor: pointer; }
 }
 .chip.promo { background: var(--promo-soft); color: var(--promo); border-color: transparent; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.chip.muted { background: transparent; color: var(--muted); border: 1px dashed var(--line-strong); font-weight: 500; }
 
 .items { list-style: none; margin: 0; padding: 4px 8px 8px; overflow: auto; flex: 1; }
 .item {
@@ -177,6 +178,19 @@ button { cursor: pointer; }
 .lines .l-cost.promo { color: var(--promo); }
 .lines tr.missing .l-name, .lines tr.missing .l-cost { color: var(--muted); }
 .lines tr.missing .l-cost { font-family: var(--ui); font-size: 13px; font-weight: 500; }
+.lines .l-name small.shelf { font-size: 12px; }
+.lines .code, .sbs-table .code { font-family: var(--num); letter-spacing: .02em; color: var(--muted); font-size: 12px; }
+/* can't be confirmed (odd price, different name) or not compared (produce): shown, greyed, never in a total */
+.lines tr.unconfirmed .l-name > span, .lines tr.unconfirmed .l-cost { color: var(--muted); }
+.lines tr.unconfirmed .l-cost { font-weight: 500; font-size: 15px; }
+.nc { margin-top: 12px; padding-top: 6px; border-top: 1px dashed var(--line-strong); }
+.nc-h { margin: 0; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.nc .lines .l-name > span, .nc .lines .l-cost { color: var(--muted); }
+.nc .lines .l-cost { font-weight: 500; font-size: 15px; }
+.stale-list { list-style: none; margin: 0; padding: 0 14px 6px; }
+.stale-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.stale-list li:last-child { border-bottom: 0; }
+.stale-list .st-ts { margin-left: auto; color: var(--warn); font-size: 12.5px; }
 .detail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
 .detail-head h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink-2); }
 .detail-head .branches { font-size: 13px; color: var(--muted); }
@@ -449,6 +463,9 @@ a.brand { color: inherit; text-decoration: none; }
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 13px 16px;
 }
 .offer.best { background: var(--tag); color: var(--tag-ink); border-color: var(--tag-edge); padding: 18px 16px; }
+.offer.unconfirmed { background: transparent; border-style: dashed; color: var(--muted); }
+.offer.unconfirmed .o-flags { font-size: 12.5px; }
+.offer.unconfirmed .o-price { font-size: 20px; font-weight: 500; }
 .o-chain { font-weight: 600; font-size: 16px; }
 .o-badge { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-left: 6px; opacity: .7; }
 .o-store { grid-column: 1; color: var(--muted); font-size: 13px; }
@@ -697,6 +714,9 @@ html, * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--tag) 
 .live-cart .stepper input { width: 30px; font-size: 16px; }
 .lc-price { grid-row: 1 / span 2; grid-column: 4; min-width: 58px; text-align: right; font-size: 17px; font-weight: 700; }
 .item.missing .lc-price { color: var(--muted); font-weight: 600; }
+.item.unconfirmed .item-name, .item.unconfirmed .lc-price { color: var(--muted); }
+.item.unconfirmed .lc-price { font-weight: 500; }
+.item-meta .unc { color: var(--muted); }
 .item.deal .lc-price { color: var(--promo); }
 .live-cart .empty-basket { flex: 1; }
 
@@ -789,6 +809,8 @@ body[data-view="basket"] #lc-cta { display: none; }
 .sbs-table td.best { background: var(--tag); color: var(--tag-ink); }
 .sbs-table td.best small { color: inherit; opacity: .75; }
 .sbs-table td.miss { color: var(--muted); font: 500 13px var(--ui); }
+.sbs-table td.unc { color: var(--muted); font-weight: 500; }
+.sbs-table tr.unconfirmed .sb-name { color: var(--muted); }
 .sbs-table small.promo { color: var(--promo); max-width: 160px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sbs-table td.best small.promo { color: var(--tag-ink); }
 .mv { font-family: var(--num); font-size: 12.5px; font-weight: 700; margin-left: 4px; }

@@ -35,14 +35,29 @@ files older than 2 days are pruned. Check with `systemctl --user status il-price
 - Promos: `<Promotions><Promotion>` with PromotionId, PromotionDescription, Start/End date+hour, MinQty, DiscountedPrice,
   DiscountRate, Clubs/ClubId (0 = everyone), AdditionalIsCoupon, AdditionalIsActive, MinPurchaseAmnt, PromotionItems/Item(ItemCode, IsGiftItem).
   Bina chains use PromotionID/ChainID casing and sometimes `<Sales>`. Super-Pharm promos are `<Line>` per item with nested PromotionDetails.
-- DiscountedPrice is usually the **bundle price** for MinQty ("3 ב 8.90"); DiscountRate with MinQty>1 is "1+1"/"2nd at 50%".
+- DiscountedPrice is usually the **bundle price** for MinQty ("3 ב 8.90"). DiscountRate is often the saving % on top
+  of it, not a "1+1" signal (reading it as one overpriced 99.8% of such bundles before 2026-11-05). RewardType codes
+  differ per chain (Shufersal 0, Rami Levy 10/3, Carrefour 12): not used. MaxQty and Remarks (coupons) are indexed.
 
-## Product matching (user asked about this — explained to them)
+## Confirmed-only comparison (the user's rule, 2026-11-05 — overrides everything below)
+Accuracy over coverage: a price that can't be confirmed is shown greyed with its reason and never counted; no estimates.
+Rules live in `app/trust.py` (tests: tests/test_trust.py). A cart line counts only when:
+1. the store is fresh: `stores.last_price_ts` within `FRESH_HOURS` (26 h); older stores aren't ranked (`stale` group);
+2. same product: a barcode with a valid GS1 check digit (`is_global_code`), and the chain's own name (`item_names`)
+   agrees with the other chains' (`odd_names`: shared word after prefix/plural/construct folding, one-letter typos,
+   English↔Hebrew consonants) — disagreeing chains go in `name_flags` (~0.7% of chain names, mostly real mix-ups);
+   chain-code items (produce, deli) are never compared, not even at their own chain ("Not compared" block);
+3. the price is within ⅓×–3× of the product's median at current stores (`price_flags`, needs 4+ stores; `products.median`);
+4. a deal counts only if its description states the same terms as its numbers, or its price and % agree at the shelf
+   price (`promo_terms`; ~82% of deal lines); coupons/vouchers/club sign-up/spend thresholds never; MaxQty respected.
+The indexer's `confirm()` rebuilds flags, then stats (store/chain counts, min/max) and price history from confirmed
+prices only. Stores missing items are listed as "N of M" with no estimate; complete stores rank first.
+
+## Product matching
 Packaged goods use the manufacturer EAN barcode as ItemCode → identical across chains → exact match.
 Exceptions: weighed produce/deli (chain-internal short codes, or 13-digit codes starting with 2) and store brands.
-Implementation: `product_key()` → global key = barcode; otherwise `"<chainid>:<code>"`. Chain-scoped items are lined up
-across chains by a normalized name (`products.norm`) and flagged `by_name` in results. Missing items are never silently
-dropped: totals are ranked on `comparable = total + median price of missing items`, and missing items are listed.
+Implementation: `product_key()` → global key = barcode; otherwise `"<chainid>:<code>"`. Chain-scoped items are grouped
+in search by a normalized name (`products.norm`) and shown per store as similar items, but never counted in totals.
 
 ## Delivery fees (not in the price files — editable defaults in `app/chains.py`, user-overridable in the UI)
 Sources: ice.co.il (5 Jul 2026), nativ.org.il (5 Jun 2026), ynet/Calcalist/Bizportal (2026).
@@ -70,13 +85,14 @@ Online minimum orders across sites are 250–350 per ice.co.il, not per chain.
 
 ## Status (2026-11-04) — live on Omarchy
 Canonical copy: `omarchy:~/Projects/il-prices-app` (Tailscale host `omarchy`). URL: http://omarchy:8080.
-Deploy: edit, rsync here -> there, run `./install-app.sh` (idempotent; restarts `sal-web`).
+Git repo since 2026-11-05 (branch main, local only). Sessions run on omarchy itself: edit here, `./install-app.sh`
+(idempotent; restarts `sal-web`). The indexer timer runs code from this folder: stop `sal-index.timer` while editing.
 Services (systemd --user): `il-prices.timer` (downloader, every 3h), `sal-index.timer` (every 30 min:
 `app.indexer` then `app.geo`), `sal-web` (uvicorn :8080). DB `~/il-prices/basket.db`.
 Built since handoff: `app.js`; `install-app.sh`; address + max-distance filter and drive times (`app/geo.py`:
 Nominatim geocoding cached in `geocache`, CBS town codes in `towns`, OSRM typical drive times, Google Routes
-live traffic if the user saves a key); search merges per-chain produce and falls back to best partial match;
-"≈" headline = full-basket estimate when items are missing. Home preset: the owner's address, 5 km.
+live traffic if the user saves a key); search merges per-chain produce and falls back to best partial match.
+(The old "≈" full-basket estimate was removed on 2026-11-05: see Confirmed-only comparison.) Home preset: the owner's address, 5 km.
 Real-data fixes: City Market "spend ₪X" promos (`MinPurchaseAmount`, thousands of items) were attached to
 every product — now skipped. City is often a numeric CBS code. Many stores lack names ("Branch N").
 Shop UI (2026-11-04, per user): header search + results grid, home = category tiles + deal/pick/classic shelves,
@@ -102,7 +118,7 @@ plugin for Hebrew labels, /api/stores/near; overlays re-added on every style.loa
 MapLibre only draws on animation frames: in a hidden browser pane it waits (not a bug).
 Live-cart shop (2026-11-05): header = brand | search centred | address pill + theme. Desktop (>=1100px): the cart is a
 sticky right column (<aside id="cart">) on every page: cart tabs, rows with photo/stepper/line price at the pinned store
-(default cheapest; tap a store in the cart or a map pin to re-price), amber "Not at X · usually ≈" for missing items,
+(default cheapest; tap a store in the cart or a map pin to re-price), "Not at X" for missing items (no estimate),
 top 4 stores. Phones: bottom total bar + the same aside as a slide-in sheet (body.cart-open). Cards in the cart get a
 yellow ring + "In cart" badge (CSS :has). Checkout (#/basket) = preview only: map with price pins (cheapest yellow),
 "Save these prices" (manual snapshot now stores per-store per-product [cost, qty] + names/qty) and "What changed"

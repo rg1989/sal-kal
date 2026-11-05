@@ -40,7 +40,17 @@ CREATE TABLE IF NOT EXISTS price_history(key TEXT, chain_id TEXT, day INTEGER, m
   PRIMARY KEY(key, chain_id, day)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS price_last(key TEXT, chain_id TEXT, mn REAL, mx REAL, day INTEGER,
   PRIMARY KEY(key, chain_id)) WITHOUT ROWID;
+-- what each chain calls a barcode product (the name on its shelf)
+CREATE TABLE IF NOT EXISTS item_names(key TEXT, chain_id TEXT, name TEXT, PRIMARY KEY(key, chain_id)) WITHOUT ROWID;
+-- barcode products a chain names differently from the other chains (app.trust.odd_names): not the same product
+CREATE TABLE IF NOT EXISTS name_flags(key TEXT, chain_id TEXT, name TEXT, PRIMARY KEY(key, chain_id)) WITHOUT ROWID;
+-- shelf prices far from the product's median price at other stores (app.trust.OUTLIER): not trusted
+CREATE TABLE IF NOT EXISTS price_flags(key TEXT, chain_id TEXT, store_id INTEGER, median REAL,
+  PRIMARY KEY(key, chain_id, store_id)) WITHOUT ROWID;
 """
+
+# columns added after the first release: (table, column, type)
+ADDED_COLUMNS = (("products", "median", "REAL"), ("promos", "max_qty", "REAL"), ("promos", "remarks", "TEXT"))
 
 # The household's own data lives in a separate file (attached as `u`), so saving a cart never
 # waits behind the indexer's long write locks on the price data. Unqualified names resolve here.
@@ -76,7 +86,11 @@ def connect(path=None):
 
 
 def _migrate(con):
-    """One-time move of user tables from the price DB into user.db (else main's copies would shadow them)."""
+    """Columns added since the tables were created, and a one-time move of user tables from the price DB into
+    user.db (else main's copies would shadow them)."""
+    for table, col, typ in ADDED_COLUMNS:
+        if col not in {r[1] for r in con.execute(f"PRAGMA main.table_info({table})")}:
+            con.execute(f"ALTER TABLE main.{table} ADD COLUMN {col} {typ}")
     old = [t for t in USER_TABLES
            if con.execute("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?", (t,)).fetchone()]
     if not old:
