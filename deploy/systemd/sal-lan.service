@@ -1,0 +1,11 @@
+[Unit]
+Description=Forward port 8080 to Sal's socket
+Requires=sal-lan.socket sal-web.socket
+After=sal-lan.socket sal-web.socket
+
+[Service]
+DynamicUser=yes
+SupplementaryGroups=salsock
+# no network of its own: it only accepts the connections systemd hands it and talks to the socket
+PrivateNetwork=yes
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd /run/sal/web.sock

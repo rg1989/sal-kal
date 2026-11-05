@@ -1,0 +1,22 @@
+# /etc/cloudflared/sal.yml: a locally managed Cloudflare Tunnel that serves only Sal.
+# The routes live here, not in the Cloudflare dashboard, and sal-tunnel.service runs in Sal's sandbox,
+# so even someone who took over the Cloudflare account couldn't point the tunnel at anything else.
+#
+# One-time setup (once the domain is on Cloudflare):
+#   sudo pacman -S cloudflared
+#   cloudflared tunnel login                      # opens the browser; saves ~/.cloudflared/cert.pem
+#   cloudflared tunnel create sal                 # prints the tunnel ID; saves ~/.cloudflared/<ID>.json
+#   cloudflared tunnel route dns sal sal.<your-domain>
+#   sudo install -d -m 0750 -g cloudflared /etc/cloudflared
+#   sudo install -m 0600 -o cloudflared ~/.cloudflared/<ID>.json /etc/cloudflared/
+#   sudo install -m 0640 -g cloudflared deploy/cloudflared-sal.yml.example /etc/cloudflared/sal.yml
+#   sudo nano /etc/cloudflared/sal.yml            # fill in <ID> and the hostname
+#   sudo systemctl enable --now sal-tunnel
+#   rm ~/.cloudflared/cert.pem                    # only needed to create tunnels and routes
+tunnel: <ID>
+credentials-file: /etc/cloudflared/<ID>.json
+edge-ip-version: "4"
+ingress:
+  - hostname: sal.<your-domain>
+    service: unix:/run/sal/web.sock
+  - service: http_status:404

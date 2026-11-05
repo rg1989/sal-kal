@@ -1,0 +1,9 @@
+[Unit]
+Description=Fetch product photos, a gentle batch every hour
+
+[Timer]
+OnCalendar=*:50
+Persistent=true
+
+[Install]
+WantedBy=timers.target

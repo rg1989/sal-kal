@@ -1,0 +1,24 @@
+[Unit]
+Description=Download Israeli supermarket price files for Sal
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=sal
+Group=sal
+# the downloader writes its log and cookie files to its working directory
+WorkingDirectory=/srv/sal/data
+Environment=HOME=/srv/sal/data STORAGE_PATH=/srv/sal/data/dumps STATUS_DATABASE_PATH=/srv/sal/data/dumps/status
+Environment=SINGLE_PASS=true NUMBER_OF_PROCESSES=4 PLAYWRIGHT_BROWSERS_PATH=/srv/sal/ms-playwright PYTHONDONTWRITEBYTECODE=1
+# files older than 2 days are superseded by newer full files (the downloader's status/ stays);
+# "-" so a failed cleanup never blocks downloading. (The old run.sh used -prune with -delete,
+# which find refuses, and hid the error: nothing was ever pruned.)
+ExecStartPre=-/usr/bin/find /srv/sal/data/dumps -type f -mtime +2 -not -path /srv/sal/data/dumps/status/* -delete
+ExecStart=/srv/sal/downloader/venv/bin/python /srv/sal/downloader/src/main.py
+TimeoutStartSec=3h
+# a good neighbour on a shared machine (it runs for hours)
+Nice=10
+CPUWeight=20
+IOWeight=20
+MemoryMax=5G

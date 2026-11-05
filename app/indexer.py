@@ -5,7 +5,7 @@ the downloader's dumps folder. The XML dialects differ per portal (Shufersal,
 Cerberus, Bina, Super-Pharm "Line" files, SAP-style uppercase store files), so
 parsing is tag-name driven and case-insensitive instead of per-chain.
 
-Run:  python -m app.indexer [--dumps ~/il-prices/dumps]
+Run:  python -m app.indexer [--dumps /srv/sal/data/dumps]   (as the sal user: sudo -u sal ...)
 One-offs (each also runs confirm()): --rekey, --names, --promos-again, --rebuild-history [DAY]; see main().
 """
 import argparse
@@ -1145,7 +1145,7 @@ def cleanup(con):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dumps", default=os.environ.get("DUMPS_PATH", os.path.expanduser("~/il-prices/dumps")))
+    ap.add_argument("--dumps", default=os.environ.get("DUMPS_PATH", "/srv/sal/data/dumps"))
     ap.add_argument("--db", default=None)
     ap.add_argument("--only", help="comma-separated file kinds to index, e.g. promofull,promo")
     ap.add_argument("--confirm", action="store_true", help="rebuild flags, stats and history even with no new files")

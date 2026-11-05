@@ -1,7 +1,7 @@
 import os
 import sqlite3
 
-DB_PATH = os.environ.get("BASKET_DB", os.path.expanduser("~/il-prices/basket.db"))
+DB_PATH = os.environ.get("BASKET_DB", "/srv/sal/data/basket.db")
 
 ITEM_NAMES_COLS = "key TEXT, chain_id TEXT, name TEXT, ts INTEGER DEFAULT 0, PRIMARY KEY(key, chain_id, name)"
 

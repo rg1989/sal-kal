@@ -1,0 +1,22 @@
+[Unit]
+Description=Cloudflare Tunnel to Sal (reaches Sal's socket and Cloudflare, nothing else)
+Requires=sal-web.socket
+After=sal-web.socket network-online.target
+Wants=network-online.target
+# set up per deploy/cloudflared-sal.yml.example; until then this unit doesn't start
+ConditionPathExists=/etc/cloudflared/sal.yml
+
+[Service]
+User=cloudflared
+Group=cloudflared
+SupplementaryGroups=salsock
+Environment=HOME=/nonexistent
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --config /etc/cloudflared/sal.yml run
+Restart=on-failure
+RestartSec=5
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

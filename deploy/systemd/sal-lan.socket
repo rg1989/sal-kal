@@ -1,0 +1,8 @@
+[Unit]
+Description=Sal on port 8080 for this network and Tailscale (the firewall limits who can connect)
+
+[Socket]
+ListenStream=8080
+
+[Install]
+WantedBy=sockets.target

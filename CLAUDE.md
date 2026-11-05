@@ -20,10 +20,11 @@ Downloader: OpenIsraeliSupermarkets/israeli-supermarket-scarpers (maintained; th
 33 active chains (see `il_supermarket_scarper/scrappers_factory.py`). Deprecated: Mega, Quik, Cofix (folded into Rami Levy), Victory old source, etc.
 Python must be <3.13 (setup.py says `>=3.8,<3.13`), and it needs Playwright Chromium for some chains.
 
-### Step 1 — downloader install (given to the user; may or may not have been run yet)
-`install-downloader.sh` in this folder. It installs to `~/il-prices` (src/, .venv/, run.sh), dumps go to
-`~/il-prices/dumps/<ChainFolder>/`, a systemd **user** timer `il-prices.timer` runs every 3h at :17, linger enabled,
-files older than 2 days are pruned. Check with `systemctl --user status il-prices.timer` and `ls ~/il-prices/dumps`.
+### Step 1 — downloader install
+`install-downloader.sh` in this folder (sudo). It installs to `/srv/sal/downloader` (src/, venv/), dumps go to
+`/srv/sal/data/dumps/<ChainFolder>/`, the system timer `sal-download.timer` runs every 3h at :17 as user `sal`,
+files older than 2 days are pruned (ExecStartPre; the old run.sh's prune never worked). Check with
+`systemctl status sal-download` and `journalctl -u sal-download -f`.
 
 ## File formats learned (from real samples in OpenIsraeliSupermarkets/israeli-supermarket-parsers/resources/xml)
 - Names: `PriceFull<chainid13>-<store>-<YYYYMMDDHHMM>.gz|.xml`, also `Stores…`, `PromoFull…`, `Price…`, `Promo…`;
@@ -73,8 +74,8 @@ Shufersal 35.90 (raised Jul 2026); Rami Levy 35.90; Victory 35.90 (orders over 2
 Online minimum orders across sites are 250–350 per ice.co.il, not per chain.
 
 ## Code layout (in this folder)
-- `app/db.py` — SQLite schema (WAL). DB at `$BASKET_DB` or `~/il-prices/basket.db`.
-- `app/indexer.py` — `python -m app.indexer [--dumps ~/il-prices/dumps] [--db ...]`. Incremental (tracks files by path+size),
+- `app/db.py` — SQLite schema (WAL). DB at `$BASKET_DB` or `/srv/sal/data/basket.db`.
+- `app/indexer.py` — `python -m app.indexer [--dumps /srv/sal/data/dumps] [--db ...]`. Incremental (tracks files by path+size),
   latest full file per store wins, deltas applied after it, daily cleanup of superseded rows, FTS5 product search index,
   per-product stats (store_count, chain_count, min/max), and auto price snapshots for saved carts after each run. **Tested.**
 - `app/engine.py` — `compare(con, items, prefs)`: per store pricing with best promo per line (`line_cost`), club-only promos
@@ -93,9 +94,19 @@ Online minimum orders across sites are 250–350 per ice.co.il, not per chain.
 ## Status (2026-11-04) — live on Omarchy
 Canonical copy: `omarchy:~/Projects/il-prices-app` (Tailscale host `omarchy`). URL: http://omarchy:8080.
 Git repo since 2026-11-05 (branch main, local only). Sessions run on omarchy itself: edit here, `./install-app.sh`
-(idempotent; restarts `sal-web`). The indexer timer runs code from this folder: stop `sal-index.timer` while editing.
-Services (systemd --user): `il-prices.timer` (downloader, every 3h), `sal-index.timer` (every 30 min:
-`app.indexer` then `app.geo`), `sal-web` (uvicorn :8080). DB `~/il-prices/basket.db`.
+(sudo, idempotent) copies app/ to /srv/sal/code and restarts `sal-web`; services run that copy, never this folder.
+Sandboxed (2026-11-05, per user: omarchy also runs other private home services, and Sal will face the internet): everything
+runs as system user `sal` from `/srv/sal` (own btrfs subvolume: python/, code/, venv/, downloader/, ms-playwright/
+root-owned; data/ = basket.db, user.db, photos/, hours.json, dumps/, the only writable place). System units in
+deploy/systemd: `sal-web` (uvicorn on /run/sal/web.sock, socket-activated), `sal-lan` (port 8080 → the socket, for the
+LAN and `tailscale serve`), `sal-index.timer` (every 30 min: indexer, geo, deals), `sal-photos.timer`, `sal-download.timer`,
+`sal-tunnel` (Cloudflare, off until /etc/cloudflared/sal.yml exists: deploy/cloudflared-sal.yml.example).
+`deploy/systemd/sal-.service.d/sandbox.conf` applies to every sal-*.service: no /home, /run/user, devices or D-Bus;
+read-only except /srv/sal/data; IPv4 to public addresses only (loopback/LAN/Docker/Tailscale dropped, DNS stub allowed,
+no IPv6). Prove it: `sudo systemctl start sal-check; journalctl -u sal-check` (deploy/sandbox-check.py).
+Logs: `journalctl -u sal-web` (system units, not --user). Inspect data: `sudo -u sal sqlite3 /srv/sal/data/basket.db`.
+One-off indexer runs: `sudo -u sal env BASKET_DB=/srv/sal/data/basket.db /srv/sal/venv/bin/python -m app.indexer ...`
+from /srv/sal/code. `~/il-prices` is the pre-move copy (2026-11-05 18:20), unused.
 Built since handoff: `app.js`; `install-app.sh`; address + max-distance filter and drive times (`app/geo.py`:
 Nominatim geocoding cached in `geocache`, CBS town codes in `towns`, OSRM typical drive times, Google Routes
 live traffic if the user saves a key); search merges per-chain produce and falls back to best partial match.
@@ -107,9 +118,9 @@ product cards with Add/−qty+, slide-in cart, "Checkout" = the comparison page 
 `app/catalog.py`: categories = name-START words (FTS `^word*`; "word!" = exact). `app/deals.py` → `deals` table
 (savings vs TYPICAL avg price; no club/staff/"spend ₪X"), run in sal-index after geo. Photos: Open Food Facts by
 barcode via `/api/img/{code}` (in-memory cache). User data (carts, snapshots, settings) lives in `user.db`, attached
-as `u`, so saves never wait on the indexer's write locks (backup of the pre-split tables: ~/il-prices/user-backup-20261104.sql).
+as `u`, so saves never wait on the indexer's write locks (backup of the pre-split tables: /srv/sal/data/user-backup-20261104.sql).
 Photos (2026-11-05): Rami Levy catalogue shots by barcode (img.rami-levy.co.il/product/<code>/medium.jpg),
-white background flood-filled to transparent, saved as ~/il-prices/photos/<code>.webp, served at /photos/. `app.images`
+white background flood-filled to transparent, saved as /srv/sal/data/photos/<code>.webp, served at /photos/. `app.images`
 runs nightly (sal-photos.timer), deal products first then by popularity; misses remembered 30 days (missing.json).
 Open Food Facts was tried and dropped (crowd phone photos; API throttles). Photos are for private household use only.
 Category icons: duotone line art generated with Gemini (one 4x4 grid), cut by tests/slice_icons.py into <slug>-line.png +
@@ -147,7 +158,7 @@ map dots are each chain's cheapest branch and the cart lists the top chains; on 
 list of all of them, cheapest first. The selected store (pinned chain's cheapest branch, or a tapped branch: S.sel) gets
 a card under the map (#store-card, moves with the map): address (CBS town codes resolved), road km + drive time, route
 drawn in yellow (OSRM /route, GET /api/store/{chain}/{store}), Waze + Google Maps links, opening hours from
-OpenStreetMap (GET .../hours; one Overpass query for the whole area, cached in ~/il-prices/hours.json for 14 days,
+OpenStreetMap (GET .../hours; one Overpass query for the whole area, cached in /srv/sal/data/hours.json for 14 days,
 10-min retry when Overpass is busy; only shops of the same chain within 300 m count). OSM has hours for ~17 of 250
 nearby branches; otherwise the card links to Google Maps. Tests: tests/test_store.py.
 Map as backdrop (2026-11-05): no frame, no zoom buttons, the cooperative-gesture hint hidden (plain scroll scrolls the
