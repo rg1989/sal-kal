@@ -1824,7 +1824,8 @@ input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowe
 .wp-items li > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wp-items small { color: var(--muted); white-space: nowrap; }
 .wp-items .num { flex: none; color: var(--ink); }
-.wp-deal { flex: none; font-size: 11px; font-weight: 700; color: var(--promo); }
+.wp-items .num.deal { color: var(--deal-text); }  /* as in the cart: the deal's price in the deal colour, its words in the (i) */
+.wp-items .deal-tip { flex: none; align-self: center; width: 16px; height: 16px; margin: 0; }
 .wp-miss { margin: 0; font-size: 13px; color: var(--warn); }
 .wp-foot { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--line); }
 .wp-total { margin: 0; display: grid; }

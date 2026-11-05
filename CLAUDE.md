@@ -309,10 +309,16 @@ their empty parts (pointer-events) so the button and the map still take them.
 Places + on the way (2026-11-05, per user): an account has named places (prefs.places [{id, name, address}], up to 12;
 older accounts' single `home` becomes place "home", and the first-run setup's `home` sets the place you're around).
 Two modes, a bar above the map on home and checkout (#where): "Around a place" (prefs.at + max_km) and "On the way"
-(prefs.area "route", from -> to, travel car/bike/foot, detour_km 0.2-3, default by travel 1/0.5/0.2). server.effective()
+(prefs.area "route", from -> to, travel car/bike/foot, detour_km from that way's choices: commute.DETOURS car 0.2-3 km,
+bike 0.2-1, foot 0.1-0.2 (per user: a walk is 200 m off the way at most); default 1/0.5/0.2; a saved value from another
+way snaps to the nearest choice, commute.detour_km(), the same in app.js detour()). Compare never takes places from the
+request, only picks among the saved ones (at/from/to): a page opened before Work's address was fixed elsewhere kept the
+old town-centre point and its stops followed a route the map didn't show (2026-11-05); the page also adopts the saved
+places from each compare (syncPlaces), and a places edit is compared once saved. server.effective()
 (and derive() in app.js, the same rules) works out `home` (the place you're around, or where the trip starts) and
 `work` (where it ends), so all the older code reads prefs.home. app/commute.py: OSRM route (project-osrm.org for cars,
-routing.openstreetmap.de routed-bike/routed-foot), cached a week; down = straight line, not cached. corridor() = branches
+routing.openstreetmap.de routed-bike/routed-foot), cached a week; down = straight line, never cached as the route (the
+service is left alone for that trip for a minute: commute._down). corridor() = branches
 within the detour of the route ({sk: (off_km, at_km)}), only branches geo.exact_stores() places at their own address (a
 town-centre point is a few km off: ~1,260 of 2,300 qualify; better address cleanup in geo.queries would add more).
 engine.compare(way=...) prices those instead of the radius (distance_km = off the route) and returns way.plans:

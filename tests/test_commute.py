@@ -265,4 +265,16 @@ assert len(calls) == 1, "cached"
 assert "router.project-osrm.org" in (commute.path(HOME, WORK, "car"), calls[-1])[1]
 down = commute.path({"lat": 32.0, "lon": 34.7}, WORK, "car")
 assert down["straight"] and down["minutes"] is None and len(down["coords"]) == 2 and down["km"] > 18
+# for the minute the service is left alone the line is still marked straight, and never kept as the road route
+# (it was once kept, and the next request passed it off as the road: stops along a line nobody travels)
+n = len(calls)
+again = commute.path({"lat": 32.0, "lon": 34.7}, WORK, "car")
+assert again["straight"] and len(calls) == n and not any(k[1][0] == (32.0, 34.7) for k in commute._paths)
+
+# ================================================================ how far off the way, by way of travel
+# on foot 200 m at most; a pick made for another way snaps to the nearest choice of this one
+assert commute.detour_km("foot", 0.5) == 0.2 and commute.detour_km("foot", None) == 0.2 and commute.detour_km("foot", 0.1) == 0.1
+assert commute.detour_km("car", 5) == 3.0 and commute.detour_km("car", None) == 1.0 and commute.detour_km("bike", 0.25) == 0.2
+assert commute.detour_km("bike", "x") == 0.5 and commute.detour_km("plane", 0.4) == 0.5
+assert all(max(v) <= 0.2 for k, v in commute.DETOURS.items() if k == "foot") and set(commute.DETOURS) == set(commute.TRAVEL)
 print("ok")

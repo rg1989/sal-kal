@@ -93,9 +93,16 @@ const ncPick = l => l.own && l.price != null ? { name: l.shelf_name, price: l.pr
 const radius = () => S.prefs.home && S.prefs.max_km && !onWay() ? S.prefs.max_km : null;
 // on my way: the branches along the route home -> work instead of a circle around home (app/commute.py)
 const onWay = () => S.prefs.area === 'route' && !!S.prefs.home && !!S.prefs.work;
-const DETOURS = [0.2, 0.5, 1, 2, 3];               // km off the route
-const DETOUR = { car: 1, bike: 0.5, foot: 0.2 };   // the server's defaults per way of travel
-const detour = () => S.prefs.detour_km ?? DETOUR[S.prefs.travel] ?? 1;
+// km off the route you may pick, by way of travel (a walk takes a short step aside), and the default (app/commute.py)
+const DETOURS = { car: [0.2, 0.5, 1, 2, 3], bike: [0.2, 0.3, 0.5, 1], foot: [0.1, 0.15, 0.2] };
+const DETOUR = { car: 1, bike: 0.5, foot: 0.2 };
+const detourOpts = () => DETOURS[S.prefs.travel] || DETOURS.car;
+// the saved choice, or the nearest one this way of travel offers (500 m picked for the car is 200 m on foot), as the server reads it
+const detour = () => {
+  const d = S.prefs.detour_km;
+  return d == null ? DETOUR[S.prefs.travel] ?? 1 : detourOpts().reduce((a, b) => Math.abs(b - d) < Math.abs(a - d) ? b : a);
+};
+const detourText = d => d < 1 ? t('{n} m', { n: Math.round(d * 1000) }) : t('{n} km', { n: d });
 // a branch's distance: from home, or on my way how far off the route it is
 const distText = d => d == null ? '' : !onWay() ? kmText(d) : d < 0.05 ? t('on your way') : t('{d} off your way', { d: kmText(d) });
 // named places: stores around one (at), or along the way between two (from, to). `home` and `work` are worked out
@@ -871,7 +878,7 @@ function renderWhere() {
   if (!pl.length) { el.innerHTML = ''; return; }
   const sel = (k, inner, label, cls = '') => `<label class="wsel${cls}"><span class="ws-k">${label}</span><select data-sel="${k}">${inner}</select></label>`;
   const km = RADII_KM.map(r => `<option value="${r ?? ''}"${(S.prefs.max_km ?? null) === r ? ' selected' : ''}>${r ? t('{n} km', { n: r }) : t('Any distance')}</option>`).join('');
-  const off = DETOURS.map(d => `<option value="${d}"${Math.abs(detour() - d) < 1e-9 ? ' selected' : ''}>${d < 1 ? t('{n} m', { n: d * 1000 }) : t('{n} km', { n: d })}</option>`).join('');
+  const off = detourOpts().map(d => `<option value="${d}"${Math.abs(detour() - d) < 1e-9 ? ' selected' : ''}>${detourText(d)}</option>`).join('');
   const how = Object.entries(TRAVEL).map(([k, [label]]) => `<option value="${k}"${(S.prefs.travel || 'car') === k ? ' selected' : ''}>${t(label)}</option>`).join('');
   const pick = !way ? `<div class="where-row">${sel('at', placeOptions(S.prefs.at), t('Around'), ' place')}${sel('km', km, t('Within'))}</div>`
     : pl.length < 2 ? `<div class="where-row"><button type="button" class="pill new-btn" data-add-place><span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>${t('Add a second place')}</button></div>`
@@ -1151,7 +1158,7 @@ function renderWayPlan() {
       <div class="wp-main">
         <div class="wp-row"><p class="wp-chain">${esc(cn(st.chain))}</p><p class="wp-sub num">${money(st.subtotal)}</p></div>
         <p class="wp-branch">${bdi(storeName(st))}${st.off_km != null ? ` · ${distText(st.off_km)}` : ''}</p>
-        <ul class="wp-items">${st.lines.map(l => `<li><span dir="auto">${esc(itemName(l.key))}</span>${l.qty !== 1 ? `<small>× ${fmtQty(l.qty, S.meta[l.key]?.is_weighted)}</small>` : ''}${l.promo ? '<span class="wp-deal" aria-label="' + esc(t('deal')) + '">%</span>' : ''}<span class="num">${money(l.cost)}</span></li>`).join('')}</ul>
+        <ul class="wp-items">${st.lines.map(l => `<li><span dir="auto">${esc(itemName(l.key))}</span>${l.qty !== 1 ? `<small>× ${fmtQty(l.qty, S.meta[l.key]?.is_weighted)}</small>` : ''}${l.promo ? dealTip(l) : ''}<span class="num${l.promo ? ' deal' : ''}">${money(l.cost)}</span></li>`).join('')}</ul>
       </div></li>`).join('')}</ol>`;
   const miss = p.missing.length ? `<p class="wp-miss">${t('Not on your way')}: ${p.missing.map(k => `<bdi>${esc(itemName(k))}</bdi>`).join(', ')}</p>` : '';
   const trip = S.trip?.key === tripKey(p) ? S.trip : null;
@@ -1508,6 +1515,7 @@ async function compareNow() {
     const r = await comparePost({ items: S.cart.items, prefs: S.prefs });
     if (my !== compareSeq) return;
     S.result = r;
+    syncPlaces(r.prefs?.places);
     for (const it of r.items) {
       const m = S.meta[it.key] || {};
       S.meta[it.key] = { ...m, name: m.name || it.name, manufacturer: it.manufacturer, is_weighted: it.is_weighted,
@@ -1530,6 +1538,18 @@ async function compareNow() {
   }
 }
 const compareSoon = debounce(compareNow, 250);
+// The server compares the saved places only. A page opened before a place was moved elsewhere (another device, an
+// address fix) still holds the old point: take the saved ones from each comparison, so the where bar, the pins and the
+// Google Maps links show the trip the stops were found along. Never while this page is saving places of its own.
+let savingPlaces = 0;
+const placeSig = pl => JSON.stringify((pl || []).map(x => [x.id, x.name ?? null, x.label ?? '', x.lat, x.lon]));
+function syncPlaces(saved) {
+  if (savingPlaces || !Array.isArray(saved) || placeSig(saved) === placeSig(S.prefs.places)) return;
+  S.prefs.places = saved;
+  S.trip = null;
+  applyPrefsUI();  // derives home and work again, and redraws the where bar
+  updateMap();
+}
 // statistics: what checkout showed (how many stores had the whole cart, which chain was cheapest), once per cart state
 let comparedKey = '';
 const compared = debounce(r => {
@@ -1991,14 +2011,18 @@ function setPrefs(p) {
   derive();
   applyPrefsUI();
   S.result = null;
-  compareNow();
+  // the server compares saved places only: new or moved places are compared once they're saved (answers on the way
+  // for the old ones are dropped)
+  const places = 'places' in p;
+  if (places) { savingPlaces++; compareSeq++; } else compareNow();
   if (document.body.dataset.view === 'product' && S.product) openProduct(S.product.p.key);
   const where = ['home', 'max_km', 'work', 'area', 'travel', 'detour_km', 'places', 'at', 'from', 'to'].some(k => k in p);
   if (where || 'club' in p) lists.clear();  // lists carry prices near you and club deals
   if (where) { S.trip = null; S.sel = null; }
   return api('/api/settings', { method: 'PUT', body: { prefs: p } })
     .then(() => { if (where) { updateMap(); if (document.body.dataset.view === 'home') dealRows(); } })
-    .catch(e => { if (e.message !== 'signed out') toast(t("Couldn't save your settings"), null, null, 'error'); });
+    .catch(e => { if (e.message !== 'signed out') toast(t("Couldn't save your settings"), null, null, 'error'); })
+    .finally(() => { if (places) { savingPlaces--; compareNow(); } });
 }
 $$('[data-mode]').forEach(b => { b.onclick = () => { haptic('select'); setPrefs({ mode: b.dataset.mode }); }; });
 $('#club').onchange = e => { haptic('select'); setPrefs({ club: e.target.checked }); };

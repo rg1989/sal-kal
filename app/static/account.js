@@ -345,8 +345,8 @@ function renderLoc() {
       <p class="loc-legend" id="travel-label">${t('How you go')}</p><div class="seg travel-seg" role="radiogroup" aria-labelledby="travel-label">${
         Object.entries(TRAVEL).map(([k, [label, ico]]) => `<button type="button" role="radio" data-travel="${k}" aria-checked="${(S.prefs.travel || 'car') === k}">${ico}<span>${t(label)}</span></button>`).join('')}</div>
       <p class="loc-legend" id="detour-label">${t('How far off the way')}</p><div class="radius-picker" role="radiogroup" aria-labelledby="detour-label">${
-        DETOURS.map(km => `<button role="radio" type="button" data-detour="${km}" aria-checked="${Math.abs(detour() - km) < 1e-9}" aria-label="${km < 1 ? t('{n} m', { n: km * 1000 }) : t('{n} km', { n: km })}">
-          <b class="num">${km < 1 ? km * 1000 : km}</b><small>${km < 1 ? t('m') : t('km')}</small></button>`).join('')}</div>`;
+        detourOpts().map(km => `<button role="radio" type="button" data-detour="${km}" aria-checked="${Math.abs(detour() - km) < 1e-9}" aria-label="${detourText(km)}">
+          <b class="num">${km < 1 ? Math.round(km * 1000) : km}</b><small>${km < 1 ? t('m') : t('km')}</small></button>`).join('')}</div>`;
   else if (pl.length) pick = `<button type="button" class="pill new-btn" data-add>${PLUS}${t('Add a second place')}</button>`;
   const rows = pl.map(x => LOC.edit === x.id ? `<li>${placeEditor(x)}</li>` : `<li class="pl-row">
       <span class="pl-dot" aria-hidden="true"></span><span class="pl-text"><b dir="auto">${esc(placeLabel(x))}</b><small><bdi>${esc(x.label)}</bdi></small>${roughPin(x) ? `<small class="pl-warn">${x.precision === 'street' ? t('Pin is on the street, not at the house') : t('Not the exact address — edit it')}</small>` : ''}</span>

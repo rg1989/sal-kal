@@ -23,13 +23,27 @@ PROFILES = {  # OSRM route services; the FOSSGIS ones keep "driving" in the path
     "foot": "https://routing.openstreetmap.de/routed-foot/route/v1/driving/",
 }
 TRAVEL = tuple(PROFILES)
-DETOUR = {"car": 1.0, "bike": 0.5, "foot": 0.2}  # km off the route, by default
+# km off the route you may pick, by way of travel (a walk takes a short step aside, a car a few streets), and the default
+DETOURS = {"car": (0.2, 0.5, 1.0, 2.0, 3.0), "bike": (0.2, 0.3, 0.5, 1.0), "foot": (0.1, 0.15, 0.2)}
+DETOUR = {"car": 1.0, "bike": 0.5, "foot": 0.2}
 MAX_STOPS = 5
 MIN_SAVE = 1.0  # ₪: an extra stop that saves less than this isn't worth stopping for
 SHORTLIST = 60  # branches the plan search looks at
 NO = 10 ** 12   # agorot: no confirmed line at that store
 
-_paths = {}  # (travel, points) -> (route, expires)
+_paths = {}  # (travel, points) -> (route, expires); road routes only
+_down = {}   # (travel, points) -> until when the routing service is left alone for that trip
+
+
+def detour_km(travel, km):
+    """How far off the route a branch may be for this way of travel: the saved choice when it is one of that way's
+    choices, the nearest choice when it isn't (a 500 m pick from the car doesn't stretch a walk), else the default."""
+    opts = DETOURS.get(travel) or DETOURS["car"]
+    try:
+        km = float(km)
+    except (TypeError, ValueError):
+        return DETOUR.get(travel, 1.0)
+    return min(opts, key=lambda o: (abs(o - km), o)) if km == km else DETOUR.get(travel, 1.0)
 
 
 def _key(points):
@@ -59,17 +73,20 @@ def route(points, travel="car"):
 
 
 def path(home, work, travel="car"):
-    """Home -> work. When the routing service is down: the straight line, marked straight=True (retried in a minute)."""
+    """Home -> work. When the routing service is down: the straight line, marked straight=True (the service is tried
+    again a minute later; the line is never kept as the trip's route)."""
     a, b = (home["lat"], home["lon"]), (work["lat"], work["lon"])
-    try:
-        return {**route([a, b], travel), "straight": False}
-    except Exception as e:  # offline or busy
-        print("route unavailable:", e, file=sys.stderr)
-        k = (travel, _key([a, b]))
-        d = geo.km(*a, *b)
-        out = {"coords": [[a[1], a[0]], [b[1], b[0]]], "minutes": None, "km": round(d, 1), "legs": [], "straight": True}
-        _paths[k] = (out, time.time() + 60)
-        return {**out}
+    k = (travel, _key([a, b]))
+    if _down.get(k, 0) <= time.time():
+        try:
+            return {**route([a, b], travel), "straight": False}
+        except Exception as e:  # offline or busy
+            print("route unavailable:", e, file=sys.stderr)
+            if len(_down) > 500:
+                _down.clear()
+            _down[k] = time.time() + 60
+    return {"coords": [[a[1], a[0]], [b[1], b[0]]], "minutes": None, "km": round(geo.km(*a, *b), 1), "legs": [],
+            "straight": True}
 
 
 def _plane(lat0):

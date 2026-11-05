@@ -537,12 +537,8 @@ def _commuting(p):
 
 
 def _detour(p):
-    """How far off the route a branch may be, km."""
-    try:
-        d = p.get("detour_km")
-        return max(0.1, min(5.0, float(d))) if d is not None else commute.DETOUR.get(p.get("travel"), 1.0)
-    except (TypeError, ValueError):
-        return 1.0
+    """How far off the route a branch may be, km: one of the choices for the way you travel (on foot 200 m at most)."""
+    return commute.detour_km(p.get("travel") or "car", p.get("detour_km"))
 
 
 def _way(c, p=None):
@@ -1383,18 +1379,15 @@ def _items(raw, n):
 
 def _request_prefs(raw):
     """Prefs a request may try without saving them (the comparison page sends its own): the same checks as saving,
-    and anything that fails them is simply left out (then the saved value counts)."""
+    and anything that fails them is simply left out (then the saved value counts). Never the places themselves: a
+    page opened before an address was fixed elsewhere still holds the old point, and its stops would follow a route
+    the map doesn't show. A request only picks among the saved places (at, from, to)."""
     out = {}
     for k, v in (raw.items() if isinstance(raw, dict) else ()):
-        if k not in PREF_KEYS:
+        if k not in PREF_KEYS or k in ("home", "work", "places"):
             continue
         try:
-            if k in ("home", "work"):
-                v = _clean_home(v)
-            elif k == "places":
-                v = _clean_places(v)
-            else:
-                v = _clean_pref(k, v)
+            v = _clean_pref(k, v)
         except HTTPException:
             continue
         out[k] = v

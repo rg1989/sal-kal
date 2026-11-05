@@ -86,6 +86,12 @@ assert [s["name"] for s in m["stores"]] == ["S on the way", "R on the way"], m["
 assert m["work"]["label"] == "עבודה" and m["travel"] == "bike" and m["detour_km"] == 1 and m["max_km"] is None
 assert m["route"]["coords"][0] == [34.80, LAT] and m["route"]["straight"] is False
 assert routes[-1][0] == "bike"
+# on foot the detour is 200 m at most: a wider pick (kept from the bike) counts as 200 m, on the map and in compare
+server.put_settings({"prefs": {"travel": "foot", "detour_km": 0.5}})
+assert server.stores_near()["detour_km"] == 0.2
+res = server.compare({**cart, "prefs": {"travel": "foot", "detour_km": 3}})
+assert not {"R on the way", "O by home, off the way"} & {ch["in_store"]["name"] for ch in res["chains"]}, res["chains"]  # 300 m and 3 km off
+server.put_settings({"prefs": {"travel": "bike", "detour_km": 1}})
 
 # compare: only those two, each at its distance off the route, and the two-stop plan
 r = server.compare(cart)
@@ -145,9 +151,14 @@ assert r["from"] == "home" and r["to"] == "work", (r["from"], r["to"])
 # a place that's gone: back to the first one
 r = server.put_settings({"prefs": {"places": [x for x in places if x["id"] != "g1"], "at": "g1"}})["prefs"]
 assert r["at"] == "home" and len(r["places"]) == 2
-# what the browser sends with compare counts (its places and picks), checked like saved ones
-res = server.compare({**cart, "prefs": {"places": places, "area": "route", "from": "g1", "to": "work"}})
-assert res["way"] is not None
+# what the browser sends with compare: its picks count (checked like saved ones), never its places. A page opened
+# before a place was moved elsewhere still holds the old point, and its stops would follow a route the map doesn't show.
+moved = [{**x, "lat": x["lat"] + north(3)} if x["id"] == "work" else x for x in places]
+res = server.compare({**cart, "prefs": {"places": moved, "area": "route", "from": "home", "to": "work"}})
+assert res["way"] is not None and res["prefs"]["work"]["lat"] == WORK["lat"], res["prefs"]["work"]
+assert [x["lat"] for x in res["prefs"]["places"]] == [x["lat"] for x in server.prefs()["places"]]
+res = server.compare({**cart, "prefs": {"places": moved, "area": "route", "from": "g1", "to": "work"}})
+assert res["prefs"]["from"] == "home"  # a place that isn't saved: the first one, as when saving
 res = server.compare({**cart, "prefs": {"places": "nonsense"}})
 assert "chains" in res
 # bad places are refused whole
