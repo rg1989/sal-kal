@@ -358,7 +358,16 @@ a.brand { color: inherit; text-decoration: none; }
   background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
 }
 .top-search { flex: 1; max-width: 620px; margin: 0 auto; }
-.top-search input { padding: 10px 14px 10px 38px; border-radius: 999px; background: var(--surface); }
+.top-search input { padding: 10px 44px 10px 38px; border-radius: 999px; background: var(--surface); }
+.top-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }  /* ours below */
+.q-clear {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; border-radius: 50%;
+  border: 0; padding: 0; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-2); cursor: pointer;
+}
+.q-clear svg { width: 16px; height: 16px; }
+.q-clear:hover { background: var(--tag); color: var(--tag-ink); }
+.top-search input:placeholder-shown + .q-clear { display: none; }
+.c-ends { font-weight: 600; color: var(--promo); }
 .top-actions { align-items: center; }
 .basket-btn {
   display: inline-flex; align-items: center; gap: 7px; background: var(--ink); color: var(--paper); border: 0; border-radius: 999px;

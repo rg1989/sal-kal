@@ -445,9 +445,10 @@ _deals_cache = {}
 
 
 @app.get("/api/deals")
-def deals(kind: str = "biggest", keys: str = "", limit: int = 12):
+def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: int = 0):
     """Real savings vs the product's typical price, at stores within the user's distance.
-    kind: biggest | new | mine (mine = only `keys`, e.g. the cart and recently viewed)."""
+    kind: biggest | new | ending | mine (mine = only `keys`, e.g. the cart and recently viewed).
+    skip_basket: leave out products already in a cart (the home page is for finding new things)."""
     c = con()
     if not c.execute("SELECT 1 FROM sqlite_master WHERE name='deals'").fetchone():
         return []
@@ -457,13 +458,14 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12):
     if kind == "basket":  # the basket = every product in any of the household's carts
         want = [r[0] for r in c.execute("SELECT DISTINCT key FROM cart_items")][:300]
         kind = "mine"
+    basket = tuple(sorted(r[0] for r in c.execute("SELECT DISTINCT key FROM cart_items"))) if skip_basket else ()
     nearby = bool(home and max_km)  # the nearby stores are joined below, current ones only
     live, live_args, sig = _live_deals(c, stores=not nearby)
     checked, cutoff = _confirmed_through(c), trust.fresh_cutoff()
     fresh = {(r[0], r[1]) for r in c.execute("SELECT chain_id, store_id FROM stores WHERE last_price_ts >= ? AND promo_full_ts >= ?",
                                               (cutoff, cutoff))}
     ck = (engine.get_setting(c, "deals_version", 0), kind, json.dumps(home), max_km, tuple(want), limit, sig, checked,
-          hash(frozenset(fresh)) if nearby else 0)
+          hash(frozenset(fresh)) if nearby else 0, basket)
     hit = _deals_cache.get(ck)  # (deals stay right until, cards); read once: other threads may clear the cache
     if _cache_ok(hit):
         return hit[1]
@@ -485,9 +487,16 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12):
     if kind == "new":  # started in the last week
         where.append("d.start_ts >= ?")
         params.append(int(time.strftime("%Y%m%d0000", time.localtime(time.time() - 7 * 86400))))
+    if kind == "ending":  # last days: ends today, tomorrow or the day after
+        where.append("d.end_ts IS NOT NULL AND d.end_ts <= ?")
+        params.append(int(time.strftime("%Y%m%d2359", time.localtime(time.time() + 2 * 86400))))
+    if basket:
+        where.append("d.key NOT IN (SELECT key FROM cart_items)")
     # everyday products first: savings weighted by how widely the product is sold
+    weighted = "g.save_pct * (0.5 + 0.5 * min(p.store_count, 100) / 100.0) DESC"
     order = ("g.start_ts DESC, g.save_pct DESC" if kind == "new"
-             else "g.save_pct * (0.5 + 0.5 * min(p.store_count, 100) / 100.0) DESC")
+             else f"g.end_ts / 10000, {weighted}" if kind == "ending"  # the day it ends, then the saving
+             else weighted)
     rows = c.execute(f"""SELECT g.*, p.name, p.manufacturer, p.quantity, p.unit, p.is_weighted, p.chain_count,
                                 p.store_count, p.min_price, p.max_price, p.scope, p.code FROM (
                            SELECT d.key, min(d.unit_price) unit_price, d.chain_id, d.store_id, d.price, d.typical,
@@ -531,7 +540,8 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12):
                                "store_id": r["store_id"], "store": st["name"] if st else "", "city": st["city"] if st else "",
                                "distance_km": round(d, 1) if d is not None else None, "price": r["price"],
                                "unit_price": r["unit_price"], "typical": r["typical"], "save_pct": r["save_pct"],
-                               "min_qty": r["min_qty"], "description": r["description"], "start_ts": r["start_ts"]}})
+                               "min_qty": r["min_qty"], "description": r["description"], "start_ts": r["start_ts"],
+                               "end_ts": r["end_ts"]}})
     _enrich(c, out)
     if len(_deals_cache) > 64:
         _deals_cache.clear()

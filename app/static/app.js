@@ -404,15 +404,15 @@ const closeCart = () => document.body.classList.remove('cart-open');
 $('#basket-btn').onclick = showCart;
 
 const go = h => { if (location.hash !== h) location.hash = h; else route(); };
-$('.brand').addEventListener('click', e => { e.preventDefault(); go('#/'); });
+$('.brand').addEventListener('click', e => { e.preventDefault(); topQ.value = ''; liveFrom = null; go('#/'); });
 // Typing in the header search filters the product grid live (no dropdown). The first keystroke opens the results page
 // (one history entry, so Back returns to where you were); every later keystroke just updates it in place.
 const topQ = $('#top-q');
 let liveFrom = null;  // where you were when you started typing
 const runLive = debounce(() => {
   const text = topQ.value.trim();
-  if (text.length < 2) {
-    if (!text && liveFrom != null) { const back = liveFrom; liveFrom = null; go(back); }
+  if (text.length < 2) {  // cleared: back to where you were before searching (home if you came by a link)
+    if (!text && (liveFrom != null || document.body.dataset.view === 'browse' && !B.cat)) { const back = liveFrom || '#/'; liveFrom = null; go(back); }
     return;
   }
   B = { cat: '', terms: [text], sizes: [], deal: false, sort: '' };
@@ -421,6 +421,7 @@ const runLive = debounce(() => {
   else { liveFrom = location.hash || '#/'; location.hash = h; }
 }, 180);
 topQ.addEventListener('input', runLive);
+$('#q-clear').addEventListener('click', () => { topQ.value = ''; runLive(); });  // shown only while there's text (CSS)
 topQ.addEventListener('change', () => { const t = topQ.value.trim(); if (t.length > 1) remember(t); });
 topQ.addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); topQ.blur(); }  // results are already on screen; this just drops the keyboard
@@ -452,6 +453,13 @@ function qtyCtl(h, deal) {
     : `<button class="add" type="button" data-add="${esc(h.key)}"${deal && deal.min_qty > 1 ? ` data-qty="${deal.min_qty}"` : ''}>${deal && deal.min_qty > 1 ? `Add ${deal.min_qty}` : 'Add'}</button>`;
 }
 const perText = u => u ? `${money(u.v)} / ${u.per}` : '';
+// a deal in its last days (end time YYYYMMDDHHMM): "ends today", "ends tomorrow", "ends Sat"
+function endsText(ts) {
+  const end = tsDate(ts);
+  if (!end) return '';
+  const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()), n = Math.round((day(end) - day(new Date())) / 864e5);
+  return n < 0 || n > 2 ? '' : n === 0 ? 'ends today' : n === 1 ? 'ends tomorrow' : 'ends ' + end.toLocaleDateString('en-GB', { weekday: 'short' });
+}
 function card(h) {
   S.hits[h.key] = { ...S.hits[h.key], ...h };
   // produce / deli: one chain's own item, priced at that chain only; other chains' items of the same name aren't compared
@@ -468,7 +476,7 @@ function card(h) {
   const where = n && n.km != null ? ` · ${kmText(n.km)}` : '';
   const info = d
     ? `<span class="c-deal" dir="auto">${esc(d.description)}</span>
-       <span class="c-meta">${esc(d.chain)}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · usually ${money(d.typical)}</span>
+       <span class="c-meta">${esc(d.chain)}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · usually ${money(d.typical)}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
        ${facts ? `<span class="c-meta">${bdi(facts)}</span>` : ''}`
     : `<span class="c-meta">${facts ? bdi(facts) : ''}</span>`
       + (own != null
@@ -513,23 +521,34 @@ function rememberViewed(p) {
 let cats = null;
 const catTile = c => `<a class="cat" href="#/c/${c.slug}" style="--tint:${c.tint}">
   <span class="cat-icon" aria-hidden="true">${catIcon(c)}</span><span class="cat-name">${esc(c.name)}</span><span class="cat-he" dir="rtl">${esc(c.he)}</span></a>`;
+// home is for finding things: deals near you, never what's already in your carts, and no product twice on the page
+const HOME_ROWS = [['biggest', 'biggest'], ['fresh', 'new'], ['ending', 'ending']];
+let homeSeq = 0;
 async function renderHome() {
-  const r = recent(), v = viewed();
+  const r = recent(), inCart = new Set(S.cart.items.map(i => i.key)), v = viewed().filter(x => !inCart.has(x.key));
   $('#recent').innerHTML = r.map(t => `<a class="pill" href="#/s/${encodeURIComponent(t)}" dir="auto">${esc(t)}</a>`).join('');
   $('#recent-wrap').hidden = !r.length;
   // what you looked at, with today's confirmed prices (never prices kept in this browser)
   $('#viewed').innerHTML = v.map(x => card({ ...x, min_price: null, max_price: null })).join('');
   $('#viewed-wrap').hidden = !v.length;
   if (v.length) fill($('#viewed'), $('#viewed-wrap'), () => api('/api/cards?keys=' + encodeURIComponent(v.map(x => x.key).join(','))));
-  for (const id of ['biggest', 'fresh']) if (!$('#' + id).children.length) $('#' + id).innerHTML = skeletons(6);
+  for (const [id] of HOME_ROWS) if (!$('#' + id).children.length) $('#' + id).innerHTML = skeletons(6);
   initMap();
-  // your basket = every product in any of your carts; nothing to show until a cart has items
-  fill($('#mine'), $('#mine-wrap'), () => api('/api/deals?kind=basket&limit=12'));
-  fill($('#biggest'), $('#biggest-wrap'), () => api('/api/deals?kind=biggest&limit=12'));
-  fill($('#fresh'), $('#fresh-wrap'), () => api('/api/deals?kind=new&limit=12'));
-  fill($('#picks'), $('#picks-wrap'), () => api('/api/picks?limit=12'));
+  dealRows();
   cats = cats || await api('/api/categories').catch(() => null);
   $('#cats').innerHTML = (cats || []).map(catTile).join('');
+}
+async function dealRows() {
+  const my = ++homeSeq;
+  const got = await Promise.all(HOME_ROWS.map(([, kind]) => api(`/api/deals?kind=${kind}&limit=20&skip_basket=1`).catch(() => [])));
+  if (my !== homeSeq) return;
+  const seen = new Set();
+  HOME_ROWS.forEach(([id], i) => {
+    const items = got[i].filter(h => !seen.has(h.key)).slice(0, 12);
+    items.forEach(h => seen.add(h.key));
+    $(`#${id}-wrap`).hidden = !items.length;
+    $('#' + id).innerHTML = items.map(card).join('');
+  });
 }
 
 function renderRail() {
@@ -1029,7 +1048,10 @@ function route() {
   for (const id of ['home', 'browse', 'product', 'basket']) $(`#view-${id}`).hidden = id !== v;
   document.body.dataset.view = v;
   renderStoreCard(false);  // shows at checkout, hides (with its route) everywhere else
-  if (document.activeElement !== topQ) { topQ.value = ''; if (v !== 'browse') liveFrom = null; }
+  if (document.activeElement !== topQ) {  // the box shows what a search page is filtered by, and is empty elsewhere
+    topQ.value = m[1] === 's' ? splitBar(arg).join(' ') : '';
+    if (v !== 'browse') liveFrom = null;
+  }
   if (v === 'home') renderHome();
   if (v === 'browse') {
     const rest = { sizes: splitBar(qs.get('size')), deal: qs.get('deal') === '1', sort: qs.get('sort') || '' };

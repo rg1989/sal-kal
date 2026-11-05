@@ -90,6 +90,20 @@ engine.put_setting(c, "deals_version", 2)
 assert server.deals(kind="mine", keys=MILK, limit=5) == []
 c.execute("UPDATE prices SET price=7.0 WHERE key=? AND chain_id='A' AND store_id=1", (MILK,))
 
+# ---------------------------------------------------------------- home rows: ending soon; nothing that's in a cart
+engine.put_setting(c, "deals_version", 3)
+got = server.deals(kind="ending", limit=5)
+assert [(d["key"], d["deal"]["end_ts"]) for d in got] == [(MILK, SOON)], got
+c.execute("UPDATE deals SET end_ts=? WHERE key=? AND chain_id='A' AND store_id=1", (fmt(time.time() + 6 * 86400), MILK))
+engine.put_setting(c, "deals_version", 4)
+assert server.deals(kind="ending", limit=5) == []                      # six days left: not ending soon
+assert [d["key"] for d in server.deals(kind="biggest", limit=5)] == [MILK]
+c.execute("INSERT INTO u.cart_items(cart_id, key, qty, name, position) VALUES(1, ?, 1, 'חלב', 0)", (MILK,))
+assert server.deals(kind="biggest", limit=5, skip_basket=1) == []       # already in a cart
+assert [d["key"] for d in server.deals(kind="biggest", limit=5)] == [MILK]
+c.execute("DELETE FROM u.cart_items")
+c.execute("UPDATE deals SET end_ts=? WHERE key=? AND chain_id='A' AND store_id=1", (SOON, MILK))
+
 # ---------------------------------------------------------------- price history (F16, F17, F38)
 c.executemany("INSERT INTO price_history(key, chain_id, day, mn, mx, n) VALUES(?,?,?,?,?,?)", [
     (MILK, "A", 20261101, 6.0, 6.5, 2), (MILK, "A", 20261103, None, None, 0), (MILK, "A", 20261105, 6.4, 6.4, 1),

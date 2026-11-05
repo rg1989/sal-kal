@@ -15,7 +15,7 @@
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="#/" aria-label="Sal — search">
+  <a class="brand" href="#/" aria-label="Sal — home">
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" class="tile"/><g class="ink-s" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
     <span>Sal</span>
   </a>
@@ -23,6 +23,7 @@
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.2 13.2L17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     <input id="top-q" type="search" placeholder="Search products — milk, eggs, a barcode" autocomplete="off" dir="auto"
            enterkeyhint="search" aria-controls="b-cards" aria-label="Search products (results appear as you type)">
+    <button class="q-clear" id="q-clear" type="button" aria-label="Clear search"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   </div>
   <nav class="top-actions">
     <button class="near" id="near-btn" type="button" aria-haspopup="dialog">
@@ -52,10 +53,9 @@
     <div class="pills" id="recent-wrap" hidden><span class="pills-label">Recent:</span><span id="recent"></span></div>
   </section>
   <section class="home-section home-cats"><h2>Shop by category</h2><nav class="cats" id="cats" aria-label="Categories"></nav></section>
-  <section class="home-section" id="mine-wrap" hidden><h2>Deals in your baskets</h2><ul class="shelf" id="mine"></ul></section>
   <section class="home-section" id="biggest-wrap" hidden><h2>Biggest savings near you</h2><ul class="shelf" id="biggest"></ul></section>
   <section class="home-section" id="fresh-wrap" hidden><h2>Started this week</h2><ul class="shelf" id="fresh"></ul></section>
-  <section class="home-section" id="picks-wrap" hidden><h2>Your basket</h2><ul class="shelf" id="picks"></ul></section>
+  <section class="home-section" id="ending-wrap" hidden><h2>Ending soon</h2><ul class="shelf" id="ending"></ul></section>
   <section class="home-section" id="viewed-wrap" hidden><h2>Recently viewed</h2><ul class="shelf" id="viewed"></ul></section>
 </main>
 

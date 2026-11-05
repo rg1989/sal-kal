@@ -118,8 +118,13 @@ Browse/filter: /api/browse?terms=a|b&cat=&size=&deal=&sort= — each word is a s
 chips are frequent words in result names (brands are in names: 95% of manufacturer fields are blank); sizes parsed
 from names. URL: #/s/<terms>?size=&deal=1&sort= or #/c/<slug>?q=<terms>; Back undoes the last filter.
 Carts vs basket (user's terms): a CART is a named collection (several, switchable in the slide-in cart: tabs, rename,
-duplicate, delete; Add goes to the active cart). The BASKET is every product across all carts — "Deals in your
-baskets" (/api/deals?kind=basket) and the "Your basket" shelf use it. "Started this week" = chains' own promo start dates.
+duplicate, delete; Add goes to the active cart). The BASKET is every product across all carts.
+Home = discovery (2026-11-05, per user): map, Recent pills, then deal rows that never repeat the basket: "Biggest
+savings near you", "Started this week" (chains' own promo start dates), "Ending soon" (ends today..day after;
+/api/deals?kind=ending) — all with skip_basket=1, no product twice on the page — then Recently viewed (minus the
+active cart). The "Deals in your baskets" and "Your basket" shelves were removed (/api/picks, kind=basket unused).
+Promo start/end dates were NULL for all chains but Wolt/Keshet until the PromotionStartDateTime fix (d75e2da); the
+indexer reads files once, so old promos get dates as new PromoFull files arrive, or at once with --promos-again.
 Home map: MapLibre (app/static/vendor) + OpenFreeMap positron restyled in Sal colours (roads/stores/home yellow), RTL
 plugin for Hebrew labels, /api/stores/near; overlays re-added on every style.load (theme switches use diff:false).
 MapLibre only draws on animation frames: in a hidden browser pane it waits (not a bug).
@@ -132,7 +137,8 @@ yellow ring + "In cart" badge (CSS :has). Checkout (#/basket) = preview only: ma
 vs the last manual save (same branch only), ranked stores with drive times, and a store-by-store product table
 (pick up to 5 chains; cheapest per product in yellow; split-shop saving). Map roads are dimmed on purpose.
 Search (2026-11-05): no dropdown. Typing in the header box (2+ chars, 180 ms debounce) opens #/s/<text> once (one history
-entry; Esc or clearing returns to where you were) and then updates the product grid in place (history.replaceState);
+entry; Esc, the × button or clearing returns to where you were, home if you came by a link) and then updates the product
+grid in place (history.replaceState); on #/s/ pages the box shows the search terms; the logo clears it and goes home;
 /api/browse also takes a barcode (digits, 4+). Category rail: a sticky left column at >=1280px (it hides the home category
 tiles and the browse category chips); below that the tiles/chips stay.
 Branches + store card (2026-11-05): compare() also returns `branches` (every nearby physical branch priced for the cart,
