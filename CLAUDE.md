@@ -279,12 +279,20 @@ and /auth/* from any other host get a 307 to auth.json base_url (/api stays); fa
 Loading (2026-11-05, per user): never "empty" before data: S.cartsLoaded gates the cart (cartSkeleton rows, storeSkeleton)
 and checkout (resultsSkeleton); S.comparing shows a shimmer for each cart line price; showView() switches to the page in
 the address with its skeleton before settings/carts arrive; the home's first deal shelf and category tiles show skeletons.
-Deal colour (per user: red read as an error): deals use --deal/--deal-soft/--deal-ink (green #0B7A45; dark #3DD68C with
-dark ink), --promo stays for errors, price rises, "closed", danger. A deal's own wording is a circled (i) (INFO_I, the
-usual info mark, in --deal) beside a cart line's price (dealTip) and before a card's name (cardDealTip; the green
+Two yellows (per user, 2026-11-05): --tag (bright #FFD23F) only for what matters: Go to comparison, the chosen store
+(cart row, store card, selection ring, route: mapColors().pick), the cheapest (map pin, results winner, cheapest cells),
+the product page's Add to cart, the logo, and deals. --accent/--accent-edge (muted gold; dark #BFA14A) for decoration:
+header line, heading bars, scrollbars, loading bar, pills and segments, rail selection, in-cart steppers, everyday price
+tags, switches, focus rings, thumbnails, the map's roads, dots and circle. Deals (red read as an error; green was tried,
+then back to yellow): --deal = the bright yellow with --deal-ink; text and icons on paper use --deal-text (#8A6400 light,
+the yellow on dark). --promo stays for errors, price rises, "closed", danger. A deal's own wording is a circled (i)
+(INFO_I, the usual info mark, in --deal-text) beside a cart line's price (dealTip) and before a card's name (cardDealTip; the green
 description line on cards is gone): ux.js [data-tip] tooltip on hover, focus or tap. Any text cut by an ellipsis or a
 line clamp shows in full in the same tooltip on hover (clipped()). Card discount badge: big "69%", no minus (saveBadge).
 Card Add is a round "+", or "+2"/"+3" for a deal's quantity (addBtn), beside the price on phones too. "Go to comparison"
 (מעבר להשוואה, cart icon, yellow) in the cart and at the home map's cart-side bottom corner (#map-go, hidden when empty).
+The home map's extra dark strip (--map-ext) is measured by sizeMapExt() to end where the first list (shelf, or category
+tiles) starts; the button sits in that corner beside the first heading; the sections over the map let clicks through
+their empty parts (pointer-events) so the button and the map still take them.
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

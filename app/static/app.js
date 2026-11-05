@@ -587,6 +587,7 @@ async function renderHome() {
   if (!cats) $('#cats').innerHTML = catSkeleton(8);
   cats = cats || await api('/api/categories').catch(() => null);
   $('#cats').innerHTML = (cats || []).map(catTile).join('');
+  sizeMapExt();
 }
 async function dealRows() {
   const my = ++homeSeq;
@@ -599,6 +600,7 @@ async function dealRows() {
     $(`#${id}-wrap`).hidden = !items.length;
     $('#' + id).innerHTML = items.map(card).join('');
   });
+  sizeMapExt();
 }
 
 function renderRail() {
@@ -616,8 +618,8 @@ let map = null, homeMarker = null, mapData = null, mapBase = null, mapLib = null
 const isDark = () => document.documentElement.dataset.theme
   ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
 const mapColors = () => isDark()
-  ? { bg: '#121715', land: '#141a18', park: '#16201b', water: '#0b1210', bld: '#1a211f', text: '#7f8a85', road: '#FFD23F', dot: '#FFD23F' }
-  : { bg: '#EEF0EC', land: '#EEF0EC', park: '#e3e9df', water: '#d6e0dd', bld: '#e2e5df', text: '#6B7470', road: '#E8B800', dot: '#E8B800' };
+  ? { bg: '#121715', land: '#141a18', park: '#16201b', water: '#0b1210', bld: '#1a211f', text: '#7f8a85', road: '#C9AE57', dot: '#D2B75E', pick: '#FFD23F' }
+  : { bg: '#EEF0EC', land: '#EEF0EC', park: '#e3e9df', water: '#d6e0dd', bld: '#e2e5df', text: '#6B7470', road: '#C2A246', dot: '#B89A3E', pick: '#E8B800' };
 function loadMapLib() {
   return mapLib = mapLib || new Promise((ok, fail) => {
     const css = document.createElement('link');
@@ -663,7 +665,7 @@ function addOverlays() {
   map.addSource('route', { type: 'geojson', data: empty });
   const round = { 'line-cap': 'round', 'line-join': 'round' };
   map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: round, paint: { 'line-color': C.bg, 'line-width': 10, 'line-opacity': .9 } });
-  map.addLayer({ id: 'route', type: 'line', source: 'route', layout: round, paint: { 'line-color': C.dot, 'line-width': 5.5 } });
+  map.addLayer({ id: 'route', type: 'line', source: 'route', layout: round, paint: { 'line-color': C.pick, 'line-width': 5.5 } });  // the chosen store's route: the bright yellow
   map.addSource('stores', { type: 'geojson', data: empty });
   map.addLayer({ id: 'stores', type: 'circle', source: 'stores', paint: {
     'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 5.5, 17, 8],
@@ -888,6 +890,20 @@ const edge = () => innerWidth < 600 ? { top: 105, bottom: 45, left: 64, right: 6
 const onHome = () => !!$('#map-wrap').closest('#home-map');
 // The home map also runs on under the first heading, very dark there (--map-ext): the circle keeps clear of that strip
 const mapExt = () => parseFloat(getComputedStyle($('#home-map')).getPropertyValue('--map-ext')) || 0;
+// measured: the strip runs from the map's own bottom edge to the first list under it (products, or category tiles where
+// those show), whether or not the Recent pills are there; the button sits in its corner beside the first heading
+function sizeMapExt() {
+  const slot = $('#home-map'), box = slot.querySelector('.mapbox');
+  if (!box || document.body.dataset.view !== 'home') return;
+  const list = $$('#view-home > section:not([hidden]) :is(.shelf, .cats)').find(el => el.offsetParent && el.children.length);
+  if (!list) return;
+  const cur = mapExt(), base = box.offsetHeight - cur;  // the content starts at the map's own bottom edge, whatever the strip
+  const ext = Math.max(48, Math.round(list.getBoundingClientRect().top - box.getBoundingClientRect().top - base));
+  if (Math.abs(ext - cur) < 2) return;
+  slot.style.setProperty('--map-ext', `${ext}px`);
+  if (map && onHome()) { map.resize(); fitMap(false); }
+}
+addEventListener('resize', debounce(sizeMapExt, 150));
 const circlePad = () => {
   const w = map.getContainer().clientWidth;
   return { top: w < 900 ? 54 : 18, bottom: (w < 600 ? 30 : 40) + mapExt(), left: 24, right: 24 };
@@ -1132,7 +1148,7 @@ function route() {
   if (v === 'product') openProduct(arg);
   markRail();
   if (v === 'basket') { placeMap($('#co-map')); initMap(); renderBasket(); compareNow(); }
-  else if (v === 'home') placeMap($('#home-map'));
+  else if (v === 'home') { placeMap($('#home-map')); requestAnimationFrame(sizeMapExt); }
   closeCart();
   window.scrollTo(0, 0);
   Usage.view(v, v === 'browse' ? B.cat || undefined : v === 'product' ? arg : undefined);
