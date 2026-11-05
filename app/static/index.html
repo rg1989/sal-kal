@@ -35,7 +35,7 @@
   </a>
   <div class="search top-search" role="search">
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.2 13.2L17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-    <input id="top-q" type="search" data-i18n-ph="Search products — milk, eggs, a barcode" autocomplete="off" dir="auto"
+    <input id="top-q" type="search" data-i18n-ph="Search milk, eggs, a barcode…" autocomplete="off" dir="auto"
            enterkeyhint="search" aria-controls="b-cards" data-i18n-aria="Search products (results appear as you type)">
     <button class="q-clear" id="q-clear" type="button" data-i18n-aria="Clear search"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   </div>
@@ -118,7 +118,7 @@
     <label class="switch">
       <input type="checkbox" id="club" switch>
       <span class="track" aria-hidden="true"></span>
-      <span data-i18n="Club member prices">Club member prices</span>
+      <span data-i18n="Club prices">Club prices</span>
     </label>
     <button class="ghost small" id="open-settings" type="button" data-i18n="Delivery fees">Delivery fees</button>
   </div>
@@ -133,7 +133,9 @@
   <section class="trend" id="trend" aria-labelledby="trend-title" hidden></section>
 </main>
 
-<footer class="site-foot"><p class="freshness" id="freshness"></p><p class="foot-links"><a href="/privacy" data-i18n="Privacy">Privacy</a></p></footer>
+<footer class="site-foot"><p class="freshness" id="freshness"></p>
+  <p class="foot-links"><span data-i18n="Built by">Built by</span> <a href="https://www.linkedin.com/in/roman-grinevich/" target="_blank" rel="noopener">Roman Grinevich</a>
+    · <a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener">GitHub</a> · <a href="/about" data-i18n="About">About</a> · <a href="/privacy" data-i18n="Privacy">Privacy</a></p></footer>
 </div>
 
 <aside class="live-cart" id="cart" data-i18n-aria="Your cart" tabindex="-1">
@@ -183,7 +185,7 @@
     <div class="gate-buttons" id="gate-buttons"></div>
     <p class="gate-error" id="gate-error" role="alert" hidden></p>
     <button class="gate-install" type="button" data-install hidden><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.8"/><path d="M12 7.5v7M9.2 11.8 12 14.6l2.8-2.8"/></g></svg><span data-i18n="Install app">Install app</span></button>
-    <p class="gate-legal"><a href="/privacy" data-i18n="Privacy">Privacy</a> · <a href="/data-deletion" data-i18n="Deleting your data">Deleting your data</a></p>
+    <p class="gate-legal"><a href="/about" data-i18n="About">About</a> · <a href="/privacy" data-i18n="Privacy">Privacy</a> · <a href="/data-deletion" data-i18n="Deleting your data">Deleting your data</a></p>
   </div>
 </section>
 
@@ -299,6 +301,7 @@
 </dialog>
 
 <div class="toast" id="toast" role="status" hidden></div>
+<script src="/static/usage.js"></script>
 <script src="/static/i18n.js"></script>
 <script src="/static/ux.js"></script>
 <script src="/static/app.js"></script>

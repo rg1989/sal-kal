@@ -29,6 +29,16 @@ import urllib.request
 
 from . import db as dbmod
 
+# The owner: the only account that can open /admin (usage statistics, every account). Hard-coded on purpose, so no
+# setting, database row or other sign-in can grant it: it has to be this Gmail address, verified by Google itself.
+# Kept as its SHA-256 so the address isn't published with the source. Check: hashlib.sha256(b"<address>").hexdigest()
+OWNER_EMAIL_SHA256 = "3e2c2a2bc827f8fa24c77cb6c6bf3aad8d21db84848dbf27e50e48a01a9c1774"
+
+
+def owner_email(email):
+    """True for the owner's address (any letter case)."""
+    return bool(email) and hmac.compare_digest(hashlib.sha256(email.strip().lower().encode()).hexdigest(), OWNER_EMAIL_SHA256)
+
 SESSION_COOKIE = "sal_session"
 STATE_COOKIE = "sal_oauth"
 SESSION_DAYS = 180
@@ -149,6 +159,15 @@ def session_user(c, token):
         c.execute("UPDATE users SET seen=? WHERE id=?", (now, r["user_id"]))
         c.commit()
     return user_row(c, r["user_id"])
+
+
+def is_owner(c, u):
+    """True only for an account signed in with Google as the owner's address, verified by Google (never Facebook,
+    never an email typed or merged in some other way)."""
+    if not u or not u.get("id"):
+        return False
+    return any(owner_email(r[0]) for r in c.execute(
+        "SELECT email FROM identities WHERE user_id=? AND provider='google' AND verified=1", (u["id"],)))
 
 
 def new_session(c, uid):

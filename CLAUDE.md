@@ -212,6 +212,13 @@ not Sal's, leave them. auth.json base_url = https://sal-kal.com. Requests throug
 they always need sign-in, so with no provider set up they get only the sign-in page ("sign-in opens soon") and /privacy,
 /data-deletion; the LAN and Tailscale (no such header) stay in local mode. Signing in works on sal-kal.com only (the
 redirect URIs and Secure cookies are https://sal-kal.com).
+Landing (2026-11-05, per user): signed-out visitors get app/static/landing.html at "/" (signed-in: the app; /app always
+the app and its sign-in; /about always the landing). Bilingual by `<span lang>` pairs, flags in every language picker,
+autoplaying walkthrough video + phone/laptop mockups in app/static/landing/ (recorded with Playwright from a test server
+and a demo account at Tel Aviv City Hall, never a real home), live counts from /api/status, the law (section 30,
+price-transparency regulations) linked. Credit: "Built by Roman Grinevich" (LinkedIn) + GitHub (rg1989/sal-kal) in the
+landing footer, the app footer and the account sheet. Mobile audit script (overflow, clipped text, overlaps, small targets)
+lives in the session scratchpad; fixes landed in styles.css (fee cards on phones, onboarding map height, radius row, pins).
 Copy: the user dislikes filler text ("slop") — no taglines, explanatory notes or subtitles; labels only.
 Tailscale: also served at https://omarchy.<tailnet>.ts.net:8443 (tailscale serve, tailnet only; port 443 is another app).
 Cards (2026-11-05): server `_enrich()` (browse, picks, deals) adds `near` = cheapest shelf price at a branch within your
@@ -234,5 +241,32 @@ get the steps. /app?install opens the steps (for pages without #install, e.g. th
 Tailscale URL); http://omarchy:8080 can't install.
 Not yet tested on a real iPhone: Google/Facebook sign-in inside the home-screen app (iOS keeps its cookies apart
 from Safari's).
+Admin + usage statistics (2026-11-05, per user): https://sal-kal.com/admin, only for the owner's Google sign-in with
+the address verified by Google (`auth.OWNER_EMAIL_SHA256`, hard-coded as a hash so the public repo doesn't carry the
+address; `auth.is_owner`); everyone else, and every /api/admin/* call, gets 404. `app/stats.py` keeps first-party
+stats in /srv/sal/data/stats.db (own file, one writer thread, queue: requests never wait): visits (device/OS/browser
+parsed from the UA, in-app browser, Cloudflare country/city, screen, referrer host, utm), events (page views + time,
+searches with result count and outcome, adds, filters, clicks by control label, rage/dead clicks, JS errors, failed
+requests, error toasts, load times; server side: sign-in start/done/fail, setup, address/distance, carts), and per-
+route request counts with a latency histogram (middleware). No IPs, no UA strings, no typed values; 180 days (requests
+400); account deletion calls `stats.forget` (its events and its browsers' anonymous ones). Browser side:
+`app/static/usage.js` (also on landing.html) posts to /api/ux (open, size/rate capped); app.js `api()` sends
+`X-Sal-V: <browser id>.<visit id>` so server events join the visit; the sign-in link carries `v=` through OAuth state.
+The owner's own visits are flagged (admin=1, back to before sign-in) and hidden unless "Include my visits".
+Page: app/admin/{admin.html,admin.js,admin.css}, served only through the gated routes (CSP: no inline script).
+Tabs: overview (KPIs vs the period before, visitors/day, new-browser funnel, weekday×hour heatmap, here now), where
+people get stuck, usage, audience, users (+ per-user timeline, carts, visits), server, price data.
+Tests: tests/test_admin.py (drives the ASGI app directly; httpx isn't installed). City needs Cloudflare's "Add visitor
+location headers" managed transform.
+Reports to sell (2026-11-05, per user: the data is the monetizable part): /admin#reports, `app/reports.py` +
+app/admin/{reports.js,reports.css}, GET /api/admin/reports (what we hold) and /api/admin/reports/{name} (JSON, or
+?format=csv[&part=] with a BOM for Excel; print view for PDF). Built ONLY from the public price layer (price_last,
+price_history, deals, prices under indexer.CONFIRMED_ROW): never carts, accounts, searches or stats.db, so the privacy
+page's "no sale of information" stays true. Reports: chain price index (geometric mean vs each product's median across
+chains, per category), basket over time (household basket: top products per category that every broad chain sells, or
+pasted barcodes), price changes, deals by chain, price gaps (across chains / across a chain's branches: needs 4+ stores
+and 2+ chains so carton-vs-pack and internal codes stay out), product tracker (words, barcode prefix = a maker, or
+barcodes). Cached 15 min per data version. History began 2026-11-05: time reports grow more valuable daily.
+Tests: tests/test_reports.py.
 Left: git repo (none yet); category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

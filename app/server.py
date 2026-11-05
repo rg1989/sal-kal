@@ -9,6 +9,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -19,11 +20,11 @@ import urllib.request
 from collections import Counter, deque
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import auth, catalog, engine, geo, places, trust
+from . import auth, catalog, engine, geo, places, reports, stats, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
@@ -45,7 +46,8 @@ def con():
 # ---------------------------------------------------------------- who is asking
 _user = contextvars.ContextVar("user", default=None)
 _public = contextvars.ContextVar("public", default=False)
-OPEN = {"/api/me", "/api/status", "/api/logout"}  # answered without signing in
+_visit = contextvars.ContextVar("visit", default=(None, None))  # (browser id, visit id) from usage.js, for server events
+OPEN = {"/api/me", "/api/status", "/api/logout", "/api/ux"}  # answered without signing in
 
 
 def _from_internet(request):
@@ -85,6 +87,46 @@ def overrides():
     return _json(u.get("delivery"), {}) if u else {}
 
 
+def _owner():
+    """This request is the site owner's (auth.OWNER_EMAIL, signed in with Google)."""
+    u = me()
+    if not u:
+        return False
+    if "_owner" not in u:
+        u["_owner"] = auth.is_owner(con(), u)
+    return u["_owner"]
+
+
+def _ev(kind, **f):
+    """Note something the server saw for the usage statistics (app.stats): who, from which visit. Never fails a request."""
+    try:
+        vid, sid = _visit.get()
+        f.setdefault("uid", (me() or {}).get("id"))
+        stats.event(kind, vid=f.pop("vid", vid), sid=f.pop("sid", sid), admin=f.pop("admin", None) or _owner(), **f)
+    except Exception as e:
+        print("stats:", repr(e), file=sys.stderr)
+
+
+def _visit_ids(v):
+    vid, _, sid = (v or "").partition(".")
+    return (vid, sid) if stats.ID.fullmatch(vid) and stats.ID.fullmatch(sid) else (None, None)
+
+
+def _route_of(request, status):
+    """The route pattern (/api/carts/{cid}), so the request counts don't split by id."""
+    p = request.url.path
+    if p.startswith("/static/"):
+        return "/static/*"
+    if p.startswith("/photos/"):
+        return "/photos/*"
+    r = request.scope.get("route")
+    if getattr(r, "path", None):
+        return r.path
+    if status == 401 and p.startswith("/api/"):
+        return "(sign-in needed)"
+    return "(unmatched)"
+
+
 def _save_user(c, **cols):
     c.execute(f"UPDATE users SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?", [*cols.values(), uid()])
     c.commit()
@@ -101,7 +143,8 @@ async def who(request: Request, call_next):
         want, host = urllib.parse.urlsplit(base).netloc, request.headers.get("host", "")
         if host and host != want:
             return RedirectResponse(base + path + (f"?{request.url.query}" if request.url.query else ""), status_code=301)
-    if path.startswith("/api/") or path.startswith("/auth/"):
+    t0 = time.perf_counter()
+    if path.startswith(("/api/", "/auth/", "/admin")):
         c = con()
         if auth.accounts_on():
             u = auth.session_user(c, request.cookies.get(auth.SESSION_COOKIE))
@@ -109,14 +152,26 @@ async def who(request: Request, call_next):
             u = auth.user_row(c, 1)
         # from the internet without sign-in set up: nobody, so the household's carts and address never leave home
     token, ptoken = _user.set(u), _public.set(public)
+    vtoken = _visit.set(_visit_ids(request.headers.get("x-sal-v")))
+    status = 500
     try:
         if path.startswith("/api/") and u is None and path not in OPEN:
             resp = JSONResponse({"detail": "sign in"}, status_code=401)
         else:
             resp = await call_next(request)
+        status = resp.status_code
+    except Exception as e:
+        _ev("server_error", a=_route_of(request, 500), b=f"{type(e).__name__}: {e}"[:160])
+        raise
     finally:
+        try:
+            stats.hit(_route_of(request, status), request.method, status, (time.perf_counter() - t0) * 1000,
+                      stats.is_bot(request.headers.get("user-agent")))
+        except Exception as e:
+            print("stats:", repr(e), file=sys.stderr)
         _user.reset(token)
         _public.reset(ptoken)
+        _visit.reset(vtoken)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     resp.headers.setdefault("X-Frame-Options", "DENY")
@@ -145,21 +200,40 @@ def _admin():
         raise HTTPException(403, "admin only")
 
 
-_index = {}
+_pages = {}
 
 
-@app.get("/")
-def index():
-    """The page, with each script and stylesheet URL carrying its file's change time, so a deploy is picked up at once."""
-    p = os.path.join(STATIC, "index.html")
-    m = max(e.stat().st_mtime for e in os.scandir(STATIC) if e.name.endswith((".html", ".js", ".css")))
-    if _index.get("m") != m:
+def _page(name):
+    """A page with each script and stylesheet URL carrying its file's change time, so a deploy is picked up at once."""
+    p = os.path.join(STATIC, name)
+    m = max(e.stat().st_mtime for d in (STATIC, os.path.join(STATIC, "landing")) if os.path.isdir(d)
+            for e in os.scandir(d) if e.name.endswith((".html", ".js", ".css")))
+    hit = _pages.get(name)
+    if not hit or hit[0] != m:
         page = open(p, encoding="utf-8").read()
         def stamp(mt):
             f = os.path.join(STATIC, mt.group(2))
             return f'{mt.group(1)}/static/{mt.group(2)}?v={int(os.stat(f).st_mtime) if os.path.exists(f) else 0}"'
-        _index.update(m=m, html=re.sub(r'(src="|href=")/static/([\w.-]+\.(?:js|css))"', stamp, page))
-    return HTMLResponse(_index["html"], headers={"Cache-Control": "no-cache"})
+        hit = _pages[name] = (m, re.sub(r'(src="|href=")/static/([\w./-]+\.(?:js|css))"', stamp, page))
+    return HTMLResponse(hit[1], headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/")
+def index(request: Request):
+    """Visitors who aren't signed in get the landing page; signed-in people (and the home network in local mode) the app."""
+    if auth.accounts_on() and not auth.session_user(con(), request.cookies.get(auth.SESSION_COOKIE)):
+        return _page("landing.html")
+    return _page("index.html")
+
+
+@app.get("/app")
+def app_page():
+    return _page("index.html")
+
+
+@app.get("/about")
+def about():
+    return _page("landing.html")
 
 
 @app.get("/sw.js")
@@ -1054,7 +1128,17 @@ def put_settings(body: dict = Body(...)):
             p["home"] = _clean_home(p["home"])
         if "max_km" in p and p["max_km"] is not None:
             p["max_km"] = max(0.5, min(100.0, float(p["max_km"])))
-        _save_user(c, prefs=json.dumps({**_json(me().get("prefs"), {}), **p}, ensure_ascii=False))
+        old = _json(me().get("prefs"), {})
+        _save_user(c, prefs=json.dumps({**old, **p}, ensure_ascii=False))
+        h = p.get("home")
+        if "home" in p and (h or {}).get("label") != (old.get("home") or {}).get("label"):
+            _ev("address", a=(h or {}).get("town_name") or ((h or {}).get("label") or "").split(",")[-1].strip() or None,
+                b=(h or {}).get("precision"))
+        if "max_km" in p and p["max_km"] != old.get("max_km"):
+            _ev("distance", n=p["max_km"])
+        for k in ("mode", "club"):
+            if k in p and p[k] != old.get(k):
+                _ev(k, a=str(p[k]))
     if "maps_key" in body:  # write-only: GET only says whether one is set. Billed per use: the admin's call
         _admin()
         engine.put_setting(c, "maps_key", (body["maps_key"] or "").strip() or None)
@@ -1069,6 +1153,7 @@ def put_settings(body: dict = Body(...)):
             else:
                 cur[str(cid)[:20]] = clean
         _save_user(c, delivery=json.dumps(cur))
+        _ev("delivery_edit", n=len(body["delivery"]))
     return get_settings()
 
 
@@ -1103,6 +1188,7 @@ def create_cart(body: dict = Body(default={})):
     cid = cur.lastrowid
     _write_items(c, cid, body.get("items") or [])
     c.commit()
+    _ev("cart_new", n=len(body.get("items") or []))
     return _cart(c, cid)
 
 
@@ -1140,6 +1226,7 @@ def delete_cart(cid: int):
     for t, col in (("cart_items", "cart_id"), ("carts", "id")):
         c.execute(f"DELETE FROM {t} WHERE {col}=?", (cid,))
     c.commit()
+    _ev("cart_delete")
     return {"ok": True}
 
 
@@ -1173,11 +1260,15 @@ def _back(why=None):
 
 
 @app.get("/auth/{provider}")
-def auth_start(provider: str, request: Request, lang: str = "", who: str = ""):
+def auth_start(provider: str, request: Request, lang: str = "", who: str = "", v: str = ""):
     if provider not in auth.providers():
         raise HTTPException(404, "sign-in not set up")
     url, state = auth.start(provider, f"{_base(request)}/auth/{provider}/callback", who=who if provider == "dev" else None)
     state["l"] = lang if lang in ("he", "en") else request.cookies.get("lang") if request.cookies.get("lang") in ("he", "en") else None
+    vid, sid = _visit_ids(v)  # usage.js's ids, so the statistics can follow a visit through the provider and back
+    if vid:
+        state["x"] = f"{vid}.{sid}"
+    _ev("signin_start", a=provider, vid=vid, sid=sid)
     resp = RedirectResponse(url, status_code=303)
     _cookie(resp, request, auth.STATE_COOKIE, auth.sign(state), 900, path="/auth")
     return resp
@@ -1186,17 +1277,24 @@ def auth_start(provider: str, request: Request, lang: str = "", who: str = ""):
 @app.get("/auth/{provider}/callback")
 def auth_callback(provider: str, request: Request, code: str = "", state: str = "", error: str = ""):
     st = auth.unsign(request.cookies.get(auth.STATE_COOKIE, ""), 900)
+    vid, sid = _visit_ids((st or {}).get("x"))
+    fail = lambda why, back: (_ev("signin_fail", a=provider, b=why, vid=vid, sid=sid), _back(back))[1]
     if error:
-        return _back("cancelled")
-    if not st or st.get("p") != provider or not code or not hmac.compare_digest(str(st.get("s", "")), state):
-        return _back("failed")
+        return fail(f"cancelled ({error[:40]})", "cancelled")
+    if not st:  # no sign-in cookie: often an in-app browser that opened the provider in another browser
+        return fail("no state cookie", "failed")
+    if st.get("p") != provider or not code or not hmac.compare_digest(str(st.get("s", "")), state):
+        return fail("state mismatch", "failed")
     try:
         sub, email, verified, name, avatar = auth.finish(provider, code, f"{_base(request)}/auth/{provider}/callback", st.get("v"))
     except Exception as e:
         print(f"{provider} sign-in failed:", e, file=sys.stderr)
-        return _back("failed")
+        return fail(f"provider: {str(e)[:100]}", "failed")
     c = con()
+    before = c.execute("SELECT coalesce(max(id), 0) FROM users").fetchone()[0]
     user_id = auth.sign_in(c, provider, str(sub), email, verified, (name or "")[:80], avatar, lang=st.get("l"))
+    _ev("signin", a=provider, b="new" if user_id > before else "back", uid=user_id, vid=vid, sid=sid,
+        admin=auth.is_owner(c, {"id": user_id}))
     resp = RedirectResponse("/#/", status_code=303)
     _cookie(resp, request, auth.SESSION_COOKIE, auth.new_session(c, user_id), auth.SESSION_DAYS * 86400)
     resp.delete_cookie(auth.STATE_COOKIE, path="/auth")
@@ -1223,6 +1321,8 @@ def put_me(body: dict = Body(...)):
         cols["lang"] = body["lang"]
     if "onboarded" in body:
         cols["onboarded"] = int(bool(body["onboarded"]))
+        if cols["onboarded"] and not me().get("onboarded"):
+            _ev("onboarded")
     if isinstance(body.get("name"), str) and body["name"].strip():
         cols["name"] = body["name"].strip()[:80]
     if cols:
@@ -1235,7 +1335,10 @@ def delete_me(request: Request):
     """Erase this account: carts, address, settings, sign-ins and sessions."""
     if not auth.accounts_on():
         raise HTTPException(400, "no accounts in local mode")
-    auth.delete_user(con(), uid())
+    gone = uid()
+    auth.delete_user(con(), gone)
+    stats.forget(gone)  # its usage statistics too, and the anonymous ones from its browsers
+    stats.event("account_deleted")  # counted, with nothing to say whose
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.SESSION_COOKIE, path="/")
     return resp
@@ -1243,10 +1346,187 @@ def delete_me(request: Request):
 
 @app.post("/api/logout")
 def logout(request: Request):
+    _ev("logout")
     auth.end_session(con(), request.cookies.get(auth.SESSION_COOKIE))
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.SESSION_COOKIE, path="/")
     return resp
+
+
+# ---------------------------------------------------------------- usage statistics (app.stats) and the owner's /admin page
+@app.post("/api/ux")
+async def ux(request: Request):
+    """A batch of usage events from usage.js (sendBeacon or fetch). Open to visitors who haven't signed in, so the
+    sign-in page counts too; capped in size and rate. Answers 204 whatever happens."""
+    if int(request.headers.get("content-length") or 0) <= 65536:
+        raw = await request.body()
+        if len(raw) <= 65536:
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                body = None
+            u = me()
+            ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
+            stats.ingest(body, uid=(u or {}).get("id"), admin=_owner(), ua=request.headers.get("user-agent"),
+                         country=request.headers.get("cf-ipcountry"), city=request.headers.get("cf-ipcity"),
+                         via="internet" if _from_internet(request) else "home", ip=ip)
+    return Response(status_code=204)
+
+
+ADMIN_DIR = os.path.join(os.path.dirname(__file__), "admin")
+ADMIN_HEADERS = {
+    "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
+    # the page shows what visitors typed and sent: scripts only from this server, never inline
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                               "font-src https://fonts.gstatic.com; img-src 'self' https: data:; connect-src 'self'; "
+                               "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"}
+
+
+def _owner_only():
+    """Anyone but the owner gets the same answer as for a page that doesn't exist."""
+    if not _owner():
+        raise HTTPException(404, "Not Found")
+
+
+@app.get("/admin")
+def admin_page():
+    _owner_only()
+    return FileResponse(os.path.join(ADMIN_DIR, "admin.html"), headers=ADMIN_HEADERS)
+
+
+@app.get("/admin/{name}")
+def admin_asset(name: str):
+    _owner_only()
+    if name not in ("admin.js", "admin.css", "reports.js", "reports.css"):
+        raise HTTPException(404, "Not Found")
+    return FileResponse(os.path.join(ADMIN_DIR, name), headers=ADMIN_HEADERS)
+
+
+def _names(keys):
+    """Product names for keys in the statistics."""
+    keys = [k for k in keys if isinstance(k, str)][:600]
+    if not keys:
+        return {}
+    return {r[0]: r[1] for r in con().execute(f"SELECT key, name FROM products WHERE key IN ({','.join('?' * len(keys))})", keys)}
+
+
+def _report(days, mine):
+    _owner_only()
+    stats.flush()  # what's still queued shows at once
+    return stats.Range(days, mine)
+
+
+@app.get("/api/admin/overview")
+def admin_overview(days: int = 7, mine: int = 0):
+    return stats.overview(_report(days, mine))
+
+
+@app.get("/api/admin/live")
+def admin_live(days: int = 1, mine: int = 0):
+    return stats.live(_report(days, mine))
+
+
+@app.get("/api/admin/stuck")
+def admin_stuck(days: int = 7, mine: int = 0):
+    return stats.stuck(_report(days, mine))
+
+
+@app.get("/api/admin/usage")
+def admin_usage(days: int = 7, mine: int = 0):
+    return stats.usage(_report(days, mine), _names)
+
+
+@app.get("/api/admin/audience")
+def admin_audience(days: int = 7, mine: int = 0):
+    return stats.audience(_report(days, mine))
+
+
+@app.get("/api/admin/users")
+def admin_users(days: int = 7, mine: int = 0):
+    return stats.users(_report(days, mine))
+
+
+@app.get("/api/admin/users/{user_id}")
+def admin_user(user_id: int):
+    _report(7, 1)
+    u = stats.user(user_id, _names)
+    if not u:
+        raise HTTPException(404, "no such account")
+    return u
+
+
+@app.get("/api/admin/server")
+def admin_server(days: int = 7, mine: int = 0):
+    return stats.server(_report(days, mine))
+
+
+@app.get("/api/admin/data")
+def admin_data():
+    """The price data's health: each chain's stores and how fresh their prices are, sizes, the last index run."""
+    _owner_only()
+    c = con()
+    fresh_after = trust.fresh_cutoff()
+    names = {r[0]: r[1] for r in c.execute("SELECT chain_id, name_he FROM chains")}
+    chains = {}
+    for r in c.execute("""SELECT chain_id, count(*) stores, sum(last_price_ts >= ?) fresh, max(last_price_ts) newest,
+                                 sum(store_type = 2) online FROM stores WHERE price_full_ts > 0 GROUP BY chain_id""", (fresh_after,)):
+        name = chain_name(r["chain_id"], names.get(r["chain_id"]))
+        x = chains.setdefault(name, {"chain": name, "stores": 0, "fresh": 0, "online": 0, "newest": 0})
+        x["stores"] += r["stores"]
+        x["fresh"] += r["fresh"] or 0
+        x["online"] += r["online"] or 0
+        x["newest"] = max(x["newest"], r["newest"] or 0)
+    deals = "(SELECT count(*) FROM deals)" if c.execute("SELECT 1 FROM sqlite_master WHERE name='deals'").fetchone() else "NULL"
+    counts = c.execute(f"""SELECT (SELECT count(*) FROM products WHERE store_count > 0) products,
+                                  (SELECT count(*) FROM products WHERE store_count > 0 AND scope='global') barcodes,
+                                  (SELECT count(*) FROM stores WHERE price_full_ts > 0) stores, {deals} deals""").fetchone()
+    data_dir = os.path.dirname(os.path.abspath(dbmod.DB_PATH))
+    sizes = {}
+    for f in ("basket.db", "user.db", "stats.db", "places.db"):
+        p = os.path.join(data_dir, f)
+        if os.path.exists(p):
+            sizes[f] = os.path.getsize(p) + (os.path.getsize(p + "-wal") if os.path.exists(p + "-wal") else 0)
+    try:
+        photos = sum(1 for e in os.scandir(PHOTO_DIR) if e.name.endswith(".webp"))
+    except OSError:
+        photos = None
+    try:
+        du = shutil.disk_usage(data_dir)
+        disk = {"free": du.free, "total": du.total}
+    except OSError:
+        disk = None
+    return {"chains": sorted(chains.values(), key=lambda x: (-x["fresh"], x["chain"])), **dict(counts), "photos": photos,
+            "sizes": sizes, "disk": disk, "index": engine.get_setting(c, "index_status", {}),
+            "confirmed_through": engine.get_setting(c, "confirmed_through", None),
+            "history_since": engine.get_setting(c, "history_since", None), "fresh_hours": trust.FRESH_HOURS,
+            "accounts": auth.accounts_on(), "providers": [p for p in auth.providers() if p != "dev"]}
+
+
+# ---------------------------------------------------------------- reports to sell (app.reports): public price data only
+@app.get("/api/admin/reports")
+def admin_reports():
+    """What the price data holds, for the Reports tab's header."""
+    _owner_only()
+    return {"holdings": reports.holdings(con()),
+            "categories": [{"slug": x["slug"], "name": x["name"]} for x in catalog.CATEGORIES]}
+
+
+@app.get("/api/admin/reports/{name}")
+def admin_report(name: str, request: Request):
+    """One report as JSON, or ?format=csv (&part=<table>) as a download."""
+    _owner_only()
+    q = request.query_params
+    try:
+        rep = reports.run(con(), name, q)
+    except KeyError:
+        raise HTTPException(404, "Not Found")
+    if q.get("format") != "csv":
+        return rep
+    part = q.get("part") or ""
+    stamp = time.strftime("%Y%m%d")
+    fname = f"sal-kal-{name}{'-' + re.sub(r'[^a-z]', '', part) if part else ''}-{stamp}.csv"
+    return Response(reports.csv_text(rep, part), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"', "Cache-Control": "no-store"})
 
 
 # ---------------------------------------------------------------- privacy and data deletion (Facebook requires both pages)
@@ -1255,15 +1535,21 @@ LEGAL = {
         "privacy": ("פרטיות", [
             ("מה נשמר", "כשנכנסים עם Google או Facebook נשמרים השם, כתובת הדוא״ל ותמונת הפרופיל שהם מעבירים, ומזהה החשבון אצלם. "
                         "בנוסף נשמרים הסלים שיצרת, הכתובת שבחרת (רחוב, מספר, יישוב ונקודה במפה), המרחק, השפה והגדרות דמי המשלוח."),
-            ("למה", "רק כדי להציג לך את הסלים שלך ואת המחירים בחנויות שליד הכתובת שבחרת. אין פרסומות, אין מעקב ואין מכירה או מסירה של מידע."),
+            ("למה", "כדי להציג לך את הסלים שלך ואת המחירים בחנויות שליד הכתובת שבחרת, וכדי לדעת מה לשפר באתר. "
+                    "אין פרסומות, אין כלי מעקב של אחרים ואין מכירה או מסירה של מידע."),
+            ("סטטיסטיקת שימוש", "השרת של סל קל עצמו שומר אילו עמודים נפתחו ולכמה זמן, חיפושים וכמה תוצאות נמצאו, לחיצות "
+                                "(על איזה כפתור, אף פעם לא מה שהוקלד), שגיאות וזמני טעינה, וסוג המכשיר, הדפדפן, המדינה והעיר "
+                                "כפי ש־Cloudflare מזהה אותם. כתובת ה־IP לא נשמרת. המידע נשמר 180 יום, רק מפעיל האתר רואה אותו, "
+                                "הוא לא נמסר לאף אחד ונמחק יחד עם החשבון."),
             ("שירותים חיצוניים", "הכתובת שבחרת נשלחת פעם אחת ל־OpenStreetMap (Nominatim) כדי לסמן אותה במפה, בלי שם או דוא״ל. "
                                  "זמני נסיעה ומסלולים מחושבים ב־OSRM לפי נקודות במפה. Google ו־Facebook מעורבים רק ברגע הכניסה."),
-            ("עוגיות", "עוגיית כניסה אחת (HttpOnly) שומרת אותך מחובר/ת עד 180 יום, ועוגייה של בחירת השפה."),
-            ("מחיקה", "אפשר למחוק את החשבון ואת כל המידע בכל רגע: חשבון ← מחיקת החשבון שלי. המחיקה מיידית ומלאה."),
+            ("עוגיות", "עוגיית כניסה אחת (HttpOnly) שומרת אותך מחובר/ת עד 180 יום, ועוגייה של בחירת השפה. "
+                       "מזהה אקראי באחסון הדפדפן מבדיל בין ביקורים לצורך הסטטיסטיקה."),
+            ("מחיקה", "אפשר למחוק את החשבון ואת כל המידע בכל רגע: חשבון ← מחיקת החשבון שלי. המחיקה מיידית ומלאה, כולל סטטיסטיקת השימוש."),
         ]),
         "data-deletion": ("מחיקת המידע שלך", [
             ("איך מוחקים", "נכנסים לסל קל, לוחצים על תמונת הפרופיל בכותרת, ובוחרים ״מחיקת החשבון שלי״. "
-                           "הסלים, הכתובת, ההגדרות, פרטי הכניסה וכל החיבורים הפעילים נמחקים מיד ולצמיתות."),
+                           "הסלים, הכתובת, ההגדרות, פרטי הכניסה, סטטיסטיקת השימוש וכל החיבורים הפעילים נמחקים מיד ולצמיתות."),
             ("גם ב־Facebook", "אפשר להסיר את סל קל מהאפליקציות המחוברות בהגדרות Facebook (הגדרות ופרטיות ← אפליקציות ואתרים)."),
         ]),
     },
@@ -1272,17 +1558,24 @@ LEGAL = {
             ("What is kept", "When you sign in with Google or Facebook, Sal-Kal keeps the name, email address and profile photo they pass on, "
                              "and your account id there. It also keeps the carts you make, the address you choose (street, number, town "
                              "and a point on the map), your distance, language and delivery-fee settings."),
-            ("Why", "Only to show you your carts and their prices at the stores near the address you chose. No ads, no tracking, "
-                    "and nothing is sold or passed on."),
+            ("Why", "To show you your carts and their prices at the stores near the address you chose, and to see what to "
+                    "improve on the site. No ads, no outside trackers, and nothing is sold or passed on."),
+            ("Usage statistics", "Sal-Kal's own server keeps which pages were opened and for how long, searches and how many "
+                                 "results they found, clicks (which button, never what was typed), errors and load times, and "
+                                 "the device type, browser, country and city as Cloudflare reports them. IP addresses are not "
+                                 "kept. It is kept for 180 days, seen only by the site's operator, never passed on, and deleted "
+                                 "with your account."),
             ("Outside services", "The address you choose is sent once to OpenStreetMap (Nominatim) to put it on the map, without your "
                                  "name or email. Drive times and routes are worked out by OSRM from map points. Google and Facebook "
                                  "are involved only when you sign in."),
-            ("Cookies", "One sign-in cookie (HttpOnly) keeps you signed in for up to 180 days, and one remembers your language."),
-            ("Deleting", "You can delete your account and everything in it at any time: Account → Delete my account. It is immediate and complete."),
+            ("Cookies", "One sign-in cookie (HttpOnly) keeps you signed in for up to 180 days, and one remembers your language. "
+                        "A random id in the browser's storage tells visits apart for the usage statistics."),
+            ("Deleting", "You can delete your account and everything in it at any time: Account → Delete my account. It is "
+                         "immediate and complete, usage statistics included."),
         ]),
         "data-deletion": ("Deleting your data", [
             ("How", "Open Sal-Kal, tap your profile picture in the header and choose “Delete my account”. Your carts, address, settings, "
-                    "sign-ins and every open session are erased at once and for good."),
+                    "sign-ins, usage statistics and every open session are erased at once and for good."),
             ("On Facebook too", "You can also remove Sal-Kal from your connected apps in Facebook’s settings (Settings & privacy → Apps and websites)."),
         ]),
     },

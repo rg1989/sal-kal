@@ -33,14 +33,17 @@ const SVG = {
 async function api(path, opts = {}) {
   const done = opts.quiet ? null : loading();  // the thin bar under the header while anything loads
   try {
-    const r = await fetch(path, {
-      method: opts.method || 'GET',
-      headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-      credentials: 'same-origin',
-    });
+    let r;
+    try {
+      r = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: { ...(opts.body ? { 'Content-Type': 'application/json' } : {}), 'X-Sal-V': Usage.ids() },
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        credentials: 'same-origin',
+      });
+    } catch (e) { Usage.apiFail(path, 0); throw e; }  // offline, or the server is down
     if (r.status === 401 && !opts.noAuth) { signedOut(); throw new Error('signed out'); }
-    if (!r.ok) throw new Error(`${r.status} ${path}`);
+    if (!r.ok) { Usage.apiFail(path, r.status); throw new Error(`${r.status} ${path}`); }
     return await r.json();
   } finally { done?.(); }
 }
@@ -90,6 +93,7 @@ const radius = () => S.prefs.home && S.prefs.max_km ? S.prefs.max_km : null;
 let toastTimer;
 function toast(msg, action, fn, kind) {
   haptic(kind || (action ? 'warn' : 'tap'));
+  if (kind === 'error') Usage.ev('toast', { a: msg });
   const el = $('#toast');
   (document.querySelector('dialog[open]') || document.body).append(el);  // stay above an open dialog's backdrop
   el.innerHTML = `<span>${esc(msg)}</span>` + (action ? `<button type="button">${esc(action)}</button>` : '');
@@ -290,6 +294,7 @@ function setQty(i, q) {
 
 function removeAt(i) {
   const [gone] = S.cart.items.splice(i, 1);
+  Usage.ev('remove', { a: gone.key });
   changed();
   toast(t('Removed {name}', { name: iso(gone.name || t('item')) }), t('Undo'), () => { S.cart.items.splice(i, 0, gone); changed(); });
 }
@@ -387,6 +392,7 @@ document.querySelector('.cart-edit').addEventListener('click', async e => {
 function addToCart(h, qty = 1, quiet = false, from = null) {
   const kg = !!h.is_weighted, fresh = !S.cart.items.length && !S.cart.id;
   haptic('success');
+  Usage.add(h.key, qty);
   flyToCart(from);
   S.meta[h.key] = { ...S.meta[h.key], name: h.name, manufacturer: h.manufacturer, is_weighted: kg,
                     min: h.min_price, max: h.max_price, stores: h.store_count, img: h.img || S.meta[h.key]?.img };
@@ -672,7 +678,7 @@ function renderMapInfo() {
   const where = mapData.max_km ? t('within {n} km', { n: mapData.max_km }) : t('nearby');
   info.innerHTML = !delivery() && S.result?.chains?.length
     ? `<span class="mi-dot"></span><span class="mi-seg" role="group" aria-label="${t('Branches on the map')}">
-        <button type="button" data-branches="best" aria-pressed="${!S.allBranches}">${t('Cheapest of each chain')} <b>${S.result.chains.length}</b></button>
+        <button type="button" data-branches="best" aria-pressed="${!S.allBranches}">${t('Cheapest per chain')} <b>${S.result.chains.length}</b></button>
         <button type="button" data-branches="all" aria-pressed="${S.allBranches}">${t('All branches')} <b>${mapData.total}</b></button></span>`
     : `<span class="mi-dot"></span><span>${t('{branches} of {chains} {where}', { branches: `<strong>${plural(mapData.total, 'branch')}</strong>`, chains: `<strong>${plural(chains, 'chain')}</strong>`, where })}</span>`;
 }
@@ -698,6 +704,7 @@ async function initMap() {
   pin.title = t('Home');
   homeMarker = new maplibregl.Marker({ element: pin }).setLngLat([34.83, 32.07]).addTo(map);
   map.on('style.load', addOverlays);  // every style load (first one and theme switches) gets the overlays back
+  map.on('moveend', () => requestAnimationFrame(tuckPins));
   updateMap();  // data doesn't wait for the map; it's drawn as soon as the overlays exist
   drawPins();
   const pop = new maplibregl.Popup({ closeButton: false, offset: 10, className: 'sal-pop' });
@@ -734,6 +741,18 @@ function drawPins() {
     el.title = `${cn(c.name)} · ${storeName(v)}${v.distance_km != null ? ' · ' + kmText(v.distance_km) : ''} — ${t('price the cart here')}`;
     el.addEventListener('click', e => { e.stopPropagation(); pin(String(c.chain_id)); });
     pins.push(new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] }).setLngLat([v.lon, v.lat]).addTo(map));
+  });
+  requestAnimationFrame(tuckPins);
+}
+// pins are added pricey-first; walking them cheapest-first, any pin that would cover a kept one becomes a dot
+function tuckPins() {
+  const kept = [];
+  [...pins].reverse().forEach(m => {
+    const el = m.getElement();
+    el.classList.remove('tucked');
+    const r = el.getBoundingClientRect();
+    if (kept.some(k => r.left < k.right - 2 && r.right > k.left + 2 && r.top < k.bottom - 2 && r.bottom > k.top + 2)) el.classList.add('tucked');
+    else kept.push(r);
   });
 }
 // ---------------------------------------------------------------- the selected store: route, address, hours, directions
@@ -780,7 +799,7 @@ function storeCardHTML(v, d, h) {
   const gsearch = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([d?.brand_he || v.chain, addr].filter(Boolean).join(' '));
   const gdir = `https://www.google.com/maps/dir/?api=1${home ? `&origin=${home.lat},${home.lon}` : ''}&destination=${dest}&travelmode=driving`;
   return `<div class="sc-head">
-      <div><p class="sc-chain">${esc(cn(v.chain))}${isBest ? ` <em>${t('Cheapest for this cart')}</em>` : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
+      <div><p class="sc-chain">${esc(cn(v.chain))}${isBest ? ` <em>${t('Cheapest')}</em>` : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
       ${n ? `<p class="sc-total"><span class="num">${money(v.total)}</span>
         <small>${!v.complete ? t('{a} of {n} products here', { a: v.covered, n }) : n === 1 ? t('for your product') : t('all {n} products', { n })}</small></p>` : ''}
     </div>
@@ -790,8 +809,8 @@ function storeCardHTML(v, d, h) {
       <li title="${t('Opening hours: OpenStreetMap')}">${ICO.clock}<span class="sc-hours">${hoursHTML(h, gsearch)}</span></li>
     </ul>
     ${dest ? `<div class="sc-actions">
-      <a class="sc-btn waze" href="https://waze.com/ul?ll=${dest}&navigate=yes" target="_blank" rel="noopener">${ICO.go}${t('Open in Waze')}</a>
-      <a class="sc-btn" href="${gdir}" target="_blank" rel="noopener">${ICO.go}${t('Open in Google Maps')}</a></div>` : ''}
+      <a class="sc-btn waze" href="https://waze.com/ul?ll=${dest}&navigate=yes" target="_blank" rel="noopener" aria-label="${t('Open in Waze')}">${ICO.go}Waze</a>
+      <a class="sc-btn" href="${gdir}" target="_blank" rel="noopener" aria-label="${t('Open in Google Maps')}">${ICO.go}Google Maps</a></div>` : ''}
 `;
 }
 let storeSeq = 0;
@@ -907,11 +926,12 @@ async function openBrowse(live) {
   $('#b-sort').value = B.sort;
   $('#b-cards').innerHTML = r.products.length ? r.products.map(card).join('')
     : '';
+  Usage.results(B.terms, r.total, B.cat);
 }
 
 $('#b-add').addEventListener('keydown', e => {
   const v = e.target.value.trim();
-  if (e.key === 'Enter' && v) { e.preventDefault(); remember(v); if (!B.terms.includes(v)) setBrowse({ terms: [...B.terms, v] }); }
+  if (e.key === 'Enter' && v) { e.preventDefault(); remember(v); Usage.ev('filter', { a: 'typed word', b: v }); if (!B.terms.includes(v)) setBrowse({ terms: [...B.terms, v] }); }
   else if (e.key === 'Backspace' && !e.target.value) {
     if (B.terms.length) setBrowse({ terms: B.terms.slice(0, -1) });
     else if (B.cat) setBrowse({ cat: '' });
@@ -919,16 +939,16 @@ $('#b-add').addEventListener('keydown', e => {
 });
 $('#view-browse').addEventListener('click', e => {
   const tm = e.target.closest('[data-term]');
-  if (tm) { haptic('select'); return setBrowse({ terms: [...B.terms, tm.dataset.term] }); }
+  if (tm) { haptic('select'); Usage.ev('filter', { a: 'narrow down', b: tm.dataset.term }); return setBrowse({ terms: [...B.terms, tm.dataset.term] }); }
   const rt = e.target.closest('[data-rmterm]');
-  if (rt) return setBrowse({ terms: B.terms.filter((_, i) => i !== +rt.dataset.rmterm) });
-  if (e.target.closest('[data-rmcat]')) return setBrowse({ cat: '', sizes: [] });
+  if (rt) { Usage.ev('filter', { a: 'remove word', b: B.terms[+rt.dataset.rmterm] }); return setBrowse({ terms: B.terms.filter((_, i) => i !== +rt.dataset.rmterm) }); }
+  if (e.target.closest('[data-rmcat]')) { Usage.ev('filter', { a: 'remove category', b: B.cat }); return setBrowse({ cat: '', sizes: [] }); }
   const z = e.target.closest('[data-size]');
-  if (z) { haptic('select'); const v = z.dataset.size; return setBrowse({ sizes: B.sizes.includes(v) ? B.sizes.filter(x => x !== v) : [...B.sizes, v] }); }
-  if (e.target.closest('#b-deal')) { haptic('select'); return setBrowse({ deal: !B.deal }); }
+  if (z) { haptic('select'); const v = z.dataset.size; Usage.ev('filter', { a: B.sizes.includes(v) ? 'size off' : 'size', b: v }); return setBrowse({ sizes: B.sizes.includes(v) ? B.sizes.filter(x => x !== v) : [...B.sizes, v] }); }
+  if (e.target.closest('#b-deal')) { haptic('select'); Usage.ev('filter', { a: B.deal ? 'deals off' : 'deals only' }); return setBrowse({ deal: !B.deal }); }
   if (e.target.closest('#b-terms') && !e.target.closest('button')) $('#b-add').focus();
 });
-$('#b-sort').onchange = e => setBrowse({ sort: e.target.value });
+$('#b-sort').onchange = e => { Usage.ev('filter', { a: 'sort', b: e.target.value || 'default' }); setBrowse({ sort: e.target.value }); };
 
 // ---------------------------------------------------------------- product page
 let prodSeq = 0;
@@ -1082,6 +1102,7 @@ function route() {
   else if (v === 'home') placeMap($('#home-map'));
   closeCart();
   window.scrollTo(0, 0);
+  Usage.view(v, v === 'browse' ? B.cat || undefined : v === 'product' ? arg : undefined);
 }
 window.addEventListener('hashchange', route);
 
@@ -1108,9 +1129,20 @@ async function compareNow() {
     renderMapInfo();
     renderStoreCard(false);
     loadTrend();
+    if (document.body.dataset.view === 'basket') compared(r);
   } catch (e) { if (my === compareSeq && e.message !== 'signed out') toast(t("Couldn't compare prices — is the server up?"), null, null, 'error'); }
 }
 const compareSoon = debounce(compareNow, 250);
+// statistics: what checkout showed (how many stores had the whole cart, which chain was cheapest), once per cart state
+let comparedKey = '';
+const compared = debounce(r => {
+  const ok = r.chains.filter(c => full(c) && counted(c)), best = ok[0] || null;
+  const k = [S.cart.id, S.cart.items.length, S.prefs.mode, best?.chain_id].join('|');
+  if (k === comparedKey) return;
+  comparedKey = k;
+  Usage.ev('compare', { n: S.cart.items.length, d: { complete: ok.length, chains: r.chains.length, best: best?.name || null,
+                                                     total: best ? Math.round(paid(best)) : null, mode: S.prefs.mode, km: S.prefs.max_km } });
+}, 2500);
 
 function emptyState(title, text, extra = '') {
   return `<div class="empty-results"><div class="ghost-tag" aria-hidden="true"></div><h2>${title}</h2><p>${text}</p>${extra}</div>`;
@@ -1540,7 +1572,8 @@ function applyPrefsUI() {
   btn.classList.toggle('set', !!h);
   const place = h ? bdi(h.label.split(',')[0]) : '';
   $('#near-label').innerHTML = !h ? t('Set your location')
-    : S.prefs.max_km ? t('Within {n} km of {place}', { n: S.prefs.max_km, place }) : t('Near {place}', { place });
+    : `<span class="nl-long">${S.prefs.max_km ? t('Within {n} km of {place}', { n: S.prefs.max_km, place }) : t('Near {place}', { place })}</span>`
+      + `<span class="nl-short"><bdi class="nl-place">${esc(h.label.split(',')[0])}</bdi>${S.prefs.max_km ? `<span class="nl-km">${t('{n} km', { n: S.prefs.max_km })}</span>` : ''}</span>`;
   btn.title = h ? h.label : '';
 }
 function setPrefs(p) {
@@ -1602,8 +1635,8 @@ function renderFees(rows) {
   $('#fee-table').innerHTML = `<thead><tr><th>${t('Chain')}</th>${fees.map(f => `<th>${f[1]}</th>`).join('')}<th>${t('Delivers to me')}</th><th></th></tr></thead><tbody>`
     + rows.map(r => `<tr data-cid="${esc(r.chain_id)}">
         <td>${esc(cn(r.name))}${r.note ? `<small>${esc(serverText(r.note))}</small>` : ''}</td>
-        ${fees.map(([k, label]) => `<td><input type="number" inputmode="decimal" min="0" step="0.01" data-f="${k}" value="${feeVal(r[k])}" aria-label="${esc(cn(r.name))} ${label}"></td>`).join('')}
-        <td><input type="checkbox" data-f="delivers_here" ${r.delivers_here === true ? 'checked' : ''} aria-label="${esc(t('{chain} delivers to me', { chain: cn(r.name) }))}"></td>
+        ${fees.map(([k, label]) => `<td data-label="${esc(label)}"><input type="number" inputmode="decimal" min="0" step="0.01" data-f="${k}" value="${feeVal(r[k])}" aria-label="${esc(cn(r.name))} ${label}"></td>`).join('')}
+        <td data-label="${esc(t('Delivers to me'))}"><label class="fee-check"><input type="checkbox" data-f="delivers_here" ${r.delivers_here === true ? 'checked' : ''} aria-label="${esc(t('{chain} delivers to me', { chain: cn(r.name) }))}"></label></td>
         <td>${r.custom ? RESET() : ''}</td></tr>`).join('') + '</tbody>';
 }
 async function saveFees(delivery) {

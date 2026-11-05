@@ -1435,6 +1435,17 @@ body.legal { min-height: 100vh; }
 html, body { overflow-x: clip; }  /* nothing may make the phone page scroll sideways */
 .gate-error.soon { color: var(--ink-2); font-size: 15px; }
 
+/* language flags (svg) beside each language's name */
+.flag { width: 20px; height: 14px; flex: none; border-radius: 3px; clip-path: inset(0 round 3px); box-shadow: 0 0 0 1px rgba(0, 0, 0, .12); vertical-align: -2px; }
+.lang-btn { gap: 7px; }
+.lang-btn .flag, .lang-menu .flag, .seg .flag { width: 19px; height: 13px; }
+.lang-menu button { justify-content: flex-start; gap: 10px; }
+.lang-menu button[aria-checked="true"]::after { margin-inline-start: auto; }
+.seg.small button { display: inline-flex; align-items: center; gap: 7px; }
+.acc-credit { margin: 6px 0 0; font-size: 12px; color: var(--muted); text-align: center; }
+.acc-credit a, .foot-links a { color: var(--muted); }
+.foot-links { color: var(--muted); line-height: 1.8; }
+
 /* ================================================================ install as an app (pwa.js): the steps for iPhone / Mac Safari */
 .install-steps { list-style: none; counter-reset: step; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
 .install-steps li {
@@ -1451,3 +1462,195 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
 .gate-install:hover { border-color: var(--ink-2); }
 .gate-install[hidden] { display: none; }
 .gate-install svg { width: 20px; height: 20px; flex: none; }
+
+/* delivery fees on phones: one card per chain instead of a table that scrolls sideways */
+@media (max-width: 640px) {
+  .fee-table, .fee-table tbody { display: block; min-width: 0; }
+  .fee-table thead { display: none; }
+  .fee-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .fee-table td { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; font-size: 12.5px; color: var(--muted); }
+  .fee-table td:first-child { grid-column: 1 / -1; font-size: 16px; color: var(--ink); white-space: normal; }
+  .fee-table td[data-label]::before { content: attr(data-label); }
+  .fee-table td:last-child:empty { display: none; }
+  .fee-table td:last-child:not([data-label]) { grid-column: 1 / -1; align-items: flex-start; }
+  .fee-table input[type="number"] { width: 100%; padding: 9px 10px; font-size: 16px; }
+  .fee-table input[type="checkbox"] { width: 22px; height: 22px; }
+}
+
+/* maplibre-gl.css loads later and would make the onboarding map relative with no height (blank) */
+.ob-map > .ob-map-canvas, .ob-map > .ob-map-canvas.maplibregl-map { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* seven distance buttons in one row down to 340px wide */
+@media (max-width: 400px) { .radius-picker { grid-template-columns: repeat(auto-fit, minmax(38px, 1fr)); gap: 5px; } .radius-picker button { padding-inline: 2px; min-height: 56px; } .radius-picker b { font-size: 20px; } }
+
+.price-pin.tucked { padding: 0; width: 14px; height: 14px; border-radius: 50%; overflow: hidden; color: transparent; font-size: 0; }
+.price-pin.tucked > * { display: none; }
+.price-pin.tucked::after { display: none; }
+.sheet-inner:focus { outline: none; }
+
+/* phones: the header row never grows past the screen; the address pill gives way (ellipsis), the buttons keep their size */
+@media (max-width: 900px) {
+  .top-actions { justify-self: stretch; justify-content: flex-end; width: 100%; }
+  .top-actions > * { flex: none; }
+  .top-actions > .near { flex: 0 1 auto; min-width: 0; }
+  .near > span { min-width: 0; }
+}
+/* the clear button sits on the page's end side; keep the field's text clear of it whatever language the value is in */
+:root[dir="ltr"] .combo-box input { padding-right: 42px; padding-left: 14px; }
+:root[dir="rtl"] .combo-box input { padding-left: 42px; padding-right: 14px; }
+
+/* phones: comfortable tap targets and readable badges (from the mobile audit) */
+@media (max-width: 640px) {
+  .mi-seg button { min-height: 32px; padding: 4px 10px; }
+  .in-cart .linkish { display: inline-block; padding: 8px 4px; margin: -8px 0; }
+  .toast button { padding: 8px 6px; margin: -8px 0; }
+}
+.sc-chain em, .ls-name em, .price-pin em { font-size: 11px; }
+.radius-picker [data-km=""] b { font-size: 24px; line-height: .9; }
+
+/* ================================================================ phones: made for a thumb
+   every control at least 44px tall (or 40px with its tap area grown past its edges), labels on one line,
+   control rows that stay one row */
+@media (max-width: 640px) {
+  /* header: logo, address, account and cart all 44px */
+  .top .brand { min-width: 44px; min-height: 44px; justify-content: center; }
+  .near, .basket-btn { min-height: 44px; }
+  .avatar-btn { width: 44px; height: 44px; display: grid; place-items: center; }
+  .q-clear { width: 34px; height: 34px; }
+  .q-clear::after, .combo-clear::after { content: ""; position: absolute; inset: -6px; }
+
+  /* icon buttons (close, the cart's tools) */
+  .icon { width: 44px; height: 44px; }
+  .icon svg { width: 22px; height: 22px; }
+  .back { padding-block: 12px; }
+
+  /* chips and pills in the scrolling filter rows, the cart tabs, the store picks */
+  .pill { min-height: 40px; padding-inline: 14px; }
+  .term { min-height: 36px; padding-block: 4px; }
+  .term button { position: relative; width: 28px; height: 28px; }
+  .term button::after { content: ""; position: absolute; inset: -8px; }
+  .terms input { min-height: 40px; }
+  button.chip { position: relative; }
+  button.chip::after { content: ""; position: absolute; inset: -11px -4px; }
+
+  /* browse: "On deal" and the sort menu share one row; the sort menu says what it is with an icon */
+  .facet-row { flex-wrap: nowrap; }
+  .facet-row .pill.toggle { flex: none; }
+  .sort { flex: 1; min-width: 0; justify-content: flex-end; gap: 6px; }
+  .sort > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .sort::before {
+    content: ""; flex: none; width: 18px; height: 18px; background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 15V4M3 7l3-3 3 3M14 5v11M11 13l3 3 3-3'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 15V4M3 7l3-3 3 3M14 5v11M11 13l3 3 3-3'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  .sort select { min-height: 40px; min-width: 0; max-width: 100%; }
+
+  /* product cards: the price, then a full-width Add (or − n +) the thumb can't miss */
+  .c-foot { flex-direction: column; align-items: stretch; gap: 8px; }
+  .c-ctl { margin: 0; display: flex; }
+  .c-ctl .add { flex: 1; min-height: 40px; }
+  .c-ctl .qty-ctl { flex: 1; justify-content: space-between; }
+  .qty-ctl button { width: 44px; height: 40px; }
+
+  /* the cart's rows: the name gets the width, the stepper sits under the price */
+  .live-cart .item {
+    grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "thumb name price" "thumb meta step";
+    gap: 6px 10px; padding: 10px 4px; align-items: center;
+  }
+  .live-cart .lc-thumb { grid-area: thumb; width: 44px; height: 44px; align-self: start; }
+  .live-cart .item-name { grid-area: name; }
+  .live-cart .item-meta { grid-area: meta; }
+  .live-cart .stepper { grid-area: step; justify-self: end; }
+  .live-cart .lc-price { grid-area: price; align-self: start; min-width: 0; }
+  .live-cart .stepper button { width: 40px; height: 40px; }
+  .live-cart .stepper input { width: 34px; }
+  .live-cart .cart-edit { padding-inline-end: 4px; }
+  .lc-top { padding-inline-end: 4px; }
+
+  /* switches: the whole label is the target */
+  .switch { min-height: 44px; }
+  .switch.small { min-height: 0; position: relative; }
+  .switch.small::after { content: ""; position: absolute; inset: -13px -8px; }
+
+  /* the map's branch toggle: 40px buttons, no dot */
+  .map-info:has(.mi-seg) { padding: 3px; }
+  .map-info:has(.mi-seg) .mi-dot { display: none; }
+  .mi-seg button { min-height: 40px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
+
+  /* checkout: how you shop as one full-width switch, then club prices and delivery fees on one row */
+  .checkout .controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
+  .checkout .controls .seg { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
+  .checkout .controls .seg button { min-height: 40px; padding-inline: 8px; }
+  #open-settings { min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 14px; font-weight: 600; color: var(--ink); }
+
+  /* the selected store: two equal navigation buttons */
+  .sc-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .sc-btn { justify-content: center; min-height: 44px; padding-inline: 10px; }
+
+  /* a store's facts when its row is open: one per line, the figure at the end */
+  .row-alt { display: grid; gap: 6px; }
+  .row-alt > span:not(.chip) { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .row-alt > .chip { justify-self: start; }
+
+  /* sheets */
+  .seg.small button { min-height: 40px; }
+  .cmp-picks label { min-height: 44px; padding-inline: 14px; }
+  .cmp-picks input { width: 18px; height: 18px; }
+  .num-step { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+  .lang-btn { height: 44px; }
+  .fee-check { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; cursor: pointer; }
+  .fee-table .fee-check input[type="checkbox"] { width: 24px; height: 24px; }
+  .fee-table .reset { min-height: 40px; }
+}
+
+.nl-short { display: none; }
+@media (max-width: 640px) {
+  .nl-long { display: none; }
+  .nl-short { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .nl-place { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nl-km { flex: none; color: var(--muted); font-weight: 600; font-size: 13px; }
+  .near > #near-label { display: flex; min-width: 0; }
+  /* the house number keeps room for three digits beside its − and + */
+  .addr-fields { grid-template-columns: minmax(0, 1fr) 132px; }
+  .num-step { grid-template-columns: 42px minmax(0, 1fr) 42px; }
+  .live-cart .cart-name { min-height: 44px; }
+}
+
+/* the store card never grows past a narrow screen */
+.store-card { grid-template-columns: minmax(0, 1fr); }
+.sc-head > div { min-width: 0; }
+
+/* the cart bar's text gives way (ellipsis) instead of widening the bar past the screen */
+.cb-txt { flex: 1 1 0; width: 0; }
+/* the narrowest phones: the navigation buttons drop their arrow so the app names fit */
+@media (max-width: 380px) { .sc-btn svg { display: none; } .sc-btn { padding-inline: 8px; } }
+/* the "narrow down" field takes the room that's left; its font's default width never widens the filter box */
+.filterbar { grid-template-columns: minmax(0, 1fr); }
+.terms input { width: 0; }
+
+/* ================================================================ checkboxes: shelf-tag yellow with an ink tick (switches keep their own look) */
+input[type="checkbox"]:not([switch]) {
+  -webkit-appearance: none; appearance: none; margin: 0; flex: none; width: 20px; height: 20px; border-radius: 6px; cursor: pointer;
+  border: 1.5px solid var(--line-strong); background: var(--surface); display: inline-grid; place-items: center; vertical-align: middle;
+  transition: background-color .12s, border-color .12s;
+}
+input[type="checkbox"]:not([switch])::before {
+  content: ""; width: 62%; height: 62%; background: var(--tag-ink); transform: scale(0); transition: transform .14s cubic-bezier(.3, 1.6, .5, 1);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 6.4l2.6 2.5L10 3.4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 6.4l2.6 2.5L10 3.4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+input[type="checkbox"]:not([switch]):hover { border-color: var(--tag-edge); }
+input[type="checkbox"]:not([switch]):checked { background: var(--tag); border-color: var(--tag-edge); }
+input[type="checkbox"]:not([switch]):checked::before { transform: scale(1); }
+input[type="checkbox"]:not([switch]):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowed; }
+/* compare carts: a picked cart's pill turns yellow too */
+.cmp-picks label { gap: 8px; }
+.cmp-picks label:has(input:checked) { border-color: var(--tag-edge); background: color-mix(in srgb, var(--tag) 22%, var(--surface)); }
+.cmp-picks label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.cmp-picks label:has(input:focus-visible) input { outline: none; }
+/* sign in: "Install app" has the same size and shape as the sign-in button above it (no fill, so signing in stays the main action) */
+.gate-install {
+  width: 100%; min-height: 52px; margin-top: 10px; padding: 0 18px; justify-content: center; gap: 12px;
+  border-radius: 14px; border-color: var(--line-strong); font-size: 16px; font-weight: 600;
+}
+.gate-install svg { width: 22px; height: 22px; }

@@ -115,6 +115,8 @@ function openSheet(d) {
   if (d.open) return;
   d.classList.remove('closing');
   d.showModal();
+  const inner = d.querySelector('.sheet-inner');
+  if (inner) { inner.tabIndex = -1; inner.focus({ preventScroll: true }); }
   haptic('tap');
 }
 function closeSheet(d, value) {

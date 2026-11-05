@@ -57,12 +57,13 @@ function showGate(err) {
   $('#gate').hidden = false;
   enter($('#gate .gate-body'));
   renderGate(err);
+  Usage.view('signin', err || undefined);
 }
 function renderGate(err) {
   const box = $('#gate-buttons');
   if (err !== undefined) box.dataset.err = err || '';
   err = box.dataset.err;
-  box.innerHTML = ME.providers.map(p => `<a class="sso ${p}" href="/auth/${p}?lang=${L()}" data-sso="${p}">
+  box.innerHTML = ME.providers.map(p => `<a class="sso ${p}" href="/auth/${p}?lang=${L()}&v=${encodeURIComponent(Usage.ids())}" data-sso="${p}">
       <span class="sso-ico">${ICON[p] || ''}</span><span>${esc(t('Continue with {name}', { name: PROVIDER_NAME[p] || p }))}</span><span class="spin" aria-hidden="true"></span></a>`).join('');
   const msg = { cancelled: t('Sign-in was cancelled.'), failed: t('Couldn’t sign you in. Try again.'),
                 expired: t('You were signed out. Sign in again.'), offline: t('Sal-Kal isn’t reachable right now. Try again in a minute.') }[err]
@@ -75,6 +76,8 @@ function renderGate(err) {
 $('#gate-buttons').addEventListener('click', e => {
   const a = e.target.closest('[data-sso]'); if (!a) return;
   haptic('select');
+  Usage.ev('signin_click', { a: a.dataset.sso });
+  Usage.send(true);
   a.classList.add('busy');
   $$('#gate-buttons .sso').forEach(x => x.setAttribute('aria-disabled', 'true'));
 });
@@ -272,8 +275,8 @@ function AddressPicker(root, { home, onPick, compact }) {
 
 function radiusPicker(el, value, onChange, withAny = true) {
   const opts = withAny ? RADII : RADII.filter(Boolean);
-  el.innerHTML = opts.map(r => `<button role="radio" type="button" data-km="${r ?? ''}" aria-checked="${(value ?? null) === r}">
-    ${r ? `<b class="num">${r}</b><small>${t('km')}</small>` : `<b>${t('Any')}</b><small>${t('distance')}</small>`}</button>`).join('');
+  el.innerHTML = opts.map(r => `<button role="radio" type="button" data-km="${r ?? ''}" aria-checked="${(value ?? null) === r}" aria-label="${r ? t('{n} km', { n: r }) : t('Any distance')}">
+    ${r ? `<b class="num">${r}</b><small>${t('km')}</small>` : `<b class="num">∞</b><small>${t('km')}</small>`}</button>`).join('');
   el.onclick = e => {
     const b = e.target.closest('[data-km]'); if (!b) return;
     haptic('select');
@@ -325,6 +328,7 @@ function obShow(step, dir = 1) {
   });
   $$('#ob-dots li').forEach((li, i) => { li.classList.toggle('on', i === step); li.classList.toggle('done', i < step); });
   $('#ob-back').style.visibility = step ? 'visible' : 'hidden';
+  if (prev !== step || !OB.seen) { OB.seen = true; Usage.view('onboard', String(step + 1)); Usage.ev('onboard', { a: String(step + 1) }); }
   if (step === 1) obRadius();
   if (step === 2) $('#ob-compare-text').textContent = t('See where each cart costs least within {n} km of {place}.', { n: OB.km, place: OB.home.label.split(',')[0] });
   obButtons();
@@ -345,6 +349,7 @@ async function obRadius() {
       if (maplibregl.getRTLTextPluginStatus() === 'unavailable') maplibregl.setRTLTextPlugin('/static/vendor/mapbox-gl-rtl-text.js', false);
       OB.map = new maplibregl.Map({ container: canvas, style: await mapStyle(), center: [OB.home.lon, OB.home.lat], zoom: 12,
         attributionControl: { compact: true }, interactive: false });
+      OB.map.once('load', () => canvas.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));  // the credit folds into its (i)
       OB.map.on('style.load', () => {
         const C = mapColors(), empty = { type: 'FeatureCollection', features: [] };
         OB.map.addSource('r', { type: 'geojson', data: empty });
@@ -396,6 +401,7 @@ $('#ob-next').addEventListener('click', async () => {
     const r = await api('/api/me', { method: 'PUT', body: { onboarded: true, lang: L() } });
     ME.user = r.user;
     haptic('success');
+    Usage.ev('onboard', { a: 'done' });
     goShop();
   } catch { toast(t('Couldn’t save — try again'), null, null, 'error'); }
   b.disabled = false;
@@ -430,8 +436,8 @@ function openAccount() {
         <span class="acc-v">${S.prefs.max_km ? t('{n} km', { n: S.prefs.max_km }) : t('Any distance')}</span><span class="acc-go">${SVG.chev}</span></button></li>
       <li class="acc-row static"><span class="acc-k">${t('Language')}</span>
         <span class="seg small" role="radiogroup" aria-label="${esc(t('Language'))}">
-          <button type="button" role="radio" data-lang="he" lang="he" aria-checked="${L() === 'he'}">עברית</button>
-          <button type="button" role="radio" data-lang="en" lang="en" aria-checked="${L() === 'en'}">English</button></span></li>
+          <button type="button" role="radio" data-lang="he" lang="he" aria-checked="${L() === 'he'}">${FLAG.he}עברית</button>
+          <button type="button" role="radio" data-lang="en" lang="en" aria-checked="${L() === 'en'}">${FLAG.en}English</button></span></li>
       <li class="acc-row static"><span class="acc-k">${t('Theme')}</span>
         <span class="seg small" role="radiogroup" aria-label="${esc(t('Theme'))}">
           ${Object.keys(THEMES).map(k => `<button type="button" role="radio" data-theme-pick="${k}" aria-checked="${theme === k}">${t(THEMES[k][0])}</button>`).join('')}</span></li>
@@ -446,7 +452,8 @@ function openAccount() {
     ${acc ? `<div class="acc-actions">
       <button type="button" class="ghost wide" data-acc="out">${t('Sign out')}</button>
       <button type="button" class="ghost wide danger" data-acc="delete">${t('Delete my account')}</button></div>` : ''}
-    <p class="acc-legal"><a href="/privacy">${t('Privacy')}</a>${acc ? ` · <a href="/data-deletion">${t('Deleting your data')}</a>` : ''}</p>`;
+    <p class="acc-legal"><a href="/about">${t('About')}</a> · <a href="/privacy">${t('Privacy')}</a>${acc ? ` · <a href="/data-deletion">${t('Deleting your data')}</a>` : ''}</p>
+    <p class="acc-credit">${t('Built by')} <a href="https://www.linkedin.com/in/roman-grinevich/" target="_blank" rel="noopener">Roman Grinevich</a> · <a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener">GitHub</a></p>`;
   openSheet($('#account'));
 }
 $('#account-body').addEventListener('click', async e => {
@@ -467,6 +474,7 @@ $('#account-body').addEventListener('click', async e => {
     if (!yes) return;
     try {
       await api('/api/me', { method: 'DELETE' });
+      Usage.reset();  // a fresh browser id: nothing sent from here joins the erased account's statistics
       haptic('success');
       local.set('cart', '');
       location.replace('/');
@@ -487,15 +495,19 @@ $('#account-body').addEventListener('submit', async e => {
 
 // ---------------------------------------------------------------- language
 function renderLangButtons() {
+  const other = L() === 'he' ? 'en' : 'he';
   $$('[data-lang-toggle]').forEach(b => {
-    b.textContent = L() === 'he' ? 'English' : 'עברית';
-    b.lang = L() === 'he' ? 'en' : 'he';
+    b.innerHTML = `${FLAG[other]}<span>${LANG_NAME[other]}</span>`;
+    b.lang = other;
     b.setAttribute('aria-label', t('Language'));
   });
   const lb = $('#lang-btn');
-  lb.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 10h14M10 3c2 2.2 2.9 4.6 2.9 7S12 14.8 10 17c-2-2.2-2.9-4.6-2.9-7S8 5.2 10 3z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span>${L() === 'he' ? 'עב' : 'EN'}</span>`;
+  lb.innerHTML = `${FLAG[L()]}<span>${L() === 'he' ? 'עב' : 'EN'}</span>`;
   lb.title = lb.ariaLabel = t('Language');
-  $$('#lang-menu [data-lang]').forEach(b => b.setAttribute('aria-checked', b.dataset.lang === L()));
+  $$('#lang-menu [data-lang]').forEach(b => {
+    b.innerHTML = `${FLAG[b.dataset.lang]}<span>${LANG_NAME[b.dataset.lang]}</span>`;
+    b.setAttribute('aria-checked', b.dataset.lang === L());
+  });
 }
 function setLang(l, save = true) {
   if (l === L() || !['he', 'en'].includes(l)) return;

@@ -1,0 +1,45 @@
+/* Reports tab (reports.js): uses admin.css's tokens */
+.rp-src { margin: -6px 0 16px; }
+.rp-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.rp-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-lg); text-decoration: none; font-weight: 600; font-size: 15px; }
+.rp-item:hover { border-color: var(--line-strong); }
+.rp-item svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
+
+.rp-head { margin-bottom: 16px; }
+.rp-form { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin: 12px 0 0; }
+.rp-f { display: grid; gap: 4px; font-size: 12px; color: var(--muted); min-width: 150px; }
+.rp-f.rp-wide { flex: 1 1 320px; }
+.rp-f select, .rp-f input, .rp-f textarea { padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface);
+  color: var(--ink); font-size: 13px; }
+.rp-f textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; min-height: 36px; }
+.rp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.rp-btn { display: inline-flex; align-items: center; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line-strong);
+  background: var(--surface); color: var(--ink); text-decoration: none; font-weight: 500; font-size: 13px; }
+.rp-btn:hover { border-color: var(--ink-2); }
+.rp-run { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.rp-none { color: var(--muted); }
+.rp-method { max-width: 900px; margin: 18px 0 0; color: var(--ink-2); font-size: 12.5px; }
+.rp-method p { margin: 0 0 6px; }
+
+/* diverging bars around 100 (price index): blue cheaper, orange dearer, neutral midline */
+.rp-div { display: grid; grid-template-columns: minmax(110px, max-content) 1fr 44px; gap: 6px 10px; align-items: center; font-size: 13px; }
+.rp-div .k { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-div .track { position: relative; height: 12px; }
+.rp-div .mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--line-strong); }
+.rp-div .fill { position: absolute; top: 0; bottom: 0; }
+.rp-div .fill.lo { background: var(--s1); border-radius: 4px 0 0 4px; }
+.rp-div .fill.hi { background: var(--s2); border-radius: 0 4px 4px 0; }
+.rp-div .v { text-align: end; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+@media print {
+  .bar, .tabs, .back, .rp-form, .rp-actions { display: none !important; }
+  body { background: #fff; color: #000; font-size: 11px; }
+  main { max-width: none; padding: 0; opacity: 1 !important; }
+  .card { border: 0; padding: 0; margin-bottom: 14px; break-inside: auto; }
+  .grid { display: block; }
+  .tw { overflow: visible; }
+  table { font-size: 10px; }
+  tr { break-inside: avoid; }
+  .rp-div .fill.lo, .rp-div .fill.hi { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}

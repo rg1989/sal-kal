@@ -15,7 +15,7 @@ const HE = {
   'Any': 'כל', 'distance': 'מרחק',
   // ---- brand and header
   'Sal-Kal': 'סל קל', 'Sal-Kal — home': 'סל קל — דף הבית', 'Cart': 'סל', 'Your account': 'החשבון שלך',
-  'Search products — milk, eggs, a barcode': 'חיפוש מוצרים — חלב, ביצים, ברקוד',
+  'Search milk, eggs, a barcode…': 'חיפוש מוצרים — חלב, ביצים, ברקוד',
   'Search products (results appear as you type)': 'חיפוש מוצרים (התוצאות מופיעות תוך כדי הקלדה)',
   'Clear search': 'ניקוי החיפוש', 'Categories': 'קטגוריות', 'Stores near you': 'חנויות לידך',
   'Set your location': 'הגדרת מיקום', 'Within {n} km of {place}': 'עד {n} ק״מ מ{place}', 'Near {place}': 'ליד {place}',
@@ -26,7 +26,7 @@ const HE = {
   'Started this week': 'התחילו השבוע', 'Ending soon': 'נגמרים בקרוב', 'Recently viewed': 'נצפו לאחרונה',
   'Set your address': 'הגדירו כתובת', 'to see the stores around you': 'כדי לראות את החנויות סביבך',
   'within {n} km': 'ברדיוס {n} ק״מ', 'nearby': 'בסביבה', 'Branches on the map': 'סניפים במפה',
-  'Cheapest of each chain': 'הזול בכל רשת', '{branches} of {chains} {where}': '{branches} של {chains} {where}',
+  'Cheapest per chain': 'הזול בכל רשת', '{branches} of {chains} {where}': '{branches} של {chains} {where}',
   'Home': 'בית', 'price the cart here': 'תמחור הסל כאן',
   // ---- product cards
   'Add': 'הוספה', 'Add {n}': 'הוספת {n}', 'Add to cart': 'הוספה לסל', 'One less': 'פחות אחד', 'One more': 'עוד אחד',
@@ -79,7 +79,7 @@ const HE = {
   'Every branch near you, cheapest first': 'כל הסניפים לידך, מהזול ליקר', 'Compare stores': 'השוואת חנויות',
   // ---- checkout
   'Where to buy': 'איפה לקנות', 'How you shop': 'איך קונים', 'In store': 'בחנות', 'Delivered home': 'משלוח הביתה',
-  'Club member prices': 'מחירי מועדון', 'Delivery fees': 'דמי משלוח', 'Compare Stores': 'השוואת חנויות',
+  'Club prices': 'מחירי מועדון', 'Delivery fees': 'דמי משלוח', 'Compare Stores': 'השוואת חנויות',
   "Couldn't compare prices — is the server up?": 'לא הצלחנו להשוות מחירים — השרת פועל?', 'Branch {n}': 'סניף {n}',
   'Online store': 'חנות אונליין', '{d} away': 'במרחק {d}', '{n} min drive now': '{n} דק׳ נסיעה עכשיו', '{n} min drive': '{n} דק׳ נסיעה',
   'Driving time in current traffic (Google Maps)': 'זמן נסיעה בתנועה הנוכחית (Google Maps)',
@@ -109,7 +109,7 @@ const HE = {
   'Closed now': 'סגור עכשיו', 'All week': 'כל השבוע',
   'Couldn’t check the opening hours just now': 'לא הצלחנו לבדוק את שעות הפתיחה כרגע',
   'Opening hours aren’t listed for this branch': 'שעות הפתיחה של הסניף לא רשומות',
-  'see them on Google Maps': 'אפשר לראות אותן ב־Google Maps', 'Cheapest for this cart': 'הכי זול לסל הזה',
+  'see them on Google Maps': 'אפשר לראות אותן ב־Google Maps',
   '{a} of {n} products here': '{a} מתוך {n} מוצרים כאן', 'for your product': 'למוצר שלך',
   'Address not listed': 'הכתובת לא רשומה', 'Finding the address…': 'מאתרים את הכתובת…', '{n} km by road': '{n} ק״מ בכביש',
   'Opening hours: OpenStreetMap': 'שעות פתיחה: OpenStreetMap', 'Open in Waze': 'פתיחה ב־Waze',
@@ -130,7 +130,7 @@ const HE = {
   'Sign-in was cancelled.': 'הכניסה בוטלה.', 'Couldn’t sign you in. Try again.': 'לא הצלחנו להכניס אותך. נסו שוב.',
   'You were signed out. Sign in again.': 'יצאת מהחשבון. היכנסו שוב.',
   'Sal-Kal isn’t reachable right now. Try again in a minute.': 'סל קל לא זמין כרגע. נסו שוב בעוד דקה.', 'Try again': 'ניסיון נוסף',
-  'Deleting your data': 'מחיקת המידע שלך', 'Sign-in opens soon.': 'הכניסה תיפתח בקרוב.',
+  'Deleting your data': 'מחיקת המידע שלך', 'Sign-in opens soon.': 'הכניסה תיפתח בקרוב.', 'Built by': 'נבנה על ידי', 'About': 'אודות',
   // ---- the address picker
   'Where do you shop from?': 'מאיפה יוצאים לקניות?', 'Use my current location': 'שימוש במיקום הנוכחי שלי',
   'or choose it': 'או בחירה מהרשימה', 'City or town': 'עיר או יישוב', 'Start typing — e.g. Ramat Gan': 'התחילו להקליד — למשל רמת גן',
@@ -203,6 +203,12 @@ function tn(n, noun) {
 const cn = name => (LANG === 'he' && CHAINS_HE[name]) || name || '';
 const catName = c => (LANG === 'he' ? c.he || c.name : c.name);
 const perKg = () => '/' + t('kg');
+// a small flag beside each language's name (drawn, since flag emoji show as letters on Windows)
+const FLAG = {
+  he: '<svg class="flag" viewBox="0 0 220 160" aria-hidden="true"><rect width="220" height="160" fill="#fff"/><rect y="16" width="220" height="24" fill="#0038b8"/><rect y="120" width="220" height="24" fill="#0038b8"/><g fill="none" stroke="#0038b8" stroke-width="6"><path d="M110 50 137 97H83z"/><path d="M110 110 83 63h54z"/></g></svg>',
+  en: '<svg class="flag" viewBox="0 0 247 130" preserveAspectRatio="none" aria-hidden="true"><rect width="247" height="130" fill="#b22234"/><g fill="#fff"><rect y="10" width="247" height="10"/><rect y="30" width="247" height="10"/><rect y="50" width="247" height="10"/><rect y="70" width="247" height="10"/><rect y="90" width="247" height="10"/><rect y="110" width="247" height="10"/></g><rect width="99" height="70" fill="#3c3b6e"/><g fill="#fff"><circle cx="16" cy="14" r="4"/><circle cx="40" cy="14" r="4"/><circle cx="64" cy="14" r="4"/><circle cx="88" cy="14" r="4"/><circle cx="28" cy="35" r="4"/><circle cx="52" cy="35" r="4"/><circle cx="76" cy="35" r="4"/><circle cx="16" cy="56" r="4"/><circle cx="40" cy="56" r="4"/><circle cx="64" cy="56" r="4"/><circle cx="88" cy="56" r="4"/></g></svg>',
+};
+const LANG_NAME = { he: 'עברית', en: 'English' };
 // a name inside a sentence of the other language keeps its own direction (U+2068 … U+2069)
 const iso = s => `\u2068${s}\u2069`;
 
@@ -222,7 +228,7 @@ function serverText(s) {
   const rules = [
     [/^No home delivery$/, 'אין משלוחים הביתה'],
     [/^Below the ₪([\d.]+) minimum order$/, 'מתחת למינימום הזמנה של ₪$1'],
-    [/^Raised to ([\d.]+) in (\S+ )?(\d{4})$/, (x, a, mo, y) => `עלה ל־${a} ב${mo ? mo : ''}${y}`],
+    [/^Raised to ([\d.]+) in (\S+ )?(\d{4})$/, (x, a, mo, y) => (mo ? `עלה ל־${a} ב${mo}${y}` : `עלה ל־${a} ב־${y}`)],
     [/^([\d.]+) as of (\S+) (\d{4})$/, '$1 נכון ל$2 $3'],
     [/^Free above ([\d.]+) \((\S+) (\d{4})\)$/, 'חינם מעל $1 ($2 $3)'],
     [/^([\d.]+) above ([\d.]+) \((\S+) (\d{4})\)$/, '$1 מעל $2 ($3 $4)'],
