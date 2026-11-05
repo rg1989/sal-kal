@@ -10,8 +10,24 @@ const rtl = () => LANG === 'he';
 const locale = () => (LANG === 'he' ? 'he-IL' : 'en-GB');
 
 const HE = {
+  // ---- your places: around one, or on the way between two
+  'Around a place': 'סביב מקום', 'On the way': 'בדרך', 'Around': 'סביב', 'Within': 'ברדיוס', 'From': 'מוצא', 'To': 'יעד',
+  'Swap': 'החלפת כיוון', 'Off the way': 'סטייה', 'Add a place…': 'הוספת מקום…', 'Add a place': 'הוספת מקום',
+  'Add a second place': 'הוספת מקום שני', 'Your places': 'המקומות שלך', 'Edit': 'עריכה', 'Name': 'שם',
+  'Save place': 'שמירת המקום', 'Place saved': 'המקום נשמר', 'Where do you shop?': 'איפה קונים?',
+  // ---- on my way: shopping along the route home -> work
+  'Around home': 'ליד הבית', 'On my way': 'בדרך לעבודה', 'Where to look': 'איפה לחפש', 'Work': 'עבודה',
+  'How you go': 'איך מגיעים', 'How far off the way': 'כמה לסטות מהדרך', 'By car': 'ברכב', 'By bike': 'באופניים',
+  'On foot': 'ברגל', 'Work address saved': 'כתובת העבודה נשמרה', 'On the way to {place}': 'בדרך ל{place}',
+  'on your way': 'בדרך', 'On your way': 'בדרך', '{d} off your way': '{d} מהדרך', 'Change': 'שינוי',
+  'Biggest savings on your way': 'החיסכון הגדול בדרך', 'No stores on your way': 'אין חנויות בדרך',
+  'No store on your way has these products.': 'אף חנות בדרך לא מוכרת את המוצרים האלה.',
+  'Only branch on your way': 'הסניף היחיד בדרך', 'Stops on your way': 'עצירות בדרך', 'Direction': 'כיוון',
+  'To {place}': 'אל {place}', 'Number of stops': 'מספר עצירות', '{price} less': '{price} פחות',
+  'Not on your way': 'לא בדרך', 'All {n} products': 'כל {n} המוצרים', '{n} min in all': '{n} דק׳ בסך הכול',
+  'no extra time': 'בלי זמן נוסף', 'Trip time unavailable right now': 'זמן הנסיעה לא זמין כרגע',
   // ---- units and counts
-  '{n} m': '{n} מ׳', '{n} km': '{n} ק״מ', 'km': 'ק״מ', 'kg': 'ק״ג', '{n} kg': '{n} ק״ג',
+  '{n} m': '{n} מ׳', '{n} km': '{n} ק״מ', 'km': 'ק״מ', 'm': 'מ׳', '+{n} km': '+{n} ק״מ', '+{n} min': '+{n} דק׳', 'kg': 'ק״ג', '{n} kg': '{n} ק״ג',
   'Any': 'כל', 'distance': 'מרחק',
   // ---- brand and header
   'Sal-Kal': 'סל קל', 'Sal-Kal — home': 'סל קל — דף הבית', 'Cart': 'סל', 'Your account': 'החשבון שלך',
@@ -68,7 +84,7 @@ const HE = {
   'Cheapest': 'הכי זול', 'Cheapest stores': 'החנויות הזולות', 'top {a} of {n}': '{a} הראשונות מתוך {n}',
   'Delivered · fee not set': 'משלוח · דמי המשלוח לא הוגדרו', 'Free delivery': 'משלוח חינם',
   'incl. {fee} delivery': 'כולל משלוח {fee}', "Couldn't save the cart": 'לא הצלחנו לשמור את הסל',
-  'Removed {name}': '{name} הוסר', 'item': 'פריט', 'Undo': 'ביטול', '+ New cart': '+ סל חדש', 'Cart {n}': 'סל {n}',
+  'Removed {name}': '{name} הוסר', 'item': 'פריט', 'Undo': 'ביטול', 'New cart': 'סל חדש', '+ New cart': '+ סל חדש', 'Cart {n}': 'סל {n}',
   "Couldn't create a cart": 'לא הצלחנו ליצור סל', 'Untitled': 'ללא שם', 'Emptied {cart}': 'הסל "{cart}" רוקן',
   'Made “{cart}”': 'נוצר "{cart}"', 'Delete the cart “{cart}”?': 'למחוק את הסל "{cart}"?', 'Delete': 'מחיקה',
   'Cart deleted': 'הסל נמחק', 'Started the cart “{cart}”': 'פתחנו את הסל "{cart}"',
@@ -168,6 +184,7 @@ const HE = {
 // counted nouns: [one, many] in English; [one, many, "one X" written out] in Hebrew ("מוצר אחד", "3 מוצרים")
 const NOUNS = {
   product: [['product', 'products'], ['מוצר', 'מוצרים', 'מוצר אחד']],
+  stop: [['stop', 'stops'], ['עצירה', 'עצירות', 'עצירה אחת']],
   item: [['item', 'items'], ['פריט', 'פריטים', 'פריט אחד']],
   chain: [['chain', 'chains'], ['רשת', 'רשתות', 'רשת אחת']],
   'other chain': [['other chain', 'other chains'], ['רשת נוספת', 'רשתות נוספות', 'רשת נוספת אחת']],

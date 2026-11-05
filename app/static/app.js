@@ -51,7 +51,8 @@ async function api(path, opts = {}) {
 const S = {
   cart: { id: null, name: t('Weekly shop'), items: [] },  // items: [{key, qty, name}]
   meta: {},           // product key -> {name, manufacturer, is_weighted, min, max, stores}
-  prefs: { mode: 'store', club: false, home: null, max_km: null },
+  prefs: { mode: 'store', club: false, home: null, max_km: null, work: null, area: 'home', travel: 'car', detour_km: null,
+           places: [], at: null, from: null, to: null },
   result: null,       // last /api/compare response for the current basket + prefs
   cartsLoaded: false, // the account's carts have arrived (until then: skeletons, never "empty")
   comparing: false,   // a /api/compare is on its way
@@ -89,7 +90,41 @@ const dealsMore = (l, tag = 'span') => (l.deals_more || []).filter(d => d.units 
 const notCounted = l => l.deals_not_counted?.length ? `<span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">${t('Deal not counted')}</span>` : '';
 // produce at one store: its own item, or items with the same name; null when it has neither
 const ncPick = l => l.own && l.price != null ? { name: l.shelf_name, price: l.price } : l.similar?.[0] || null;
-const radius = () => S.prefs.home && S.prefs.max_km ? S.prefs.max_km : null;
+const radius = () => S.prefs.home && S.prefs.max_km && !onWay() ? S.prefs.max_km : null;
+// on my way: the branches along the route home -> work instead of a circle around home (app/commute.py)
+const onWay = () => S.prefs.area === 'route' && !!S.prefs.home && !!S.prefs.work;
+const DETOURS = [0.2, 0.5, 1, 2, 3];               // km off the route
+const DETOUR = { car: 1, bike: 0.5, foot: 0.2 };   // the server's defaults per way of travel
+const detour = () => S.prefs.detour_km ?? DETOUR[S.prefs.travel] ?? 1;
+// a branch's distance: from home, or on my way how far off the route it is
+const distText = d => d == null ? '' : !onWay() ? kmText(d) : d < 0.05 ? t('on your way') : t('{d} off your way', { d: kmText(d) });
+// named places: stores around one (at), or along the way between two (from, to). `home` and `work` are worked out
+// from them here exactly as the server does (app/server.py effective), so the page never waits for it.
+const placesOf = () => S.prefs.places || [];
+const placeById = id => placesOf().find(x => x.id === id) || null;
+const placeLabel = x => !x ? '' : x.name || (x.id === 'home' ? t('Home') : x.id === 'work' ? t('Work') : (x.label || '').split(',')[0]);
+const wayArrow = () => rtl() ? '←' : '→';
+function derive(p = S.prefs) {
+  const pl = p.places || [], by = id => pl.find(x => x.id === id);
+  if (!pl.length) return Object.assign(p, { home: null, work: null });
+  const at = by(p.at) || pl[0], from = by(p.from) || pl[0];
+  let to = by(p.to);
+  if (!to || to === from) to = pl.find(x => x !== from) || null;
+  const route = p.area === 'route' && !!to, addr = ({ id, name, ...a }) => a;
+  return Object.assign(p, { at: at.id, from: from.id, to: to?.id ?? null, home: addr(route ? from : at), work: route ? addr(to) : null });
+}
+// a pick in the where bar or the places sheet; the same place at both ends swaps them
+function pickPlace(k, id) {
+  if (k === 'from' && id === S.prefs.to) return setPrefs({ from: id, to: S.prefs.from });
+  if (k === 'to' && id === S.prefs.from) return setPrefs({ to: id, from: S.prefs.to });
+  return setPrefs({ [k]: id });
+}
+const TRAVEL = {
+  car: ['By car', '<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3.5 12.5V10l1.7-4.2a1.5 1.5 0 0 1 1.4-.9h6.8a1.5 1.5 0 0 1 1.4.9L16.5 10v2.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM3.5 10h13"/><path d="M5.5 13.5V15M14.5 13.5V15" stroke-linecap="round"/></g></svg>'],
+  bike: ['By bike', '<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="4.8" cy="13.4" r="3"/><circle cx="15.2" cy="13.4" r="3"/><path d="M4.8 13.4h5l3.1-6.2M8 7.2l1.8 6.2M8 7.2h4.9M12.9 7.2l2.3 6.2M6.8 5.6h2.6M12 5h2.2"/></g></svg>'],
+  foot: ['On foot', '<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11.2" cy="3.7" r="1.6"/><path d="M10.6 6.6 9.2 11l2.9 2.4v3.8M9.2 11l-2.4 6.2M10.4 7.3 7.4 9.2v2M10.8 7.4l1.9 2.5 2.4.7"/></g></svg>'],
+};
+const G_TRAVEL = { car: 'driving', bike: 'bicycling', foot: 'walking' };
 
 // ---------------------------------------------------------------- toast
 let toastTimer;
@@ -214,13 +249,14 @@ function updateTotals() {
 
 // the stores the cart costs least at; tap one to see every line priced there
 function renderStores() {
+  renderLcWay();
   const el = $('#lc-stores'), ch = S.result?.chains || [], p = pinned();
   if (!S.cartsLoaded || (S.comparing && !S.result && S.cart.items.length)) { el.innerHTML = storeSkeleton(3); return; }
   if (!S.cart.items.length) { el.innerHTML = ''; return; }
   const n = nCompared();
   if (!S.result) { el.innerHTML = `<p class="lc-wait"><span class="spin" aria-hidden="true"></span>${t('Finding the cheapest store…')}</p>`; return; }
   if (!ch.length) {
-    el.innerHTML = `<p class="lc-wait">${radius() && !delivery() ? t('No store within {n} km has these products.', { n: radius() }) : t('No store has these products.')} <button class="linkish" type="button" data-open-loc>${t('Change distance')}</button></p>`;
+    el.innerHTML = `<p class="lc-wait">${onWay() && !delivery() ? t('No store on your way has these products.') : radius() && !delivery() ? t('No store within {n} km has these products.', { n: radius() }) : t('No store has these products.')} <button class="linkish" type="button" data-open-loc>${onWay() ? t('Change') : t('Change distance')}</button></p>`;
     return;
   }
   $('#all-branches').checked = S.allBranches;
@@ -236,7 +272,7 @@ function renderStores() {
       const best = i === 0 && b.complete && n > 0;
       return sep + `<button type="button" class="lc-store${best ? ' best' : ''}${on ? ' on' : ''}" data-branch="${i}" aria-pressed="${!!on}">
         <span class="ls-name">${esc(cn(b.chain))}${best ? ` <em>${t('Cheapest')}</em>` : ''}</span>
-        <span class="ls-sub">${bdi(storeName(b))}${b.distance_km != null ? ` · ${kmText(b.distance_km)}` : ''} · ${countText(b.covered, b.complete, n)}</span>
+        <span class="ls-sub">${bdi(storeName(b))}${b.distance_km != null ? ` · ${distText(b.distance_km)}` : ''} · ${countText(b.covered, b.complete, n)}</span>
         <span class="ls-total num">${n ? money(b.total) : ''}</span></button>`;
     }).join('') + '</div>';
     return;
@@ -248,7 +284,7 @@ function renderStores() {
   el.innerHTML = list.map(c => {
     const v = view(c), best = c === ch[0] && full(c) && n > 0;
     const where = delivery() ? (v.fee == null ? t('Delivered · fee not set') : v.fee === 0 ? t('Free delivery') : t('incl. {fee} delivery', { fee: money(v.fee) }))
-      : bdi(storeName(v)) + (v.distance_km != null ? ` · ${kmText(v.distance_km)}` : '');
+      : bdi(storeName(v)) + (v.distance_km != null ? ` · ${distText(v.distance_km)}` : '');
     return `<button type="button" class="lc-store${c === p ? ' on' : ''}${best ? ' best' : ''}" data-pin="${esc(c.chain_id)}" aria-pressed="${c === p}">
       <span class="ls-name">${esc(cn(c.name))}${best ? ` <em>${t('Cheapest')}</em>` : ''}</span>
       <span class="ls-sub">${where} · ${countText(v.covered, full(c), n, full(c) ? '' : ' products')}</span>
@@ -269,6 +305,7 @@ $('#all-branches').addEventListener('change', e => setAllBranches(e.target.check
 // a branch row: select it — its route, address and hours under the map (the map lives on checkout)
 function selectBranch(b) {
   S.sel = { chain_id: String(b.chain_id), store_id: b.store_id };
+  drawPins();
   renderStores();
   if ($('#map-wrap').closest('[hidden]') || !$('#map-wrap').offsetParent) {
     closeCart();
@@ -353,7 +390,7 @@ function renderCartTabs() {
   $('#cart-tabs').innerHTML = list.map(c => {
     const on = c.id === S.cart.id, n = on ? S.cart.items.length : c.n;
     return `<button class="pill${on ? ' on' : ''}" type="button" role="tab" aria-selected="${on}" data-cartid="${c.id}"><bdi>${esc(on ? S.cart.name : c.name)}</bdi>${n ? ` <span>${n}</span>` : ""}</button>`;
-  }).join('') + `<button class="pill add" type="button" data-cart="new">${t('+ New cart')}</button>`;
+  }).join('') + `<button class="pill add" type="button" data-cart="new"><span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>${t('New cart')}</button>`;
 }
 $('#cart-tabs').addEventListener('click', async e => {
   const tab = e.target.closest('[data-cartid]');
@@ -516,14 +553,14 @@ function card(h) {
   // the server's pack size (null when the name's number is something else, e.g. grams of protein); no bare numbers
   const facts = [sizeText('pack' in h ? h.pack : h.size), perText(h.per)].filter(Boolean).join(' · ');
   const label = own != null ? esc(ownName) + (!n && h.min_price !== h.max_price ? ` · ${t('from')}` : '')
-    : n ? t('near you') : h.min_price === h.max_price ? t('price') : t('from');
+    : n ? (onWay() ? t('on your way') : t('near you')) : h.min_price === h.max_price ? t('price') : t('from');
   const price = d
     ? `<span class="c-price deal"><small>${d.min_qty > 1 ? t('each, ×{n}', { n: d.min_qty }) : t('deal price')}</small>${money(d.unit_price)}${unit}</span>`
     : (n || h.min_price != null) ? `<span class="c-price"><small>${label}</small>${money(n ? n.price : h.min_price)}${unit}</span>`
     : '<span class="c-price"></span>';
   const where = n && n.km != null ? ` · ${kmText(n.km)}` : '';
   const info = d
-    ? `<span class="c-meta">${esc(cn(d.chain))}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · ${t('usually {price}', { price: money(d.typical) })}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
+    ? `<span class="c-meta">${esc(cn(d.chain))}${d.distance_km != null ? ` · ${distText(d.distance_km)}` : ''} · ${t('usually {price}', { price: money(d.typical) })}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
        ${facts ? `<span class="c-meta">${bdi(facts)}</span>` : ''}`
     : `<span class="c-meta">${facts ? bdi(facts) : ''}</span>`
       + (own != null
@@ -614,7 +651,7 @@ function markRail() {
 
 // ---------------------------------------------------------------- map: home, distance limit, stores
 // Vector map (OpenFreeMap tiles, MapLibre) restyled in Sal's colours: roads, home and stores in the brand yellow.
-let map = null, homeMarker = null, mapData = null, mapBase = null, mapLib = null;
+let map = null, homeMarker = null, workMarker = null, mapData = null, mapBase = null, mapLib = null;
 const isDark = () => document.documentElement.dataset.theme
   ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
 const mapColors = () => isDark()
@@ -662,8 +699,15 @@ function addOverlays() {
   map.addSource('radius', { type: 'geojson', data: empty });
   map.addLayer({ id: 'radius-fill', type: 'fill', source: 'radius', paint: { 'fill-color': C.dot, 'fill-opacity': .06 } });
   map.addLayer({ id: 'radius-line', type: 'line', source: 'radius', paint: { 'line-color': C.dot, 'line-width': 1.6, 'line-opacity': .85, 'line-dasharray': [2, 2] } });
-  map.addSource('route', { type: 'geojson', data: empty });
+  // on my way: the route home -> work, inside a band as wide as the detour you allow
   const round = { 'line-cap': 'round', 'line-join': 'round' };
+  map.addSource('way', { type: 'geojson', data: empty });
+  // the band is opaque, in the yellow mixed into the paper, under the roads: a see-through wide line darkens where it
+  // bends (its joins overlap), and this way the roads still show through it
+  const firstRoad = map.getStyle().layers.find(l => l.type === 'line' && !/waterway/.test(l.id))?.id;
+  map.addLayer({ id: 'way-band', type: 'line', source: 'way', layout: round, paint: { 'line-color': mix(C.bg, C.dot, isDark() ? .13 : .16), 'line-width': 1 } }, firstRoad);
+  map.addLayer({ id: 'way-line', type: 'line', source: 'way', layout: round, paint: { 'line-color': C.dot, 'line-width': 2.2, 'line-opacity': .9, 'line-dasharray': [1.5, 1.6] } });
+  map.addSource('route', { type: 'geojson', data: empty });
   map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: round, paint: { 'line-color': C.bg, 'line-width': 10, 'line-opacity': .9 } });
   map.addLayer({ id: 'route', type: 'line', source: 'route', layout: round, paint: { 'line-color': C.pick, 'line-width': 5.5 } });  // the chosen store's route: the bright yellow
   map.addSource('stores', { type: 'geojson', data: empty });
@@ -672,19 +716,38 @@ function addOverlays() {
     'circle-color': C.dot, 'circle-stroke-color': C.bg, 'circle-stroke-width': 2 } });
   drawMapData(false);
   drawRoute(false);
+  drawPlan(false);
 }
+// the band's width on screen: the detour on both sides of the route, in pixels at zoom 0 (it doubles every zoom level)
+const bandAt0 = (km, lat) => 2 * km * 1000 * 512 / (40075016.686 * Math.cos(lat * Math.PI / 180));
+const NONE = { type: 'FeatureCollection', features: [] };
+const mix = (a, b, f) => '#' + [1, 3, 5].map(i => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - f) + parseInt(b.slice(i, i + 2), 16) * f)
+  .toString(16).padStart(2, '0')).join('');
+const lineOf = coords => ({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } });
 function drawMapData(animate = true) {
   if (!map?.getSource('stores') || !mapData?.home) return;
-  const { home, max_km, stores } = mapData, r = max_km || 15;
-  map.getSource('radius').setData(circle(home.lat, home.lon, r));
+  const { home, max_km, route: way } = mapData, r = max_km || 15;
+  map.getSource('radius').setData(way ? NONE : circle(home.lat, home.lon, r));
+  map.getSource('way').setData(way ? lineOf(way.coords) : NONE);
+  if (way) {
+    const w = bandAt0(mapData.detour_km || 1, home.lat);
+    map.setPaintProperty('way-band', 'line-width', ['interpolate', ['exponential', 2], ['zoom'], 0, w, 22, w * 2 ** 22]);
+  }
   drawDots();
   homeMarker.setLngLat([home.lon, home.lat]);
+  if (way && mapData.work) workMarker.setLngLat([mapData.work.lon, mapData.work.lat]).addTo(map);
+  else workMarker.remove();
   fitMap(animate);
 }
+const boundsOf = pts => [[Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1]))], [Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))]];
 // home shows the whole distance circle (a new radius zooms in or out); checkout shows the route to the selected store
 function fitMap(animate) {
   if (!map || !mapData?.home) return;
-  if (!onHome() && fitRoute(animate)) return;
+  if (!onHome() && (fitPlan(animate) || fitRoute(animate))) return;
+  if (mapData.route) {  // on my way: the whole route, home to work
+    map.fitBounds(boundsOf(mapData.route.coords), { padding: onHome() ? circlePad() : edge(), maxZoom: 15, duration: animate ? 900 : 0 });
+    return;
+  }
   const { home, max_km } = mapData, r = max_km || 15;
   const dx = r / (111.32 * Math.cos(home.lat * Math.PI / 180)), dy = r / 110.574;
   map.fitBounds([[home.lon - dx, home.lat - dy], [home.lon + dx, home.lat + dy]],
@@ -707,7 +770,7 @@ function renderMapInfo() {
     return;
   }
   const chains = new Set(mapData.stores.map(x => x.chain)).size;
-  const where = mapData.max_km ? t('within {n} km', { n: mapData.max_km }) : t('nearby');
+  const where = mapData.route ? t('on your way') : mapData.max_km ? t('within {n} km', { n: mapData.max_km }) : t('nearby');
   info.innerHTML = !delivery() && S.result?.chains?.length
     ? `<span class="mi-dot"></span><span class="mi-seg" role="group" aria-label="${t('Branches on the map')}">
         <button type="button" data-branches="best" aria-pressed="${!S.allBranches}">${t('Cheapest per chain')} <b>${S.result.chains.length}</b></button>
@@ -715,6 +778,50 @@ function renderMapInfo() {
     : `<span class="mi-dot"></span><span>${t('{branches} of {chains} {where}', { branches: `<strong>${plural(mapData.total, 'branch')}</strong>`, chains: `<strong>${plural(chains, 'chain')}</strong>`, where })}</span>`;
 }
 $('#map-info').addEventListener('click', e => { const b = e.target.closest('[data-branches]'); if (b) setAllBranches(b.dataset.branches === 'all'); });
+// around home or on my way: one switch on the map (on my way needs a work address first: the sheet asks for it)
+const ICO_AREA = {
+  home: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 9.2 10 4l6.5 5.2M5.5 8v7.5h9V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  route: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="15" r="2.2" fill="currentColor"/><circle cx="15" cy="5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.9 13.6c2.2-1.3 1.2-4.2 3.6-5.2 1.3-.6 2.3-.4 3-1.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="2.2 2.4"/></svg>',
+};
+// above the map, on the home page and at checkout: around a place | on the way, and which places
+const RADII_KM = [1, 2, 3, 5, 10, 20, null];
+const placeOptions = cur => placesOf().map(x => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(placeLabel(x))}</option>`).join('')
+  + `<option value="+">${esc(t('Add a place…'))}</option>`;
+function renderWhere() {
+  const el = $('#where'), pl = placesOf(), way = S.prefs.area === 'route';
+  el.hidden = !pl.length;
+  if (!pl.length) { el.innerHTML = ''; return; }
+  const sel = (k, inner, label, cls = '') => `<label class="wsel${cls}"><span class="ws-k">${label}</span><select data-sel="${k}">${inner}</select></label>`;
+  const km = RADII_KM.map(r => `<option value="${r ?? ''}"${(S.prefs.max_km ?? null) === r ? ' selected' : ''}>${r ? t('{n} km', { n: r }) : t('Any distance')}</option>`).join('');
+  const off = DETOURS.map(d => `<option value="${d}"${Math.abs(detour() - d) < 1e-9 ? ' selected' : ''}>${d < 1 ? t('{n} m', { n: d * 1000 }) : t('{n} km', { n: d })}</option>`).join('');
+  const how = Object.entries(TRAVEL).map(([k, [label]]) => `<option value="${k}"${(S.prefs.travel || 'car') === k ? ' selected' : ''}>${t(label)}</option>`).join('');
+  const pick = !way ? `<div class="where-row">${sel('at', placeOptions(S.prefs.at), t('Around'), ' place')}${sel('km', km, t('Within'))}</div>`
+    : pl.length < 2 ? `<div class="where-row"><button type="button" class="pill add" data-add-place><span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>${t('Add a second place')}</button></div>`
+    : `<div class="where-row trip">${sel('from', placeOptions(S.prefs.from), t('From'), ' place')}
+        <button type="button" class="where-swap" data-swap aria-label="${esc(t('Swap'))}" title="${esc(t('Swap'))}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 7h11.5M12.5 4l3 3-3 3M16 13H4.5M7.5 10l-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        ${sel('to', placeOptions(S.prefs.to), t('To'), ' place')}</div>
+      <div class="where-row">${sel('travel', how, TRAVEL[S.prefs.travel || 'car'][1], ' ico')}${sel('detour', off, t('Off the way'))}</div>`;
+  el.innerHTML = `<div class="seg where-mode" role="radiogroup" aria-label="${esc(t('Where to look'))}">
+      <button type="button" role="radio" data-area="home" aria-checked="${!way}">${ICO_AREA.home}<span>${t('Around a place')}</span></button>
+      <button type="button" role="radio" data-area="route" aria-checked="${way}">${ICO_AREA.route}<span>${t('On the way')}</span></button></div>
+    <div class="where-pick">${pick}</div>`;
+}
+$('#where').addEventListener('click', e => {
+  const a = e.target.closest('[data-area]');
+  if (a) { if ((a.dataset.area === 'route') !== (S.prefs.area === 'route')) { haptic('select'); setPrefs({ area: a.dataset.area }); } return; }
+  if (e.target.closest('[data-swap]')) { haptic('select'); setPrefs({ from: S.prefs.to, to: S.prefs.from }); return; }
+  if (e.target.closest('[data-add-place]')) openLocation('add');
+});
+$('#where').addEventListener('change', e => {
+  const s = e.target.closest('select[data-sel]'); if (!s) return;
+  const k = s.dataset.sel, v = s.value;
+  if (v === '+') { renderWhere(); openLocation('add'); return; }  // the select goes back to the place it showed
+  haptic('select');
+  if (k === 'km') setPrefs({ max_km: v ? +v : null });
+  else if (k === 'detour') setPrefs({ detour_km: +v });
+  else if (k === 'travel') setPrefs({ travel: v, detour_km: null });
+  else pickPlace(k, v);
+});
 async function updateMap() {
   if (!map) return;
   mapData = await api('/api/stores/near').catch(() => null);
@@ -735,6 +842,11 @@ async function initMap() {
   pin.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 9.2 10 4l6.5 5.2M5.5 8v7.5h9V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   pin.title = t('Home');
   homeMarker = new maplibregl.Marker({ element: pin }).setLngLat([34.83, 32.07]).addTo(map);
+  const wpin = document.createElement('div');
+  wpin.className = 'home-pin work-pin';
+  wpin.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="6.5" width="13" height="9" rx="1.6"/><path d="M7.5 6.5V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M3.5 10.5h13"/></g></svg>';
+  wpin.title = t('Work');
+  workMarker = new maplibregl.Marker({ element: wpin }).setLngLat([34.83, 32.07]);
   map.on('style.load', addOverlays);  // every style load (first one and theme switches) gets the overlays back
   map.on('moveend', () => requestAnimationFrame(tuckPins));
   updateMap();  // data doesn't wait for the map; it's drawn as soon as the overlays exist
@@ -742,7 +854,7 @@ async function initMap() {
   const pop = new maplibregl.Popup({ closeButton: false, offset: 10, className: 'sal-pop' });
   map.on('click', 'stores', e => {
     const f = e.features[0].properties;
-    pop.setLngLat(e.lngLat).setHTML(`<strong>${esc(cn(f.chain))}</strong><br><bdi>${esc(f.name)}</bdi> · ${kmText(+f.km)}`).addTo(map);
+    pop.setLngLat(e.lngLat).setHTML(`<strong>${esc(cn(f.chain))}</strong><br><bdi>${esc(f.name)}</bdi> · ${distText(+f.km)}`).addTo(map);
   });
   map.on('mouseenter', 'stores', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'stores', () => { map.getCanvas().style.cursor = ''; });
@@ -751,7 +863,7 @@ async function initMap() {
 function placeMap(slot) {
   const w = $('#map-wrap');
   const moved = w.parentElement !== slot;
-  if (moved) slot.append(w, $('#store-card'));
+  if (moved) slot.append($('#where'), w, $('#store-card'));
   map?.resize();
   if (moved) fitMap(false);
 }
@@ -761,7 +873,7 @@ function drawPins() {
   if (!map) return;
   pins.forEach(m => m.remove());
   pins = [];
-  if (delivery() || !S.cart.items.length || !nCompared()) return;
+  if (delivery() || !S.cart.items.length || !nCompared() || planShown()) return;
   const ch = (S.result?.chains || []).filter(counted).slice(0, 4), p = pinned(), n = nCompared();
   [...ch].reverse().forEach(c => {  // the cheapest last, so it's drawn on top
     const v = c.in_store;
@@ -770,7 +882,7 @@ function drawPins() {
     el.type = 'button';
     el.className = `price-pin${best ? ' best' : ''}${c === p ? ' on' : ''}`;
     el.innerHTML = `${best ? `<em>${t('Cheapest')}</em>` : ''}<b class="num">${money(v.total)}</b><span>${esc(cn(c.name))}${full(c) ? '' : ` · ${v.covered}/${n}`}</span>`;
-    el.title = `${cn(c.name)} · ${storeName(v)}${v.distance_km != null ? ' · ' + kmText(v.distance_km) : ''} — ${t('price the cart here')}`;
+    el.title = `${cn(c.name)} · ${storeName(v)}${v.distance_km != null ? ' · ' + distText(v.distance_km) : ''} — ${t('price the cart here')}`;
     el.addEventListener('click', e => { e.stopPropagation(); pin(String(c.chain_id)); });
     pins.push(new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] }).setLngLat([v.lon, v.lat]).addTo(map));
   });
@@ -829,7 +941,8 @@ function storeCardHTML(v, d, h) {
   const addr = d ? [d.address, d.city].filter(Boolean).join(', ') : '';
   const home = S.prefs.home, dest = d?.lat != null ? `${d.lat},${d.lon}` : '';
   const gsearch = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([d?.brand_he || v.chain, addr].filter(Boolean).join(' '));
-  const gdir = `https://www.google.com/maps/dir/?api=1${home ? `&origin=${home.lat},${home.lon}` : ''}&destination=${dest}&travelmode=driving`;
+  const gdir = d?.route?.way ? gmapsTrip([{ lat: d.lat, lon: d.lon }])
+    : `https://www.google.com/maps/dir/?api=1${home ? `&origin=${home.lat},${home.lon}` : ''}&destination=${dest}&travelmode=driving`;
   return `<div class="sc-head">
       <div><p class="sc-chain">${esc(cn(v.chain))}${isBest ? ` <em>${t('Cheapest')}</em>` : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
       ${n ? `<p class="sc-total"><span class="num">${money(v.total)}</span>
@@ -837,7 +950,7 @@ function storeCardHTML(v, d, h) {
     </div>
     <ul class="sc-rows">
       <li>${ICO.pin}<span>${d ? (addr ? bdi(addr) : `<span class="muted">${t('Address not listed')}</span>`) : `<span class="muted">${t('Finding the address…')}</span>`}</span></li>
-      <li>${ICO.car}<span>${d?.route ? t('{n} km by road', { n: d.route.km }) : t('{d} away', { d: kmText(v.distance_km) })}<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span></span></li>
+      <li>${d?.route?.way ? TRAVEL[d.route.travel]?.[1] || ICO.car : ICO.car}<span>${d?.route?.way ? wayStopText(d.route, v) : d?.route ? t('{n} km by road', { n: d.route.km }) : t('{d} away', { d: kmText(v.distance_km) })}${onWay() ? '' : `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>`}</span></li>
       <li title="${t('Opening hours: OpenStreetMap')}">${ICO.clock}<span class="sc-hours">${hoursHTML(h, gsearch)}</span></li>
     </ul>
     ${dest ? `<div class="sc-actions">
@@ -848,9 +961,10 @@ function storeCardHTML(v, d, h) {
 let storeSeq = 0;
 async function renderStoreCard(fit) {
   const el = $('#store-card'), v = selStore();
-  if (!v || !S.prefs.home || document.body.dataset.view !== 'basket') {
-    el.hidden = true; el.innerHTML = ''; S.routeGeo = null; fittedTo = null; drawRoute(false); return;
+  if (!v || !S.prefs.home || document.body.dataset.view !== 'basket' || planShown()) {
+    el.hidden = true; el.innerHTML = ''; S.routeGeo = null; fittedTo = null; drawRoute(false); drawPlan(fit); return;
   }
+  clearPlanMarks();
   el.hidden = false;
   const key = `${v.chain_id}:${v.store_id}`, my = ++storeSeq;
   const c = storeCache.get(key) || {};
@@ -906,7 +1020,8 @@ function sizeMapExt() {
 addEventListener('resize', debounce(sizeMapExt, 150));
 const circlePad = () => {
   const w = map.getContainer().clientWidth;
-  return { top: w < 900 ? 54 : 18, bottom: (w < 600 ? 30 : 40) + mapExt(), left: 24, right: 24 };
+  const way = !!mapData?.route;  // the route's ends carry pins: they stay clear of the pills at the top too
+  return { top: w < 900 ? (way ? 84 : 54) : (way ? 64 : 18), bottom: (w < 600 ? 30 : 40) + mapExt(), left: 24, right: 24 };
 };
 let fittedTo = null;
 function fitRoute(animate) {
@@ -922,6 +1037,117 @@ async function restyleMap() {
   map.setStyle(await mapStyle(), { diff: false });  // full reload: 'style.load' re-adds the overlays in the new colours
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', restyleMap);
+
+// ---------------------------------------------------------------- on my way: the stops plan
+// The server prices the cart at every branch along the route and returns the cheapest way to split it over 1..5 of
+// them (each extra stop saves at least ₪1). You pick how many stops; the map shows them in order with the trip.
+S.stops = +local.get('stops') || 0;          // stops picked; 0 = the cheapest plan
+S.trip = null;                               // {key, coords, minutes, km, extra_minutes, extra_km} for the plan shown
+const plans = () => onWay() && !delivery() ? S.result?.way?.plans || [] : [];
+const curPlan = () => { const ps = plans(); return ps.find(p => p.stops === S.stops) || ps.at(-1) || null; };
+const planStores = p => p.stores;  // in the order you reach them from where the trip starts
+const planShown = () => document.body.dataset.view === 'basket' && !S.sel && nCompared() > 0 && !!curPlan();
+const tripKey = p => [S.prefs.from, S.prefs.to, S.prefs.travel, ...planStores(p).map(s => `${s.chain_id}:${s.store_id}`)].join('|');
+const itemName = k => S.cart.items.find(i => i.key === k)?.name || S.meta[k]?.name || k;
+// Google Maps directions through the stops, by the way you travel (Waze takes one destination only)
+function gmapsTrip(stops) {
+  const a = S.prefs.home, b = S.prefs.work;
+  const wp = stops.filter(s => s.lat != null).map(s => `${s.lat},${s.lon}`).join('|');
+  return `https://www.google.com/maps/dir/?api=1&origin=${a.lat},${a.lon}&destination=${b.lat},${b.lon}`
+    + (wp ? `&waypoints=${encodeURIComponent(wp)}` : '') + `&travelmode=${G_TRAVEL[S.prefs.travel] || 'driving'}`;
+}
+const extraText = r => r.extra_minutes >= 1 ? t('+{n} min', { n: r.extra_minutes }) : t('no extra time');
+// the store card on my way: what stopping at this one branch adds to the trip
+const wayStopText = (r, v) => `${extraText(r)}${r.extra_km >= 0.1 ? ` · ${t('+{n} km', { n: r.extra_km })}` : ''} · ${distText(v.distance_km)}`;
+
+function renderWayPlan() {
+  const el = $('#way-plan'), n = nCompared();
+  const on = document.body.dataset.view === 'basket' && onWay() && !delivery() && S.cart.items.length > 0 && !!S.result && n > 0;
+  el.hidden = !on;
+  if (!on) { el.innerHTML = ''; return; }
+  const ps = plans(), p = curPlan();
+  const head = `<div class="wp-head"><h2 id="wp-title">${t('Stops on your way')}</h2>
+    <p class="wp-route">${bdi(placeLabel(placeById(S.prefs.from)))} ${wayArrow()} ${bdi(placeLabel(placeById(S.prefs.to)))}</p></div>`;
+  if (!p) {
+    el.innerHTML = head + `<p class="wp-none">${t('No store on your way has these products.')} <button class="linkish" type="button" data-open-loc>${t('Change')}</button></p>`;
+    return;
+  }
+  const best = ps.filter(x => x.complete).at(-1);
+  const opts = `<div class="wp-opts" role="radiogroup" aria-label="${esc(t('Number of stops'))}">${ps.map(x => `<button type="button" role="radio" data-stops="${x.stops}" aria-checked="${x === p}" class="wp-opt${x === best ? ' best' : ''}">
+      <span class="wp-n">${plural(x.stops, 'stop')}</span><b class="num">${money(x.total)}</b>
+      <small>${!x.complete ? t('{a} of {n}', { a: x.covered, n }) : x.saving > 0 ? t('{price} less', { price: money(x.saving) }) : x === best ? t('Cheapest') : '&nbsp;'}</small></button>`).join('')}</div>`;
+  const stores = planStores(p);
+  const list = `<ol class="wp-stops">${stores.map((st, i) => `<li class="wp-stop">
+      <span class="wp-num num" aria-hidden="true">${i + 1}</span>
+      <div class="wp-main">
+        <div class="wp-row"><p class="wp-chain">${esc(cn(st.chain))}</p><p class="wp-sub num">${money(st.subtotal)}</p></div>
+        <p class="wp-branch">${bdi(storeName(st))}${st.off_km != null ? ` · ${distText(st.off_km)}` : ''}</p>
+        <ul class="wp-items">${st.lines.map(l => `<li><span dir="auto">${esc(itemName(l.key))}</span>${l.qty !== 1 ? `<small>× ${fmtQty(l.qty, S.meta[l.key]?.is_weighted)}</small>` : ''}${l.promo ? '<span class="wp-deal" aria-label="' + esc(t('deal')) + '">%</span>' : ''}<span class="num">${money(l.cost)}</span></li>`).join('')}</ul>
+      </div></li>`).join('')}</ol>`;
+  const miss = p.missing.length ? `<p class="wp-miss">${t('Not on your way')}: ${p.missing.map(k => `<bdi>${esc(itemName(k))}</bdi>`).join(', ')}</p>` : '';
+  const trip = S.trip?.key === tripKey(p) ? S.trip : null;
+  el.innerHTML = head + opts + list + miss + `<div class="wp-foot">
+      <p class="wp-total"><span>${p.complete ? t('All {n} products', { n }) : t('{a} of {n} products', { a: p.covered, n })}</span><b class="num">${money(p.total)}</b></p>
+      <p class="wp-trip" id="wp-trip">${TRAVEL[S.prefs.travel]?.[1] || ''}<span>${trip ? (trip.route === null ? t('Trip time unavailable right now')
+        : `${t('{n} min in all', { n: trip.minutes })} · ${extraText(trip)}${trip.extra_km >= 0.1 ? ` · ${t('+{n} km', { n: trip.extra_km })}` : ''}`)
+        : `<span class="spin" aria-hidden="true"></span>`}</span></p>
+      <a class="sc-btn" href="${gmapsTrip(stores)}" target="_blank" rel="noopener" aria-label="${esc(t('Open in Google Maps'))}">${ICO.go}Google Maps</a></div>`;
+  if (!trip) loadTrip(p);
+}
+let tripSeq = 0;
+async function loadTrip(p) {
+  const key = tripKey(p), my = ++tripSeq;
+  const stops = planStores(p).map(s => [s.chain_id, s.store_id]);
+  const r = await api('/api/way/trip', { method: 'POST', body: { stops }, quiet: true }).catch(() => ({ route: null }));
+  if (my !== tripSeq) return;
+  S.trip = { ...r, key };
+  renderWayPlan();
+  drawPlan(true);
+}
+$('#way-plan').addEventListener('click', e => {
+  const o = e.target.closest('[data-stops]');
+  if (o) { haptic('select'); S.stops = +o.dataset.stops; local.set('stops', S.stops); S.trip = null; S.sel = null; renderWayPlan(); drawPins(); renderStoreCard(true); return; }
+});
+// the plan on the map: the trip through the stops in yellow, each stop numbered in the order you reach it
+let planMarks = [];
+function clearPlanMarks() { planMarks.forEach(m => m.remove()); planMarks = []; }
+function drawPlan(fit) {
+  clearPlanMarks();
+  if (!map?.getSource('route') || !planShown()) return;
+  const p = curPlan(), trip = S.trip?.key === tripKey(p) && S.trip.coords ? S.trip : null;
+  map.getSource('route').setData(trip ? lineOf(trip.coords) : NONE);
+  // stops in one place (two chains in the same mall) share a pin: "1·2"
+  const spots = [];
+  planStores(p).forEach((st, i) => {
+    if (st.lat == null) return;
+    const near = spots.find(s => Math.abs(s.lat - st.lat) < 3e-4 && Math.abs(s.lon - st.lon) < 3e-4);
+    if (near) near.stops.push([i + 1, st]); else spots.push({ lat: st.lat, lon: st.lon, stops: [[i + 1, st]] });
+  });
+  spots.forEach(s => {
+    const el = document.createElement('div');
+    el.className = `stop-pin num${s.stops.length > 1 ? ' many' : ''}`;
+    el.dir = 'ltr';
+    el.textContent = s.stops.map(x => x[0]).join('·');
+    el.title = s.stops.map(([n, st]) => `${n}. ${cn(st.chain)} · ${storeName(st)} · ${money(st.subtotal)}`).join('\n');
+    planMarks.push(new maplibregl.Marker({ element: el }).setLngLat([s.lon, s.lat]).addTo(map));
+  });
+  if (fit) fitPlan(true);
+}
+function fitPlan(animate) {
+  if (!map || !planShown() || !mapData?.route) return false;
+  const p = curPlan(), trip = S.trip?.key === tripKey(p) && S.trip.coords;
+  const pts = trip || [...mapData.route.coords, ...p.stores.filter(s => s.lat != null).map(s => [s.lon, s.lat])];
+  map.fitBounds(boundsOf(pts), { padding: edge(), maxZoom: 15, duration: animate ? 900 : 0 });
+  return true;
+}
+// the cart column: the cheapest way to split this cart on your way, one line (the plan is at checkout)
+function renderLcWay() {
+  const el = $('#lc-way'), best = plans().filter(x => x.complete).at(-1);
+  el.hidden = !best || best.stops < 2 || !S.cart.items.length;
+  if (el.hidden) { el.innerHTML = ''; return; }
+  el.innerHTML = `<span class="lw-k">${ICO_AREA.route}${t('On your way')}</span>
+    <span class="lw-v">${plural(best.stops, 'stop')} · <b class="num">${money(best.total)}</b>${best.saving > 0 ? ` <small>${t('{price} less', { price: money(best.saving) })}</small>` : ''}</span>`;
+}
 
 // ---------------------------------------------------------------- browse: stacked filters
 // Every word is its own filter chip; each one narrows the results further. Back undoes the last one.
@@ -1023,7 +1249,7 @@ async function openProduct(key) {
   if (my !== prodSeq || !deal) return;
   const d = deal.deal;
   $('#p-deal').innerHTML = `${saveBadge(d)}
-    <span>${t('{deal} at {chain}', { deal: `<strong dir="auto">${esc(d.description)}</strong>`, chain: esc(cn(d.chain)) })}${d.distance_km != null ? ` (${kmText(d.distance_km)})` : ''}:
+    <span>${t('{deal} at {chain}', { deal: `<strong dir="auto">${esc(d.description)}</strong>`, chain: esc(cn(d.chain)) })}${d.distance_km != null ? ` (${distText(d.distance_km)})` : ''}:
     ${d.min_qty > 1 ? t('{price} each when you buy {n}', { price: money(d.unit_price), n: d.min_qty }) : t('{price} each', { price: money(d.unit_price) })}, ${t('usually {price}', { price: money(d.typical) })}.</span>
     ${d.min_qty > 1 && !S.cart.items.some(i => i.key === key) ? addBtn(key, d.min_qty) : ''}`;
   $('#p-deal').hidden = false;
@@ -1135,6 +1361,7 @@ function route() {
   document.body.dataset.view = v;
   if (before && before !== v) enter($(`#view-${v}`));  // a gentle fade-in for a new page (not for live search updates)
   renderStoreCard(false);  // shows at checkout, hides (with its route) everywhere else
+  if (v !== 'basket') { clearPlanMarks(); renderWayPlan(); }
   if (document.activeElement !== topQ) {  // the box shows what a search page is filtered by, and is empty elsewhere
     topQ.value = m[1] === 's' ? splitBar(arg).join(' ') : '';
     if (v !== 'browse') liveFrom = null;
@@ -1207,7 +1434,8 @@ const compared = debounce(r => {
   if (k === comparedKey) return;
   comparedKey = k;
   Usage.ev('compare', { n: S.cart.items.length, d: { complete: ok.length, chains: r.chains.length, best: best?.name || null,
-                                                     total: best ? Math.round(paid(best)) : null, mode: S.prefs.mode, km: S.prefs.max_km } });
+                                                     total: best ? Math.round(paid(best)) : null, mode: S.prefs.mode, km: S.prefs.max_km,
+                                                     area: onWay() ? 'route' : 'home', stops: onWay() ? curPlan()?.stops ?? null : undefined } });
 }, 2500);
 
 function emptyState(title, text, extra = '') {
@@ -1219,10 +1447,10 @@ const storeName = v => clean(v.name) || t('Branch {n}', { n: v.store_id });
 function storePlace(v) {
   const city = realCity(v.city), n = storeName(v);
   const name = city && n.includes(city) ? n : [n, city].filter(Boolean).join(', ');
-  return bdi(name) + (v.distance_km != null ? ` · ${t('{d} away', { d: kmText(v.distance_km) })}` : '') + driveSlot(v);
+  return bdi(name) + (v.distance_km != null ? ` · ${onWay() ? distText(v.distance_km) : t('{d} away', { d: kmText(v.distance_km) })}` : '') + driveSlot(v);
 }
 const place = v => delivery() ? `${t('Online store')} · ${bdi(storeName(v))}` : storePlace(v);
-const driveSlot = v => S.prefs.home ? `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>` : '';
+const driveSlot = v => S.prefs.home && !onWay() ? `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>` : '';  // on my way: what a stop adds, in the plan
 
 // drive times load after the results so pricing never waits on the routing service
 async function fillDrive(root = $('#results')) {
@@ -1314,11 +1542,11 @@ function winner(c) {
     : `<div class="alt"><span>${esc(k)}</span><strong>${esc(val)}</strong></div>`).join('');
   const others = !delivery() && c.in_store.branches.length > 1
     ? `<p class="note">${t('Other branches:')} ${c.in_store.branches.slice(1, 4).map(b =>
-        `${bdi(storeName(b))} ${money(b.total)}${b.complete === false ? ` (${t('{a} of {n}', { a: b.covered, n })})` : ''}${b.distance_km != null ? ` (${kmText(b.distance_km)}${driveSlot(b)})` : ''}`).join(' · ')}</p>` : '';
+        `${bdi(storeName(b))} ${money(b.total)}${b.complete === false ? ` (${t('{a} of {n}', { a: b.covered, n })})` : ''}${b.distance_km != null ? ` (${distText(b.distance_km)}${driveSlot(b)})` : ''}`).join(' · ')}</p>` : '';
   const r = radius();
   const branches = [delivery() ? t('Prices on the chain’s website')
-    : c.in_store.branch_count > 1 ? t('Cheapest of {n} branches', { n: c.in_store.branch_count }) + (r ? ' ' + t('within {n} km', { n: r }) : '')
-    : r ? t('Only branch within {n} km', { n: r }) : t('Only branch with prices'), pricesFrom(v.last_price_ts)].filter(Boolean).join(' · ');
+    : c.in_store.branch_count > 1 ? t('Cheapest of {n} branches', { n: c.in_store.branch_count }) + (onWay() ? ' ' + t('on your way') : r ? ' ' + t('within {n} km', { n: r }) : '')
+    : onWay() ? t('Only branch on your way') : r ? t('Only branch within {n} km', { n: r }) : t('Only branch with prices'), pricesFrom(v.last_price_ts)].filter(Boolean).join(' · ');
   return `<article class="winner">
     <div class="tag-face">
       <p class="tag-chain">${esc(cn(c.name))}</p>
@@ -1366,7 +1594,7 @@ function staleHTML() {
   if (!st.length) return '';
   return `<details class="pricier stale"><summary>${t('Prices over a day old')} (${st.length})</summary>
     <ul class="stale-list">${st.map(s => `<li><span class="row-chain">${esc(cn(s.chain))}</span>
-      <span class="row-store">${bdi(storeName(s))}${s.distance_km != null ? ` · ${kmText(s.distance_km)}` : ''}</span>
+      <span class="row-store">${bdi(storeName(s))}${s.distance_km != null ? ` · ${distText(s.distance_km)}` : ''}</span>
       <span class="st-ts">${s.online ? t('Online') + ' · ' : ''}${pricesFrom(s.last_price_ts) || t('No current prices')}</span></li>`).join('')}</ul></details>`;
 }
 // delivery: chains whose online shop may not deliver to this address (the user hasn't confirmed it): never ranked
@@ -1397,6 +1625,7 @@ function renderResults(loading) {
   updateTotals();
   renderTrend();
   renderSbs();
+  renderWayPlan();
   if (st && !st.products) {
     const ix = st.index || {};
     const bar = ix.running && ix.total ? `<div class="progress"><span style="width:${Math.round(100 * ix.processed / ix.total)}%"></span></div>` : '';
@@ -1414,6 +1643,8 @@ function renderResults(loading) {
     const r = radius();
     el.innerHTML = (delivery()
       ? emptyState(S.result.no_area?.length ? t('No confirmed delivery') : t('No online shop has these products'), '') + noAreaHTML()
+      : onWay() ? emptyState(t('No stores on your way'), '',
+          `<div class="actions"><button class="primary" type="button" data-open-loc>${t('Change')}</button></div>`)
       : r ? emptyState(t('No stores within {n} km', { n: r }), '',
           `<div class="actions"><button class="primary" type="button" data-open-loc>${t('Change distance')}</button></div>`)
       : emptyState(t('No store has these products'), '')) + staleHTML();
@@ -1618,7 +1849,7 @@ function renderSbs() {
   }).join('');
   const doneCols = cols.filter(full), low = doneCols.length ? Math.min(...doneCols.map(paid)) : null;
   $('#sbs-table').innerHTML = `<table class="sbs-table"><thead><tr><th scope="col">${t('Product')}</th>${cols.map(c => { const v = view(c);
-      return `<th scope="col" class="n"><span class="sb-chain">${esc(cn(c.name))}</span><small>${delivery() ? t('Online store') : bdi(storeName(v)) + (v.distance_km != null ? ` · ${kmText(v.distance_km)}` : '') + driveSlot(v)}</small></th>`; }).join('')}</tr></thead>
+      return `<th scope="col" class="n"><span class="sb-chain">${esc(cn(c.name))}</span><small>${delivery() ? t('Online store') : bdi(storeName(v)) + (v.distance_km != null ? ` · ${distText(v.distance_km)}` : '') + driveSlot(v)}</small></th>`; }).join('')}</tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr><th scope="row">${t('Cheapest for')}</th>${wins.map(w => `<td class="n">${plural(w, 'product')}</td>`).join('')}</tr>
       ${delivery() ? `<tr><th scope="row">${t('Delivery')}</th>${cols.map(c => `<td class="n">${c.online.fee == null ? '—' : c.online.fee === 0 ? t('Free') : money(c.online.fee)}</td>`).join('')}</tr>` : ''}
@@ -1635,21 +1866,31 @@ function renderSbs() {
 function applyPrefsUI() {
   $$('[data-mode]').forEach(b => b.setAttribute('aria-checked', b.dataset.mode === S.prefs.mode));
   $('#club').checked = !!S.prefs.club;
-  const h = S.prefs.home, btn = $('#near-btn');
+  derive();
+  const h = S.prefs.home, way = onWay(), btn = $('#near-btn'), at = placeLabel(placeById(S.prefs.at));
+  const trip = way ? `${bdi(placeLabel(placeById(S.prefs.from)))} ${wayArrow()} ${bdi(placeLabel(placeById(S.prefs.to)))}` : '';
   btn.classList.toggle('set', !!h);
-  const place = h ? bdi(h.label.split(',')[0]) : '';
+  btn.classList.toggle('way', way);
+  const place = bdi(at);
   $('#near-label').innerHTML = !h ? t('Set your location')
+    : way ? `<span class="nl-long">${trip}</span><span class="nl-short">${trip}</span>`
     : `<span class="nl-long">${S.prefs.max_km ? t('Within {n} km of {place}', { n: S.prefs.max_km, place }) : t('Near {place}', { place })}</span>`
-      + `<span class="nl-short"><bdi class="nl-place">${esc(h.label.split(',')[0])}</bdi>${S.prefs.max_km ? `<span class="nl-km">${t('{n} km', { n: S.prefs.max_km })}</span>` : ''}</span>`;
-  btn.title = h ? h.label : '';
+      + `<span class="nl-short"><bdi class="nl-place">${esc(at)}</bdi>${S.prefs.max_km ? `<span class="nl-km">${t('{n} km', { n: S.prefs.max_km })}</span>` : ''}</span>`;
+  btn.title = h ? (way ? `${S.prefs.home.label} ${wayArrow()} ${S.prefs.work.label}` : h.label) : '';
+  const big = $('#biggest-wrap h2');
+  big.dataset.i18n = way ? 'Biggest savings on your way' : 'Biggest savings near you';
+  big.textContent = t(big.dataset.i18n);
+  renderWhere();
 }
 function setPrefs(p) {
   Object.assign(S.prefs, p);
+  derive();
   applyPrefsUI();
   S.result = null;
   compareNow();
   if (document.body.dataset.view === 'product' && S.product) openProduct(S.product.p.key);
-  const where = 'home' in p || 'max_km' in p;
+  const where = ['home', 'max_km', 'work', 'area', 'travel', 'detour_km', 'places', 'at', 'from', 'to'].some(k => k in p);
+  if (where) { S.trip = null; S.sel = null; }
   return api('/api/settings', { method: 'PUT', body: { prefs: p } })
     .then(() => { if (where) { updateMap(); if (document.body.dataset.view === 'home') dealRows(); } })
     .catch(e => { if (e.message !== 'signed out') toast(t("Couldn't save your settings"), null, null, 'error'); });

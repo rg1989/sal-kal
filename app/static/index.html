@@ -41,7 +41,8 @@
   </div>
   <nav class="top-actions">
     <button class="near" id="near-btn" type="button" aria-haspopup="dialog">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17.6s5.6-5.1 5.6-9.4a5.6 5.6 0 0 0-11.2 0c0 4.3 5.6 9.4 5.6 9.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle class="dot" cx="10" cy="8.2" r="2.2"/></svg>
+        <svg class="ico-home" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17.6s5.6-5.1 5.6-9.4a5.6 5.6 0 0 0-11.2 0c0 4.3 5.6 9.4 5.6 9.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle class="dot" cx="10" cy="8.2" r="2.2"/></svg>
+        <svg class="ico-way" viewBox="0 0 20 20" aria-hidden="true"><circle class="dot" cx="5" cy="15" r="2.3"/><circle cx="15" cy="5" r="2.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.9 13.6c2.2-1.3 1.2-4.2 3.6-5.2 1.3-.6 2.3-.4 3-1.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="2.2 2.4"/></svg>
         <span id="near-label"></span>
       </button>
     <button class="lang-btn wide-only" id="lang-btn" type="button" aria-haspopup="menu" aria-expanded="false"></button>
@@ -63,6 +64,7 @@
 <div class="views">
 <main class="shop" id="view-home">
   <div class="map-slot" id="home-map">
+    <div class="where" id="where" hidden></div>
     <section class="mapbox" id="map-wrap" data-i18n-aria="Stores near you">
       <div class="map" id="map"></div>
       <div class="map-info" id="map-info"></div>
@@ -124,6 +126,7 @@
     <button class="ghost small" id="open-settings" type="button" data-i18n="Delivery fees">Delivery fees</button>
   </div>
   <div class="map-slot" id="co-map"></div>
+  <section class="way-plan" id="way-plan" aria-labelledby="wp-title" aria-live="polite" hidden></section>
   <section class="results" id="results-panel" data-i18n-aria="Where to buy" aria-live="polite"><div id="results"></div></section>
   <section class="sbs" id="sbs" aria-labelledby="sbs-title" hidden>
     <h2 id="sbs-title" data-i18n="Compare Stores">Compare Stores</h2>
@@ -159,6 +162,7 @@
     <p class="empty-title" data-i18n="This cart is empty">This cart is empty</p>
   </div>
   <footer class="lc-foot" id="drawer-foot">
+    <a class="lc-way" id="lc-way" href="#/basket" hidden></a>
     <div class="lc-head">
       <p class="lc-label" id="lc-label" data-i18n="Where this cart costs least">Where this cart costs least</p>
       <label class="switch small" data-i18n-title="Every branch near you, cheapest first">
@@ -233,14 +237,10 @@
   <div class="sheet-inner">
     <div class="sheet-grab" aria-hidden="true"></div>
     <header class="sheet-head">
-      <h2 data-i18n="Where do you shop from?">Where do you shop from?</h2>
+      <h2 data-i18n="Where do you shop?">Where do you shop?</h2>
       <button class="icon" data-close data-i18n-aria="Close" type="button"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
     </header>
-    <div class="addr" id="loc-addr"></div>
-    <div id="loc-set" hidden>
-      <p class="loc-legend" id="radius-label" data-i18n="Show stores within">Show stores within</p>
-      <div class="radius-picker" role="radiogroup" aria-labelledby="radius-label" id="radius"></div>
-    </div>
+    <div class="loc-body" id="loc-body"></div>
     <div class="sheet-actions"><button class="primary" data-close type="button" data-i18n="Done">Done</button></div>
   </div>
 </dialog>

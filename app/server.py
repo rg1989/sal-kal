@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import auth, catalog, engine, geo, places, reports, stats, trust
+from . import auth, catalog, commute, engine, geo, places, reports, stats, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
@@ -76,9 +76,43 @@ def _json(v, default):
 
 
 def prefs():
-    """This account's shopping preferences: home address, distance, club prices, in store / delivered."""
+    """This account's shopping preferences: its places, around one or on the way between two, distance, club prices,
+    in store / delivered. `home` and `work` are worked out from the places (effective)."""
     u = me()
-    return {**engine.DEFAULT_PREFS, **(_json(u.get("prefs"), {}) if u else {})}
+    return effective({**engine.DEFAULT_PREFS, **(_json(u.get("prefs"), {}) if u else {})})
+
+
+# ---------------------------------------------------------------- named places: around one, or on the way between two
+PLACE_ID = re.compile(r"[a-z0-9]{1,16}")
+MAX_PLACES = 12
+ADDR_KEYS = ("label", "lat", "lon", "town", "street", "number", "town_name", "street_name", "precision")
+
+
+def places_of(p):
+    """The account's named places (home, work, a parent's, the gym...). Accounts from before named places have only
+    `home` (and `work`): those are its places."""
+    pl = p.get("places")
+    if isinstance(pl, list) and pl:
+        return [x for x in pl if isinstance(x, dict) and "lat" in x and "id" in x]
+    return [{"id": k, "name": None, **p[k]} for k in ("home", "work") if isinstance(p.get(k), dict) and "lat" in p[k]]
+
+
+def effective(p):
+    """Prefs with `home` = the place stores are found around (around a place) or where the trip starts (on the way),
+    and `work` = where the trip ends (None around a place), from the places picked by `at`, `from` and `to`."""
+    pl = places_of(p)
+    if not pl:
+        return {**p, "places": [], "home": None, "work": None}
+    by = {x["id"]: x for x in pl}
+    at = by.get(p.get("at")) or pl[0]
+    frm = by.get(p.get("from")) or pl[0]
+    to = by.get(p.get("to"))
+    if to is None or to is frm:
+        to = next((x for x in pl if x is not frm), None)
+    route = p.get("area") == "route" and to is not None
+    addr = lambda x: {k: x[k] for k in ADDR_KEYS if k in x}
+    return {**p, "places": pl, "at": at["id"], "from": frm["id"], "to": to["id"] if to else None,
+            "home": addr(frm if route else at), "work": addr(to) if route else None}
 
 
 def overrides():
@@ -377,17 +411,61 @@ def _present(c, rows, limit, toks=None):
     return out[:limit]
 
 
+# ---------------------------------------------------------------- on my way: the branches along home -> work
+_way_cache = {}
+
+
+def _commuting(p):
+    """On my way is chosen and both ends are set (else: around home, as before)."""
+    return p.get("area") == "route" and "lat" in (p.get("home") or {}) and "lat" in (p.get("work") or {})
+
+
+def _detour(p):
+    """How far off the route a branch may be, km."""
+    try:
+        d = p.get("detour_km")
+        return max(0.1, min(5.0, float(d))) if d is not None else commute.DETOUR.get(p.get("travel"), 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _way(c, p=None):
+    """On my way: (the route home -> work, {(chain, store): (km off the route, km along it)} for every located branch
+    within the detour), or (None, None) around home. Cached for 10 minutes per trip and detour; a straight line
+    (the routing service was down) isn't kept, so the next request tries the road route again."""
+    p = p or prefs()
+    if not _commuting(p):
+        return None, None
+    h, w, travel, width = p["home"], p["work"], p.get("travel") or "car", _detour(p)
+    k = (h["lat"], h["lon"], w["lat"], w["lon"], travel, width, int(time.time() // 600))
+    hit = _way_cache.get(k)  # read once: another request may clear the cache
+    if hit is None:
+        path = commute.path(h, w, travel)
+        exact = geo.exact_stores(c)  # a branch placed at its town's centre can't be said to be along a route
+        hit = (path, commute.corridor(path["coords"], {sk: ll for sk, ll in geo.store_coords(c).items() if sk in exact}, width))
+        if not path["straight"]:
+            if len(_way_cache) > 100:
+                _way_cache.clear()
+            _way_cache[k] = hit
+    return hit
+
+
 # ---------------------------------------------------------------- per card: cheapest near you + price per 100 g / litre
 _near_cache = {}
 
 
 def _near_stores(c):
-    """Branches you'd walk into, with their distance: inside your distance limit (15 km without one), like the map.
-    None when no home address is set. Cached for 10 minutes per address + limit."""
+    """Branches you'd walk into, with their distance: inside your distance limit (15 km without one), like the map;
+    on my way, the branches along the route with their distance off it. None when no home address is set.
+    Cached for 10 minutes per address + limit."""
     p = prefs()
     home, max_km = p.get("home"), p.get("max_km")
     if not home:
         return None
+    _, way = _way(c, p)
+    if way is not None:
+        kind = {(r[0], r[1]): r[2] for r in c.execute("SELECT chain_id, store_id, store_type FROM stores WHERE price_full_ts > 0")}
+        return {sk: round(v[0], 1) for sk, v in way.items() if sk in kind and kind[sk] != 2}
     k = (home["lat"], home["lon"], max_km, int(time.time() // 600))
     near = _near_cache.get(k)  # read once: another request may clear the cache
     if near is None:
@@ -674,23 +752,28 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: i
         want = mine()[:300]
         kind = "mine"
     basket = tuple(sorted(mine()))[:500] if skip_basket else ()
-    nearby = bool(home and max_km)  # the nearby stores are joined below, current ones only
+    _, way = _way(c, p)
+    nearby = bool(home and max_km) or way is not None  # the nearby stores are joined below, current ones only
     live, live_args, sig = _live_deals(c, stores=not nearby)
     checked, cutoff = _confirmed_through(c), trust.fresh_cutoff()
     fresh = {(r[0], r[1]) for r in c.execute("SELECT chain_id, store_id FROM stores WHERE last_price_ts >= ? AND promo_full_ts >= ?",
                                               (cutoff, cutoff))}
     ck = (engine.get_setting(c, "deals_version", 0), kind, json.dumps(home), max_km, tuple(want), limit, sig, checked,
-          hash(frozenset(fresh)) if nearby else 0, basket)
+          hash(frozenset(fresh)) if nearby else 0, basket,
+          json.dumps([p.get("work"), p.get("travel"), _detour(p)]) if way is not None else None)
     hit = _deals_cache.get(ck)  # (deals stay right until, cards); read once: other threads may clear the cache
     if _cache_ok(hit):
         return hit[1]
     coords = geo.store_coords(c) if home else {}
     dist = lambda sk: geo.km(home["lat"], home["lon"], *coords[sk]) if sk in coords else None
+    if way is not None:  # on my way: how far off the route
+        dist = lambda sk: way[sk][0] if sk in way else None
     join, where, params = "", [live], list(live_args)
     if nearby:
         c.execute("CREATE TEMP TABLE IF NOT EXISTS near(chain_id TEXT, store_id INTEGER, PRIMARY KEY(chain_id, store_id))")
         c.execute("DELETE FROM near")
-        c.executemany("INSERT INTO near VALUES(?,?)", [sk for sk in coords if sk in fresh and dist(sk) <= float(max_km)])
+        c.executemany("INSERT INTO near VALUES(?,?)", [sk for sk in coords if sk in fresh and (
+            sk in way if way is not None else dist(sk) <= float(max_km))])
         join = "JOIN near n ON n.chain_id=d.chain_id AND n.store_id=d.store_id"
     if not p.get("club"):
         where.append("d.description NOT LIKE '%מועדון%'")
@@ -787,18 +870,58 @@ def stores_near(limit: int = 600):
     names = {r["chain_id"]: r["name_he"] for r in c.execute("SELECT chain_id, name_he FROM chains")}
     info = {(r["chain_id"], r["store_id"]): r for r in c.execute(
         "SELECT chain_id, store_id, name, city, store_type FROM stores WHERE price_full_ts > 0")}
+    path, way = _way(c, p)
     near = []
     for sk, (lat, lon) in geo.store_coords(c).items():
         if sk not in info or info[sk]["store_type"] == 2:  # online-only shops have no door to walk into
+            continue
+        if way is not None:  # on my way: along the route, nearest to it first
+            if sk in way:
+                near.append((way[sk][0], sk, lat, lon))
             continue
         d = geo.km(home["lat"], home["lon"], lat, lon)
         if d <= float(max_km or 15):
             near.append((d, sk, lat, lon))
     near.sort()
-    return {"home": home, "max_km": max_km, "total": len(near),
-            "stores": [{"lat": lat, "lon": lon, "km": round(d, 1), "chain": chain_name(sk[0], names.get(sk[0])),
-                        "name": info[sk]["name"] or "", "city": info[sk]["city"] or ""}
-                       for d, sk, lat, lon in near[:limit]]}
+    out = {"home": home, "max_km": max_km, "total": len(near),
+           "stores": [{"lat": lat, "lon": lon, "km": round(d, 1), "chain": chain_name(sk[0], names.get(sk[0])),
+                       "name": info[sk]["name"] or "", "city": info[sk]["city"] or "",
+                       **({"at": way[sk][1]} if way is not None else {})}
+                      for d, sk, lat, lon in near[:limit]]}
+    if way is not None:
+        out.update(max_km=None, work=p["work"], travel=p.get("travel") or "car", detour_km=_detour(p),
+                   route={k: path[k] for k in ("coords", "minutes", "km", "straight")})
+    return out
+
+
+@app.post("/api/way/trip")
+def way_trip(body: dict = Body(...)):
+    """On the way with stops: from -> each stop in the order given -> to, by the account's way of travel. {"coords", "minutes", "km", "legs", "extra_minutes", "extra_km"}, extra = over going
+    straight; {"route": None} when the routing service can't be reached or on my way is off."""
+    c, p = con(), prefs()
+    if not _commuting(p):
+        return {"route": None}
+    coords = geo.store_coords(c)
+    stops = []
+    for x in (body.get("stops") or [])[:commute.MAX_STOPS]:
+        try:
+            ll = coords.get((str(x[0]), int(x[1])))
+        except (TypeError, ValueError, IndexError):
+            ll = None
+        if ll:
+            stops.append(ll)
+    a, b = (p["home"]["lat"], p["home"]["lon"]), (p["work"]["lat"], p["work"]["lon"])
+    travel = p.get("travel") or "car"
+    limit("way", 40, 60)
+    try:
+        direct = commute.route([a, b], travel)
+        trip = commute.route([a, *stops, b], travel) if stops else direct
+    except Exception as e:
+        print("trip route unavailable:", e, file=sys.stderr)
+        return {"route": None}
+    return {"route": True, "coords": trip["coords"], "minutes": trip["minutes"], "km": trip["km"], "legs": trip["legs"],
+            "extra_minutes": max(0, trip["minutes"] - direct["minutes"]), "extra_km": max(0.0, round(trip["km"] - direct["km"], 1)),
+            "travel": travel}
 
 
 # ---------------------------------------------------------------- your address: picked from the official lists
@@ -1051,11 +1174,19 @@ def store_info(chain_id: str, store_id: int):
     ll = geo.store_coords(c).get((chain_id, store_id))
     if ll:
         out["lat"], out["lon"] = ll
-        home = prefs().get("home")
+        p = prefs()
+        home = p.get("home")
         if home:
             limit("route", 60, 60)
             try:
-                out["route"] = geo.route((home["lat"], home["lon"]), ll)
+                if _commuting(p):  # on my way: home -> this store -> work, and what the stop adds
+                    travel, a, b = p.get("travel") or "car", (home["lat"], home["lon"]), (p["work"]["lat"], p["work"]["lon"])
+                    direct, trip = commute.route([a, b], travel), commute.route([a, ll, b], travel)
+                    out["route"] = {"coords": trip["coords"], "minutes": trip["minutes"], "km": trip["km"], "way": True,
+                                    "travel": travel, "extra_minutes": max(0, trip["minutes"] - direct["minutes"]),
+                                    "extra_km": max(0.0, round(trip["km"] - direct["km"], 1))}
+                else:
+                    out["route"] = geo.route((home["lat"], home["lon"]), ll)
             except Exception as e:
                 print("route unavailable:", e, file=sys.stderr)
     return out
@@ -1070,7 +1201,9 @@ def store_hours(chain_id: str, store_id: int):
     ll = geo.store_coords(c).get((chain_id, store_id))
     if not ll or not p.get("home"):
         return {"hours": None, "week": None, "checked": False}
-    shops, ok = _osm_area(p["home"], p.get("max_km"))
+    # on my way the branch can be far from home: the shops around the branch itself (cells of about a kilometre)
+    shops, ok = _osm_area({"lat": round(ll[0], 2), "lon": round(ll[1], 2)}, 1) if _commuting(p) \
+        else _osm_area(p["home"], p.get("max_km"))
     hours, name = geo.match_hours(shops, ll[0], ll[1], [chain, BRAND_HE.get(chain, ""), he])
     return {"hours": hours, "week": geo.parse_hours(hours), "name": name, "checked": ok}
 
@@ -1079,7 +1212,12 @@ def store_hours(chain_id: str, store_id: int):
 @app.post("/api/compare")
 def compare(body: dict = Body(...)):
     c = con()
-    res = engine.compare(c, (body.get("items") or [])[:400], {**prefs(), **(body.get("prefs") or {})}, overrides=overrides())
+    try:
+        p = effective({**prefs(), **(body.get("prefs") or {})})
+        _, way = _way(c, p)
+    except (KeyError, TypeError, ValueError, AttributeError):  # malformed places in the request: the saved ones
+        p, way = prefs(), None
+    res = engine.compare(c, (body.get("items") or [])[:400], p, overrides=overrides(), way=way)
     for it in res["items"]:
         it["img"] = _img(it["key"])
     return res
@@ -1103,7 +1241,7 @@ def get_settings():
     return {"prefs": prefs(), "delivery": rows, "traffic": bool(engine.get_setting(c, "maps_key", None))}
 
 
-PREF_KEYS = {"home", "max_km", "club", "mode"}
+PREF_KEYS = {"home", "max_km", "club", "mode", "work", "area", "travel", "detour_km", "places", "at", "from", "to"}
 
 
 def _clean_home(h):
@@ -1126,26 +1264,80 @@ def _clean_home(h):
     return out
 
 
+def _clean_places(lst):
+    """Named places as the places sheet sends them: [{id, name, address...}], at most MAX_PLACES."""
+    if not isinstance(lst, list):
+        raise HTTPException(422, "bad places")
+    out, seen = [], set()
+    for x in lst[:MAX_PLACES]:
+        pid = str((x or {}).get("id") or "") if isinstance(x, dict) else ""
+        if not PLACE_ID.fullmatch(pid) or pid in seen:
+            raise HTTPException(422, "bad place")
+        seen.add(pid)
+        name = str(x.get("name") or "").strip()[:40] or None
+        out.append({"id": pid, "name": name, **_clean_home(x)})
+    return out
+
+
+def _set_place(pl, pid, addr):
+    """Put an address on the place `pid` (keeping its name), or add it."""
+    for i, x in enumerate(pl):
+        if x["id"] == pid:
+            pl[i] = {"id": pid, "name": x.get("name"), **addr}
+            return
+    pl.append({"id": pid, "name": None, **addr})
+
+
 @app.put("/api/settings")
 def put_settings(body: dict = Body(...)):
     c = con()
     if "prefs" in body:
         p = {k: v for k, v in (body["prefs"] or {}).items() if k in PREF_KEYS}
-        if "home" in p:
-            p["home"] = _clean_home(p["home"])
+        old = _json(me().get("prefs"), {})
+        for k in ("home", "work"):
+            if k in p:
+                p[k] = _clean_home(p[k])
+        if "places" in p:
+            p["places"] = _clean_places(p["places"])
+        for k in ("at", "from", "to"):
+            if k in p and not (isinstance(p[k], str) and PLACE_ID.fullmatch(p[k])):
+                del p[k]
+        # an address without a place (the first-run setup, older pages): `home` is the place you're around,
+        # `work` the place called work, which becomes where the trip ends
+        if p.get("home") or p.get("work"):
+            pl = [dict(x) for x in places_of({**old, **({"places": p["places"]} if "places" in p else {})})]
+            if p.get("home"):
+                _set_place(pl, effective({**old, "places": pl})["at"] if pl else "home", p["home"])
+            if p.get("work"):
+                _set_place(pl, "work", p["work"])
+                p["to"] = "work"
+            p["places"] = pl
+        p.pop("home", None)
+        p.pop("work", None)
         if "max_km" in p and p["max_km"] is not None:
             p["max_km"] = max(0.5, min(100.0, float(p["max_km"])))
-        old = _json(me().get("prefs"), {})
-        _save_user(c, prefs=json.dumps({**old, **p}, ensure_ascii=False))
-        h = p.get("home")
-        if "home" in p and (h or {}).get("label") != (old.get("home") or {}).get("label"):
+        if "area" in p:  # around home, or on my way (home -> work)
+            p["area"] = "route" if p["area"] == "route" else "home"
+        if "travel" in p:
+            p["travel"] = p["travel"] if p["travel"] in commute.TRAVEL else "car"
+        if "detour_km" in p and p["detour_km"] is not None:
+            p["detour_km"] = max(0.1, min(5.0, float(p["detour_km"])))
+        was, new = effective(old), effective({**old, **p})
+        # home and work are kept in the saved prefs too, for what reads them directly (the usage statistics)
+        _save_user(c, prefs=json.dumps({**old, **p, "home": new["home"], "work": new["work"]}, ensure_ascii=False))
+        h = new["home"]
+        if (h or {}).get("label") != (was.get("home") or {}).get("label"):
             _ev("address", a=(h or {}).get("town_name") or ((h or {}).get("label") or "").split(",")[-1].strip() or None,
                 b=(h or {}).get("precision"))
+        if len(new["places"]) != len(was["places"]):
+            _ev("places", n=len(new["places"]))
         if "max_km" in p and p["max_km"] != old.get("max_km"):
             _ev("distance", n=p["max_km"])
-        for k in ("mode", "club"):
+        for k in ("mode", "club", "area", "travel"):
             if k in p and p[k] != old.get(k):
                 _ev(k, a=str(p[k]))
+        if "detour_km" in p and p["detour_km"] != old.get("detour_km"):
+            _ev("detour", n=p["detour_km"])
     if "maps_key" in body:  # write-only: GET only says whether one is set. Billed per use: the admin's call
         _admin()
         engine.put_setting(c, "maps_key", (body["maps_key"] or "").strip() or None)

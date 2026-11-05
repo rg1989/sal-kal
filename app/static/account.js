@@ -285,24 +285,101 @@ function radiusPicker(el, value, onChange, withAny = true) {
   };
 }
 
-// ---------------------------------------------------------------- your location (header pill, "Change distance")
-function openLocation() {
-  const d = $('#location');
-  AddressPicker($('#loc-addr'), {
-    home: S.prefs.home,
-    onPick: h => {
-      const first = !S.prefs.home;
-      setPrefs({ home: h, max_km: S.prefs.max_km ?? 5 });
-      $('#loc-set').hidden = false;
-      if (first) renderRadius();
-      toast(t('Address saved'), null, null, 'none');
-    },
-  });
-  const renderRadius = () => radiusPicker($('#radius'), S.prefs.max_km ?? null, km => setPrefs({ max_km: km }));
-  $('#loc-set').hidden = !S.prefs.home;
-  renderRadius();
-  openSheet(d);
+// ---------------------------------------------------------------- your places (header pill, the where bar, "Add a place")
+// Named places (home, work, a parent's, the gym): the stores around one of them, or along the way between two.
+const MAX_PLACES = 12;
+const LOC = { edit: null, draft: null };  // edit: a place's id, 'new' or null; draft: the address picked in the editor
+const ADDR = ['label', 'lat', 'lon', 'town', 'street', 'number', 'town_name', 'street_name', 'precision'];
+const addrOnly = h => Object.fromEntries(ADDR.filter(k => h[k] != null).map(k => [k, h[k]]));
+const newPlaceId = () => 'p' + Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1296).toString(36);
+const PLUS = '<span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>';
+function openLocation(focus) {
+  LOC.edit = focus === 'add' || !placesOf().length ? 'new' : null;
+  LOC.draft = null;
+  renderLoc();
+  openSheet($('#location'));
+  if (LOC.edit) setTimeout(() => $('#loc-body .place-edit')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 250);
 }
+// the name a new place starts with: the first is home, the next work
+const defaultName = () => { const pl = placesOf(); return !pl.length ? t('Home') : pl.length === 1 ? t('Work') : ''; };
+function placeEditor(x) {
+  return `<div class="place-edit">
+    <label class="pl-name"><span>${t('Name')}</span><input id="pl-name" maxlength="40" dir="auto" autocomplete="off" enterkeyhint="done" value="${esc(x ? placeLabel(x) : defaultName())}"></label>
+    <div class="addr" id="pl-addr"></div>
+    <div class="pl-actions"><button type="button" class="primary" data-save${x ? '' : ' disabled'}>${t('Save place')}</button>
+      ${placesOf().length ? `<button type="button" class="ghost" data-cancel>${t('Cancel')}</button>` : ''}</div></div>`;
+}
+function renderLoc() {
+  const el = $('#loc-body'), pl = placesOf(), way = S.prefs.area === 'route';
+  const chips = (k, cur) => `<div class="place-chips" role="radiogroup">${pl.map(x =>
+    `<button type="button" role="radio" data-pick="${k}" data-id="${esc(x.id)}" aria-checked="${x.id === cur}"><bdi>${esc(placeLabel(x))}</bdi></button>`).join('')}</div>`;
+  let pick = '';
+  if (pl.length && !way) pick = `<p class="loc-legend">${t('Around')}</p>${chips('at', S.prefs.at)}
+      <p class="loc-legend" id="radius-label">${t('Show stores within')}</p><div class="radius-picker" role="radiogroup" aria-labelledby="radius-label" id="radius"></div>`;
+  else if (pl.length >= 2) pick = `<p class="loc-legend">${t('From')}</p>${chips('from', S.prefs.from)}
+      <p class="loc-legend">${t('To')}</p>${chips('to', S.prefs.to)}
+      <p class="loc-legend" id="travel-label">${t('How you go')}</p><div class="seg travel-seg" role="radiogroup" aria-labelledby="travel-label">${
+        Object.entries(TRAVEL).map(([k, [label, ico]]) => `<button type="button" role="radio" data-travel="${k}" aria-checked="${(S.prefs.travel || 'car') === k}">${ico}<span>${t(label)}</span></button>`).join('')}</div>
+      <p class="loc-legend" id="detour-label">${t('How far off the way')}</p><div class="radius-picker" role="radiogroup" aria-labelledby="detour-label">${
+        DETOURS.map(km => `<button role="radio" type="button" data-detour="${km}" aria-checked="${Math.abs(detour() - km) < 1e-9}" aria-label="${km < 1 ? t('{n} m', { n: km * 1000 }) : t('{n} km', { n: km })}">
+          <b class="num">${km < 1 ? km * 1000 : km}</b><small>${km < 1 ? t('m') : t('km')}</small></button>`).join('')}</div>`;
+  else if (pl.length) pick = `<button type="button" class="pill add wide-add" data-add>${PLUS}${t('Add a second place')}</button>`;
+  const rows = pl.map(x => LOC.edit === x.id ? `<li>${placeEditor(x)}</li>` : `<li class="pl-row">
+      <span class="pl-dot" aria-hidden="true"></span><span class="pl-text"><b dir="auto">${esc(placeLabel(x))}</b><small><bdi>${esc(x.label)}</bdi></small></span>
+      <button type="button" class="pl-btn" data-edit="${esc(x.id)}">${t('Edit')}</button>
+      ${pl.length > 1 ? `<button type="button" class="pl-btn pl-del" data-del="${esc(x.id)}" aria-label="${esc(t('Remove {x}', { x: placeLabel(x) }))}">${SVG.trash}</button>` : ''}</li>`).join('');
+  el.innerHTML = (pl.length ? `<div class="seg area-seg" role="radiogroup" aria-label="${esc(t('Where to look'))}">
+      <button role="radio" type="button" data-area="home" aria-checked="${!way}">${t('Around a place')}</button>
+      <button role="radio" type="button" data-area="route" aria-checked="${way}">${t('On the way')}</button></div>
+      <div class="loc-pick">${pick}</div>` : '')
+    + `<h3 class="loc-h">${t('Your places')}</h3>${rows ? `<ul class="place-list">${rows}</ul>` : ''}`
+    + (LOC.edit === 'new' ? placeEditor(null) : pl.length < MAX_PLACES ? `<button type="button" class="pill add" data-add>${PLUS}${t('Add a place')}</button>` : '');
+  if (pl.length && !way) radiusPicker($('#radius'), S.prefs.max_km ?? null, km => setPrefs({ max_km: km }));
+  const ed = el.querySelector('.place-edit');
+  if (ed) {
+    const save = ed.querySelector('[data-save]');
+    AddressPicker(ed.querySelector('.addr'), { home: LOC.edit === 'new' ? null : placeById(LOC.edit),
+                                               onPick: h => { LOC.draft = h; save.disabled = false; } });
+    ed.querySelector('#pl-name').addEventListener('keydown', e => { if (e.key === 'Enter' && !save.disabled) { e.preventDefault(); savePlace(); } });
+  }
+}
+function savePlace() {
+  const name = ($('#pl-name')?.value || '').trim().slice(0, 40) || null, pl = placesOf().map(x => ({ ...x }));
+  if (LOC.edit === 'new') {
+    if (!LOC.draft) return;
+    const id = !pl.length ? 'home' : newPlaceId(), patch = { places: [...pl, { id, name, ...addrOnly(LOC.draft) }] };
+    if (!pl.length) Object.assign(patch, { at: id, max_km: S.prefs.max_km ?? 5 });
+    else if (pl.length === 1) patch.to = id;  // a second place: the other end of the way
+    setPrefs(patch);
+  } else {
+    const i = pl.findIndex(x => x.id === LOC.edit);
+    if (i < 0) return;
+    pl[i] = { ...pl[i], name, ...(LOC.draft ? addrOnly(LOC.draft) : {}) };
+    setPrefs({ places: pl });
+  }
+  LOC.edit = LOC.draft = null;
+  renderLoc();
+  toast(t('Place saved'), null, null, 'none');
+}
+$('#loc-body').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  const d = b.dataset;
+  if (d.area) { if ((d.area === 'route') !== (S.prefs.area === 'route')) { haptic('select'); setPrefs({ area: d.area }); renderLoc(); } return; }
+  if (d.pick) { haptic('select'); pickPlace(d.pick, d.id); renderLoc(); return; }
+  if (d.travel) { if (d.travel !== S.prefs.travel) { haptic('select'); setPrefs({ travel: d.travel, detour_km: null }); renderLoc(); } return; }
+  if (d.detour) { haptic('select'); setPrefs({ detour_km: +d.detour }); renderLoc(); return; }
+  if ('add' in d) { haptic('tap'); LOC.edit = 'new'; LOC.draft = null; renderLoc(); setTimeout(() => $('#loc-body .place-edit')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30); return; }
+  if (d.edit) { haptic('tap'); LOC.edit = d.edit; LOC.draft = null; renderLoc(); return; }
+  if ('cancel' in d) { LOC.edit = LOC.draft = null; renderLoc(); return; }
+  if ('save' in d) { haptic('success'); savePlace(); return; }
+  if (d.del) {
+    const before = placesOf().map(x => ({ ...x })), gone = before.find(x => x.id === d.del);
+    haptic('warn');
+    setPrefs({ places: before.filter(x => x.id !== d.del) });
+    renderLoc();
+    toast(t('Removed {name}', { name: iso(placeLabel(gone)) }), t('Undo'), () => { setPrefs({ places: before }); renderLoc(); });
+  }
+});
 
 // ---------------------------------------------------------------- first sign-in: three short steps
 const OB = { step: 0, home: null, km: 5, map: null, picker: null };
@@ -430,10 +507,11 @@ function openAccount() {
     ${acc ? `<div class="acc-who">${avatarHTML(u, 'big')}<div><p class="acc-name" dir="auto">${esc(u.name || '')}</p>
       <p class="acc-mail">${esc(u.email || '')}${u.providers?.length ? ` · ${esc(u.providers.map(p => PROVIDER_NAME[p] || p).join(', '))}` : ''}</p></div></div>` : ''}
     <ul class="acc-list">
-      <li><button type="button" class="acc-row" data-acc="loc"><span class="acc-k">${t('Address')}</span>
-        <span class="acc-v">${h ? bdi(h.label) : t('Not set')}</span><span class="acc-go">${SVG.chev}</span></button></li>
-      <li><button type="button" class="acc-row" data-acc="loc"><span class="acc-k">${t('Distance')}</span>
-        <span class="acc-v">${S.prefs.max_km ? t('{n} km', { n: S.prefs.max_km }) : t('Any distance')}</span><span class="acc-go">${SVG.chev}</span></button></li>
+      <li><button type="button" class="acc-row" data-acc="loc"><span class="acc-k">${t('Your places')}</span>
+        <span class="acc-v">${h ? placesOf().map(x => bdi(placeLabel(x))).join(', ') : t('Not set')}</span><span class="acc-go">${SVG.chev}</span></button></li>
+      <li><button type="button" class="acc-row" data-acc="loc"><span class="acc-k">${onWay() ? t('On the way') : t('Around a place')}</span>
+        <span class="acc-v">${onWay() ? `${bdi(placeLabel(placeById(S.prefs.from)))} ${wayArrow()} ${bdi(placeLabel(placeById(S.prefs.to)))} · ${t(TRAVEL[S.prefs.travel || 'car'][0])}`
+          : `${h ? bdi(placeLabel(placeById(S.prefs.at))) + ' · ' : ''}${S.prefs.max_km ? t('{n} km', { n: S.prefs.max_km }) : t('Any distance')}`}</span><span class="acc-go">${SVG.chev}</span></button></li>
       <li class="acc-row static"><span class="acc-k">${t('Language')}</span>
         <span class="seg small" role="radiogroup" aria-label="${esc(t('Language'))}">
           <button type="button" role="radio" data-lang="he" lang="he" aria-checked="${L() === 'he'}">${FLAG.he}עברית</button>

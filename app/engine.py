@@ -12,7 +12,7 @@ import sqlite3
 import time
 from collections import defaultdict
 
-from . import deal_terms, geo, trust
+from . import commute, deal_terms, geo, trust
 from .chains import DELIVERY_DEFAULTS, ONLINE_HINTS, chain_name
 
 try:
@@ -206,13 +206,15 @@ def ph(seq):
     return ",".join("?" * len(seq))
 
 
-def compare(con, items, prefs=None, now_int=None, overrides=None):
+def compare(con, items, prefs=None, now_int=None, overrides=None, way=None):
+    """way: on my way (commute.corridor) = {(chain, store): (km off the route, km along it)} — the branches along the
+    route home -> work are priced instead of those within max_km of home, and the result gets the stop plans."""
     prefs = {**DEFAULT_PREFS, **(prefs or {})}
     items = [i for i in items if i.get("key") and float(i.get("qty") or 0) > 0]
     now_int = now_int or int(time.strftime("%Y%m%d%H%M"))
     if not items:
         return {"chains": [], "branches": [], "stale": [], "n": 0, "items": [], "prefs": prefs, "data_ts": 0,
-                "generated": int(time.time())}
+                "way": {"plans": []} if way is not None else None, "generated": int(time.time())}
     keys = list(dict.fromkeys(i["key"] for i in items))
     qty = {i["key"]: float(i["qty"]) for i in items}
     club = bool(prefs.get("club"))
@@ -279,8 +281,11 @@ def compare(con, items, prefs=None, now_int=None, overrides=None):
     def in_range(dist):  # stores not located yet can't be shown to be within range, so a distance cap hides them
         return max_km is None or (dist is not None and dist <= max_km)
 
+    def near(sk):  # on my way: along the route; otherwise within your distance of home
+        return sk in way if way is not None else in_range(loc[sk][0])
+
     delivery = delivery_table(con, overrides)
-    physical = {sk for sk, st in stores.items() if _is_physical(st) and in_range(loc[sk][0])}
+    physical = {sk for sk, st in stores.items() if _is_physical(st) and near(sk)}
     online_by_chain = defaultdict(list)
     for sk, st in stores.items():
         if _is_online(st) and (st["last_price_ts"] or 0) > 0:
@@ -438,6 +443,8 @@ def compare(con, items, prefs=None, now_int=None, overrides=None):
     for sk in prices:
         st = stores[sk]
         dist, lat, lon = loc[sk]
+        if way is not None and sk in way:
+            dist = round(way[sk][0], 1)
         if sk not in fresh:
             if sk in physical:
                 cur = stale_near.get(st["chain_id"])
@@ -447,6 +454,8 @@ def compare(con, items, prefs=None, now_int=None, overrides=None):
                                                   "last_price_ts": st["last_price_ts"]}
             continue
         entry = {**st, **price_store(sk), "distance_km": dist, "lat": lat, "lon": lon}
+        if way is not None and sk in way:  # on my way, a branch's distance is how far off the route it is
+            entry.update(distance_km=round(way[sk][0], 1), off_km=way[sk][0], at_km=way[sk][1])
         if sk in online_set:
             by_chain[st["chain_id"]]["online"].append(entry)
         if sk in physical:
@@ -568,15 +577,21 @@ def compare(con, items, prefs=None, now_int=None, overrides=None):
     branches = [{"chain_id": e["chain_id"], "chain": chain_name(e["chain_id"], names.get(e["chain_id"])),
                  "store_id": e["store_id"], "name": e["name"], "city": e["city"], "distance_km": e["distance_km"],
                  "lat": e["lat"], "lon": e["lon"], "total": e["total"], "covered": e["covered"],
-                 "missing": len(e["missing"]), "complete": e["complete"], "last_price_ts": e["last_price_ts"]}
+                 "missing": len(e["missing"]), "complete": e["complete"], "last_price_ts": e["last_price_ts"],
+                 **({"off_km": e.get("off_km"), "at_km": e.get("at_km")} if way is not None else {})}
                 for e in every]
+    # on my way: the cart spread over 1..5 branches along the route, each product where it's cheapest (app.commute)
+    plans = None
+    if way is not None:
+        plans = [] if delivery_mode else commute.plans(
+            [{**e, "chain": chain_name(e["chain_id"], names.get(e["chain_id"]))} for e in every], compared)
     seen_area, no_area_kept = set(), []
     for a in sorted(no_area, key=lambda a: a["chain"]):
         if a["chain"] not in seen_area and a["chain"] not in seen:
             seen_area.add(a["chain"])
             no_area_kept.append(a)
     return {"chains": ranked, "branches": branches, "stale": stale, "n": n, "items": item_info, "prefs": prefs,
-            "no_area": no_area_kept,
+            "no_area": no_area_kept, "way": {"plans": plans} if way is not None else None,
             "data_ts": data_ts, "generated": int(time.time())}
 
 
@@ -588,8 +603,11 @@ def _within(price, median):
 
 
 def _slim(e):
-    return {k: e.get(k) for k in ("chain_id", "store_id", "name", "address", "city", "store_type", "total",
-                                  "covered", "missing", "complete", "last_price_ts", "distance_km", "lat", "lon")}
+    out = {k: e.get(k) for k in ("chain_id", "store_id", "name", "address", "city", "store_type", "total",
+                                 "covered", "missing", "complete", "last_price_ts", "distance_km", "lat", "lon")}
+    if "at_km" in e:  # on my way
+        out.update(off_km=e["off_km"], at_km=e["at_km"])
+    return out
 
 
 # ---------------------------------------------------------------- carts
