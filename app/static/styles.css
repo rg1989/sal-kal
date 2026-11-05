@@ -977,6 +977,16 @@ body[data-view="basket"] #lc-cta { display: none; }
               linear-gradient(to bottom, transparent 0, #000 16%, #000 84%, transparent 100%);
   mask-composite: intersect;
 }
+/* on the home page the map starts right under the header line, so no fade at its top */
+#view-home { padding-top: 0; }
+#home-map .mapbox { margin-top: 0; }
+#home-map .mapbox canvas.maplibregl-canvas {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 13%, #000 87%, transparent 100%),
+                      linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 13%, #000 87%, transparent 100%),
+              linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
+}
+#home-map + .hero { margin-top: 12px; }
 .mapbox .map-info { left: 24px; top: 10px; }
 .mapbox .maplibregl-cooperative-gesture-screen { display: none !important; }  /* no "use ⌘ + scroll" nag */
 .mapbox .maplibregl-ctrl-attrib, .mapbox .maplibregl-ctrl.maplibregl-ctrl-attrib { background: transparent; opacity: .7; }

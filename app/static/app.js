@@ -606,8 +606,16 @@ function drawMapData(animate = true) {
   map.getSource('radius').setData(circle(home.lat, home.lon, r));
   drawDots();
   homeMarker.setLngLat([home.lon, home.lat]);
+  fitMap(animate);
+}
+// home shows the whole distance circle (a new radius zooms in or out); checkout shows the route to the selected store
+function fitMap(animate) {
+  if (!map || !mapData?.home) return;
+  if (!onHome() && fitRoute(animate)) return;
+  const { home, max_km } = mapData, r = max_km || 15;
   const dx = r / (111.32 * Math.cos(home.lat * Math.PI / 180)), dy = r / 110.574;
-  if (!fitRoute(animate)) map.fitBounds([[home.lon - dx, home.lat - dy], [home.lon + dx, home.lat + dy]], { padding: edge(), duration: animate ? 900 : 0 });
+  map.fitBounds([[home.lon - dx, home.lat - dy], [home.lon + dx, home.lat + dy]],
+                { padding: onHome() ? circlePad() : edge(), duration: animate ? 900 : 0 });
 }
 const bestOnly = () => !S.allBranches && !delivery() && !!S.result?.chains?.length;
 function drawDots() {
@@ -667,8 +675,10 @@ async function initMap() {
 // the map lives on the home page and at checkout; it moves with you rather than loading twice
 function placeMap(slot) {
   const w = $('#map-wrap');
-  if (w.parentElement !== slot) slot.append(w, $('#store-card'));
+  const moved = w.parentElement !== slot;
+  if (moved) slot.append(w, $('#store-card'));
   map?.resize();
+  if (moved) fitMap(false);
 }
 // the cheapest stores for this cart, with their totals, right on the map; the cheapest one in the brand yellow
 let pins = [];
@@ -784,10 +794,17 @@ function drawRoute(fit) {
   } else selMarker?.remove();
   // a new store (first load, a cart change that moves the cheapest, a tap) gets the view; re-renders of the same one don't
   const key = g && v ? `${v.chain_id}:${v.store_id}` : null;
-  if (g && (fit || key !== fittedTo)) fitRoute(true);
+  if (g && !onHome() && (fit || key !== fittedTo)) fitRoute(true);
 }
 // the map fades out at its edges, so keep what matters in the clear middle (and room above for the price pins)
 const edge = () => innerWidth < 600 ? { top: 105, bottom: 45, left: 64, right: 64 } : { top: 130, bottom: 70, left: 90, right: 90 };
+// home: the distance circle fills the map's height (no top fade there; the bottom fade takes a little more room).
+// Where the map is narrow the circle's top would run under the map-info pill, so it starts below it.
+const onHome = () => !!$('#map-wrap').closest('#home-map');
+const circlePad = () => {
+  const w = map.getContainer().clientWidth;
+  return { top: w < 900 ? 54 : 18, bottom: w < 600 ? 30 : 40, left: 24, right: 24 };
+};
 let fittedTo = null;
 function fitRoute(animate) {
   const g = S.routeGeo, v = selStore();
