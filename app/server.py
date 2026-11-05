@@ -1763,9 +1763,16 @@ def _write_items(c, cid, items):
     codes = [i["key"] for i in items if ":" not in i["key"]]
     if codes:  # cart products' photos first: real products only, so a cart can't send the photo fetcher anywhere
         want_photos([r[0] for r in c.execute(f"SELECT code FROM products WHERE scope='global' AND key IN ({','.join('?' * len(codes))})", codes)])
+    # lines without a name (a cart from a shared link carries only barcodes and quantities) get the product's own
+    unnamed = [i["key"] for i in items if not i.get("name")]
+    named = {}
+    for k in range(0, len(unnamed), 500):
+        part = unnamed[k:k + 500]
+        named.update(c.execute(f"SELECT key, name FROM products WHERE key IN ({','.join('?' * len(part))})", part).fetchall())
     c.execute("DELETE FROM cart_items WHERE cart_id=?", (cid,))
     c.executemany("INSERT OR REPLACE INTO cart_items(cart_id, key, qty, name, position) VALUES(?,?,?,?,?)",
-                  [(cid, i["key"], i["qty"], str(i.get("name") or "")[:200], n) for n, i in enumerate(items)])
+                  [(cid, i["key"], i["qty"], str(i.get("name") or named.get(i["key"]) or "")[:200], n)
+                   for n, i in enumerate(items)])
 
 
 @app.get("/api/carts/{cid}")

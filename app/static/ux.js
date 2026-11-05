@@ -157,13 +157,14 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   d.addEventListener('cancel', e => { e.preventDefault(); closeSheet(d); });  // Esc: animate out too
 });
 
-// a yes/no question in Sal's own sheet instead of the browser's confirm()
-function confirmSheet(question, yes) {
-  const d = document.getElementById('confirm');
+// a yes/no question in Sal's own sheet instead of the browser's confirm(); red for deleting, `safe` for anything else
+function confirmSheet(question, yes, safe = false) {
+  const d = document.getElementById('confirm'), y = document.getElementById('confirm-yes');
   document.getElementById('confirm-q').textContent = question;
-  document.getElementById('confirm-yes').textContent = yes;
+  y.textContent = yes;
+  y.classList.toggle('danger', !safe);
   openSheet(d);
-  haptic('warn');
+  haptic(safe ? 'select' : 'warn');
   return new Promise(ok => {
     const pick = e => {
       const b = e.target.closest('[data-answer]');

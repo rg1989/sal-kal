@@ -425,6 +425,7 @@ document.querySelector('.cart-edit').addEventListener('click', async e => {
   const b = e.target.closest('[data-cart]'); if (!b) return;
   await saving;
   if (b.dataset.cart === 'cmp') return openCompare();
+  if (b.dataset.cart === 'share') return shareCart();
   if (b.dataset.cart === 'empty') {
     if (!S.cart.items.length) return;
     const old = S.cart.items;
@@ -1464,6 +1465,7 @@ $('#view-product').addEventListener('click', e => {
 let navs = 0;
 const VIEWS = { '': 'home', s: 'browse', c: 'browse', p: 'product', basket: 'basket' };
 function route() {
+  if (catchShare()) { takeShare(); return; }  // a shared cart's link opened in a running app (it goes home itself)
   navs++;
   const m = location.hash.match(/^#\/([a-z]*)\/?([^?]*)(?:\?(.*))?$/) || [];
   const v = VIEWS[m[1] || ''] || 'home', arg = decodeURIComponent(m[2] || ''), qs = new URLSearchParams(m[3] || '');
@@ -2200,6 +2202,91 @@ function relabel() {
 }
 
 // ---------------------------------------------------------------- start (account.js calls this once you're signed in)
+// ---------------------------------------------------------------- sharing a cart by link
+// The cart travels in the link itself: #/share/<its name and lines, deflated, base64url>. The part after # never
+// reaches a server, so nothing is stored, looked up or sent to anyone: you pass the link on yourself, and whoever
+// opens it sees the cart's name and size and chooses to add it as a cart of their own (a copy). Only barcodes and
+// quantities travel; the server names the products from its own list.
+const SHARE_MAX = 24000, SHARE_TEXT_MAX = 40000, SHARE_KEY = /^[0-9A-Za-z][0-9A-Za-z:._-]{0,39}$/;
+const b64u = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0));
+async function squeeze(bytes, how) {  // deflate-raw both ways; inflating stops past SHARE_TEXT_MAX (no zip bombs)
+  const out = new Blob([bytes]).stream().pipeThrough(how === 'in' ? new DecompressionStream('deflate-raw') : new CompressionStream('deflate-raw'));
+  const parts = [];
+  let n = 0;
+  for (const reader = out.getReader(); ;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if ((n += value.length) > SHARE_TEXT_MAX) { reader.cancel(); throw new Error('too big'); }
+    parts.push(value);
+  }
+  return new Uint8Array(await new Blob(parts).arrayBuffer());
+}
+async function packCart(cart) {
+  const lines = cart.items.map(i => +i.qty === 1 ? i.key : `${i.key}*${+i.qty}`);
+  const raw = new TextEncoder().encode(`${String(cart.name || '').replace(/\s+/g, ' ').slice(0, 80)}\n${lines.join(' ')}`);
+  if (typeof CompressionStream === 'function') return 'z' + b64u(await squeeze(raw, 'out'));
+  return 'p' + b64u(raw);
+}
+async function unpackCart(s) {
+  if (!s || s.length > SHARE_MAX || !/^[zp][A-Za-z0-9_-]+$/.test(s)) return null;
+  let bytes = unb64u(s.slice(1));
+  if (s[0] === 'z') bytes = await squeeze(bytes, 'in');
+  if (bytes.length > SHARE_TEXT_MAX) return null;
+  const [name, rest = ''] = new TextDecoder().decode(bytes).split('\n');
+  const seen = new Set(), items = [];
+  for (const w of rest.split(' ')) {
+    const [key, q] = w.split('*'), qty = q == null ? 1 : Math.round(parseFloat(q) * 100) / 100;
+    if (!SHARE_KEY.test(key || '') || seen.has(key) || !(qty >= 0.01 && qty <= 999)) continue;
+    seen.add(key);
+    items.push({ key, qty });
+    if (items.length >= 400) break;
+  }
+  return items.length ? { name: name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80) || t('Untitled'), items } : null;
+}
+async function shareCart() {
+  if (!S.cart.items.length) return toast(t('Add products first'), null, null, 'warn');
+  const url = `${location.origin}/app#/share/${await packCart(S.cart)}`;
+  Usage.ev('cart', { a: 'share', n: S.cart.items.length });
+  if (navigator.share) {
+    try { await navigator.share({ title: S.cart.name, url }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(url); haptic('success'); toast(t('Link copied'), null, null, 'success'); }
+  catch { window.prompt(t('Copy this link'), url); }
+}
+// a link's cart waits in this browser (through sign-in and first-run setup) until the app is up to add it
+function catchShare() {
+  const m = location.hash.match(/^#\/share\/([A-Za-z0-9_-]+)/);
+  if (!m) return false;
+  local.set('share', JSON.stringify({ p: m[1], t: Date.now() }));
+  history.replaceState(null, '', location.pathname + '#/');
+  return true;
+}
+let sharing = false;
+async function takeShare() {
+  if (!appStarted || sharing) return;
+  let p = null;
+  try { const w = JSON.parse(local.get('share') || 'null'); if (w && Date.now() - w.t < 864e5) p = w.p; } catch { /* nothing waiting */ }
+  try { localStorage.removeItem('share'); } catch { /* private mode */ }
+  if (!p) return;
+  sharing = true;
+  try {
+    const cart = await unpackCart(p).catch(() => null);
+    if (!cart) return toast(t("This link isn't a cart"), null, null, 'warn');
+    if (!await confirmSheet(t('Add the cart “{cart}” ({n}) to your carts?', { cart: iso(cart.name), n: tn(cart.items.length, 'product') }), t('Add cart'), true)) return;
+    await saving;
+    const c = await api('/api/carts', { method: 'POST', body: cart }).catch(e => ({ error: e }));
+    if (c.error) return toast(String(c.error.message).startsWith('409') ? t('You have too many carts') : t("Couldn't create a cart"), null, null, 'error');
+    Usage.ev('cart', { a: 'from_link', n: cart.items.length });
+    haptic('success');
+    await loadCarts();
+    await openCart(c.id);
+    toast(t('Added the cart “{cart}”', { cart: iso(c.name) }), t('View cart'), showCart, 'success');
+  } finally { sharing = false; }
+}
+catchShare();  // before anything reads the address: the app starts on home, and sign-in can't lose the cart
+
 async function startApp() {
   showView();      // the page the address asks for, in its loading shape, before anything has arrived
   renderBasket();  // the cart's shape too
@@ -2214,4 +2301,5 @@ async function startApp() {
   if (want) await openCart(want.id);
   else { S.cartsLoaded = true; renderBasket(); renderResults(); }
   pollStatus();
+  takeShare();  // a shared cart's link that brought you here
 }

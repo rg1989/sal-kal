@@ -373,5 +373,11 @@ _lists per query + where you shop + club + data version (deals_version, confirme
 LIST_TTL 10 min or until a deal among them starts/ends; a list being read is waited for, not read twice. /api/categories
 queues every category's list for that account (list-warmer thread, off the request path). Browser: lists remembered 10
 min (refreshed after 1), a category fetched on pointer-over/touch of its link. Tests: tests/test_lists.py.
+Sharing a cart (2026-11-06, per user: no spam, nothing sent to anyone, no lookups): the cart's Share button builds
+`/app#/share/<payload>` = 'z' + base64url(deflate-raw("name\nkey*qty key …")) (qty omitted when 1; 'p' = not deflated).
+The fragment never reaches the server: nothing is stored. navigator.share on phones, else clipboard. Opening it
+(app.js catchShare) keeps it in localStorage ('share', 1 day) through sign-in and first-run setup; once the app is up,
+takeShare() asks (confirmSheet, safe) and POSTs it as the opener's own cart (a copy). Only keys and quantities travel:
+_write_items names unnamed lines from products. Limits: 24k-char link, 40 KB inflated, 400 lines, keys checked.
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

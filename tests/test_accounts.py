@@ -85,6 +85,11 @@ as_user(alice)
 assert server.list_carts() == []
 mine = server.create_cart({"name": "Party", "items": [{"key": "7290110115395", "qty": 3, "name": "סבון"}]})
 assert [x["id"] for x in server.list_carts()] == [mine["id"]]
+# a cart from a shared link carries only keys and quantities: the server names the products from its own list
+c.execute("INSERT OR REPLACE INTO products(key, code, name, scope) VALUES ('7290000000015', '7290000000015', 'קוטג׳', 'global')")
+linked = server.create_cart({"name": "From Dana", "items": [{"key": "7290000000015", "qty": 2}, {"key": "7290000000999", "qty": 1}]})
+assert [(i["key"], i["qty"], i["name"]) for i in linked["items"]] == [("7290000000015", 2, "קוטג׳"), ("7290000000999", 1, "")]
+server.delete_cart(linked["id"])
 for call in (lambda: server.get_cart(1), lambda: server.update_cart(1, {"name": "x"}), lambda: server.delete_cart(1),
              lambda: server.duplicate_cart(1)):
     try:

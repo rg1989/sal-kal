@@ -91,6 +91,10 @@ const HE = {
   'Added {n} to {cart}': 'נוספו {n} לסל "{cart}"', 'Added to {cart}': 'נוסף לסל "{cart}"', 'View cart': 'לסל',
   'Your cart': 'הסל שלך', 'Your carts': 'הסלים שלך', 'Close the cart': 'סגירת הסל', 'Cart name': 'שם הסל',
   'Compare your carts': 'השוואת הסלים שלך', 'Empty this cart': 'ריקון הסל', 'Duplicate this cart': 'שכפול הסל',
+  'Share this cart': 'שיתוף הסל', 'Link copied': 'הקישור הועתק', 'Copy this link': 'העתיקו את הקישור',
+  'Add products first': 'קודם מוסיפים מוצרים', 'Add the cart “{cart}” ({n}) to your carts?': 'להוסיף את הסל "{cart}" ({n}) לסלים שלך?',
+  'Add cart': 'הוספת הסל', 'Added the cart “{cart}”': 'הסל "{cart}" נוסף', "This link isn't a cart": 'הקישור הזה לא סל',
+  "You have too many carts": 'יש לך יותר מדי סלים',
   'Delete this cart': 'מחיקת הסל', 'This cart is empty': 'הסל ריק', 'Where this cart costs least': 'איפה הסל הכי זול',
   'Every branch near you, cheapest first': 'כל הסניפים לידך, מהזול ליקר', 'Compare stores': 'השוואת חנויות', 'Go to comparison': 'מעבר להשוואה',
   // ---- checkout
