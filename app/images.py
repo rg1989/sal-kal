@@ -84,7 +84,7 @@ def save_photo(code, data, white=True):
         out = im.convert("RGBA")
         out.thumbnail((360, 360), Image.LANCZOS)
     os.makedirs(PHOTO_DIR, exist_ok=True)
-    tmp = photo_path(code) + ".tmp"
+    tmp = f"{photo_path(code)}.{os.getpid()}.{threading.get_ident()}.tmp"
     out.save(tmp, "WEBP", quality=86)
     os.replace(tmp, photo_path(code))
     return True
@@ -383,12 +383,18 @@ def run(con, minutes=50, srcs=None):
                         continue
                     busy.add(code)
                 fetched = True
-                res, data = src.fetch(code)
-                with lock:
-                    busy.discard(code)
+                try:
+                    res, data = src.fetch(code)
+                    saved = res == OK and save_photo(code, data, src.white)
+                except Exception:  # never let one product stop this source's worker
+                    log.exception("%s %s", src.name, code)
+                    res, saved = RETRY, False
+                finally:
+                    with lock:
+                        busy.discard(code)  # only now: another worker must not fetch it while it's being saved
                 if res in (OK, MISS):
                     src.went_well()
-                if res == OK and save_photo(code, data, src.white):
+                if saved:
                     errors = 0
                     with lock:
                         done.add(code)
