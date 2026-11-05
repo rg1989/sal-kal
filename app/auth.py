@@ -9,6 +9,7 @@ Config: auth.json next to the price DB (or $SAL_AUTH), readable by Sal only. Fil
     ./set-login.sh google <client id>        (asks for the secret; runs python -m app.auth as the sal user)
     ./set-login.sh facebook <app id>
     ./set-login.sh base-url https://sal.example.com
+    ./set-login.sh turnstile <site key>      Cloudflare Turnstile bot check on sign-in (asks for its secret key)
 With no provider set up Sal runs as before: one household, no sign-in ("local" mode).
 
 The household's carts and settings from before accounts belong to user 1. The first account to sign in takes them
@@ -186,16 +187,25 @@ def end_session(c, token):
         c.commit()
 
 
+def existing(c, provider, subject, email, verified):
+    """The account this provider identity already belongs to (itself, or another sign-in that verified the same
+    address), else None: signing in would make a new one."""
+    email = (email or "").strip().lower() or None
+    r = c.execute("SELECT user_id FROM identities WHERE provider=? AND subject=?", (provider, subject)).fetchone()
+    if r:
+        return r[0]
+    if email and verified:  # only ever joined through another sign-in that verified the same address
+        r = c.execute("SELECT user_id FROM identities WHERE email=? AND verified=1 ORDER BY created LIMIT 1", (email,)).fetchone()
+        return r[0] if r else None
+    return None
+
+
 def sign_in(c, provider, subject, email, verified, name, avatar, lang=None):
     """The account for this provider identity: an existing one, the one with the same verified email (Google and
     Facebook on one account), the household's (first sign-in), or a new one. Returns the user id."""
     now = int(time.time())
     email = (email or "").strip().lower() or None
-    r = c.execute("SELECT user_id FROM identities WHERE provider=? AND subject=?", (provider, subject)).fetchone()
-    uid = r[0] if r else None
-    if uid is None and email and verified:  # only ever joined through another sign-in that verified the same address
-        r = c.execute("SELECT user_id FROM identities WHERE email=? AND verified=1 ORDER BY created LIMIT 1", (email,)).fetchone()
-        uid = r[0] if r else None
+    uid = existing(c, provider, subject, email, verified)
     if uid is None:
         owner = (config().get("owner_email") or "").strip().lower()
         first = not c.execute("SELECT 1 FROM identities LIMIT 1").fetchone()
@@ -309,16 +319,20 @@ def main(argv=None):
         cfg["google"] = {"client_id": a[1], "client_secret": secret()}
     elif a[:1] == ["facebook"] and len(a) in (2, 3):
         cfg["facebook"] = {"app_id": a[1], "app_secret": secret()}
+    elif a[:1] == ["turnstile"] and len(a) in (2, 3):  # Cloudflare Turnstile: site key, then its secret key
+        cfg["turnstile"] = {"site_key": a[1], "secret": secret()}
     elif a[:1] == ["base-url"] and len(a) == 2:
         cfg["base_url"] = a[1].rstrip("/")
     elif a[:1] == ["owner-email"] and len(a) == 2:
         cfg["owner_email"] = a[1].strip().lower()
-    elif a[:1] == ["off"] and len(a) == 2 and a[1] in ("google", "facebook"):
+    elif a[:1] == ["off"] and len(a) == 2 and a[1] in ("google", "facebook", "turnstile"):
         cfg.pop(a[1], None)
     elif a[:1] in ([], ["status"]):
         print("config:", config_path())
         print("sign-in with:", ", ".join(p for p in providers() if p != "dev") or "nothing (local mode: no accounts)")
         print("base url:", cfg.get("base_url") or "(from each request)")
+        t = cfg.get("turnstile") or {}
+        print("bot check (Turnstile):", "on, site key " + t["site_key"] if t.get("site_key") and t.get("secret") else "off")
         return 0
     else:
         print(__doc__)

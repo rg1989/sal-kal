@@ -4,11 +4,12 @@
 #   ./set-login.sh facebook <app id>         asks for the app secret
 #   ./set-login.sh base-url https://sal.example.com
 #   ./set-login.sh owner-email you@gmail.com only this account takes over the household's carts (optional)
-#   ./set-login.sh off google|facebook
+#   ./set-login.sh turnstile <site key>      Cloudflare Turnstile bot check on sign-in; asks for the secret key
+#   ./set-login.sh off google|facebook|turnstile
 #   ./set-login.sh status
 # With no provider set up Sal runs as before: one household, no sign-in.
 set -euo pipefail
-if [ "${1:-}" = google ] || [ "${1:-}" = facebook ]; then
+if [ "${1:-}" = google ] || [ "${1:-}" = facebook ] || [ "${1:-}" = turnstile ]; then
   [ $# -eq 2 ] || { echo "usage: $0 $1 <id>" >&2; exit 2; }
   read -rsp "$1 secret: " SECRET; echo
   [ -n "$SECRET" ] || { echo "no secret given" >&2; exit 2; }

@@ -165,7 +165,7 @@ class Busy(RuntimeError):
 
 # name -> (calls, per seconds, at once)
 OUTSIDE = {"osrm": (60, 60, 4), "fossgis": (30, 60, 2), "overpass": (30, 3600, 2), "google": (1500, 86400, 2),
-           "nominatim": (60, 60, 2)}  # Nominatim itself waits 1 s between calls: at most 2 requests wait for it
+           "nominatim": (60, 60, 2), "turnstile": (600, 60, 4)}  # Nominatim itself waits 1 s between calls: at most 2 requests wait for it
 _out = {name: threading.BoundedSemaphore(at_once) for name, (_, _, at_once) in OUTSIDE.items()}
 
 

@@ -143,7 +143,8 @@ const HE = {
   'All together': 'הכול יחד', 'Close': 'סגירה', 'Done': 'סיום', 'Cancel': 'ביטול', 'Show stores within': 'הצגת חנויות ברדיוס',
   // ---- signing in
   'Supermarket price comparison': 'השוואת מחירים בסופרמרקטים', 'Continue with {name}': 'המשך עם {name}',
-  'Sign-in was cancelled.': 'הכניסה בוטלה.', 'Couldn’t sign you in. Try again.': 'לא הצלחנו להכניס אותך. נסו שוב.',
+  'Sign-in was cancelled.': 'הכניסה בוטלה.', 'We couldn’t confirm you’re a person. Try again.': 'לא הצלחנו לוודא שאתם לא בוט. נסו שוב.',
+  'Too many sign-ins right now. Try again later.': 'יותר מדי כניסות כרגע. נסו שוב מאוחר יותר.','Couldn’t sign you in. Try again.': 'לא הצלחנו להכניס אותך. נסו שוב.',
   'You were signed out. Sign in again.': 'יצאת מהחשבון. היכנסו שוב.',
   'Sal-Kal isn’t reachable right now. Try again in a minute.': 'סל קל לא זמין כרגע. נסו שוב בעוד דקה.', 'Try again': 'ניסיון נוסף',
   'Deleting your data': 'מחיקת המידע שלך', 'Sign-in opens soon.': 'הכניסה תיפתח בקרוב.', 'Built by': 'נבנה על ידי', 'About': 'אודות',

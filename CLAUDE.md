@@ -349,6 +349,20 @@ COOP. No /docs or /openapi.json. sal-web: MemoryMax 3G, TasksMax 256, CPUQuota 4
 sal-tunnel MemoryMax 1G. Tests: tests/test_security.py. Several sessions work in this folder at once and deploy
 selected files: before deploying, compare /srv/sal/code/app with HEAD and your working copy, and install only your
 own files.
+Bot checks on sign-in (2026-11-06, per user: no bots making accounts or signing in). `app/botcheck.py`: Cloudflare
+Turnstile (free) on the sign-in page — account.js renders it invisible (appearance interaction-only; a checkbox only when
+Cloudflare isn't sure) and POSTs its one-time token to /auth/<provider>, which checks it with siteverify (action "signin",
+hostname = base_url, fails closed; Cloudflare's test keys pass) and answers {url}; with Turnstile on, plain GET
+/auth/<provider> goes back to the sign-in page. Turn on: create a free widget at dash.cloudflare.com > Turnstile
+(hostname sal-kal.com, mode Managed), then `./set-login.sh turnstile <site key>` (asks the secret); off: `off turnstile`.
+Always on, Turnstile or not: each sign-in state comes back from the provider once (first_use), crawler/script/headless
+User-Agents can't start one, per-visitor sign-in starts 12/10 min, new accounts 6/day per visitor and 60/hour, 500/day
+site-wide (auth.json "limits" overrides), a new Google account needs an address Google verified. Visitor limits are
+in memory, hashed, and skip the home network. Failures show in /admin as signin_fail reasons. Tests: tests/test_botcheck.py.
+Cloudflare (2026-11-06, Free plan, all $0): Turnstile widget "Sal-Kal sign-in" (sal-kal.com, Managed); Bot Fight Mode on;
+AI Crawler and Agent access policies: Search allowed, Training + Agents blocked. Bot Fight Mode injects an inline
+detection script per request: _page() adds a fresh 'nonce-…' to script-src on every page and Cloudflare stamps its script
+with it (our own inline scripts stay allowed by hash).
 Lists fast (2026-11-05, per user): deal_pct() returns LiveDeals (each product's deals with start/end, read once per
 deals table + stale-store set; live-ness checked when asked; deal-warmer thread re-reads within 30 s of an index run),
 instead of a dict thrown away whenever any deal ended (a ~2M-row read, up to 17 s cold). browse() keeps results in

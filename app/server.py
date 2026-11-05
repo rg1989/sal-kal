@@ -13,6 +13,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import auth, catalog, commute, engine, geo, guard, places, reports, stats, trust
+from . import auth, botcheck, catalog, commute, engine, geo, guard, places, reports, stats, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
@@ -333,12 +334,17 @@ def _page(name):
             return f'{mt.group(1)}/static/{mt.group(2)}?v={int(os.stat(f).st_mtime) if os.path.exists(f) else 0}"'
         page = re.sub(r'(src="|href=")/static/([\w./-]+\.(?:js|css))"', stamp, page)
         hit = _pages[name] = (m, page, _csp(page))
-    return HTMLResponse(hit[1], headers={"Cache-Control": "no-cache", "Content-Security-Policy": hit[2]})
+    # a fresh nonce on every page: Cloudflare's Bot Fight Mode injects its own inline detection script (different on
+    # every request, so no hash can allow it) and stamps it with the nonce it finds in this header. Our own inline
+    # scripts stay allowed by their hashes only.
+    csp = hit[2].replace("script-src 'self'", f"script-src 'self' 'nonce-{secrets.token_urlsafe(18)}'", 1)
+    return HTMLResponse(hit[1], headers={"Cache-Control": "no-cache", "Content-Security-Policy": csp})
 
 
 # Scripts only from this server: the pages' own small inline scripts by their hash, and the two inline handlers the
 # page code writes (a photo that fails removes itself; the offline page's "Try again"). Inline styles stay allowed:
-# the page builds them. Avatars come from Google or Facebook; the map's tiles, fonts and icons from OpenFreeMap.
+# the page builds them. Avatars come from Google or Facebook; the map's tiles, fonts and icons from OpenFreeMap; the
+# sign-in bot check (Cloudflare Turnstile, app.botcheck) is a script and a frame from challenges.cloudflare.com.
 HANDLERS = ("this.remove()", "location.reload()")
 
 
@@ -349,8 +355,8 @@ def _sha(text):
 def _csp(page):
     inline = re.findall(r"<script>(.*?)</script>", page, re.S)
     return ("default-src 'self'; "
-            f"script-src 'self' {' '.join(_sha(s) for s in inline)} 'unsafe-hashes' {' '.join(_sha(h) for h in HANDLERS)}; "
-            "worker-src 'self' blob:; child-src blob:; "
+            f"script-src 'self' https://challenges.cloudflare.com {' '.join(_sha(s) for s in inline)} 'unsafe-hashes' {' '.join(_sha(h) for h in HANDLERS)}; "
+            "worker-src 'self' blob:; child-src blob:; frame-src https://challenges.cloudflare.com; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: blob: https://*.googleusercontent.com https://platform-lookaside.fbsbx.com https://*.fbcdn.net; "
             "connect-src 'self' https://tiles.openfreemap.org; media-src 'self'; manifest-src 'self'; object-src 'none'; "
@@ -1822,17 +1828,59 @@ def _back(why=None):
     return resp
 
 
-@app.get("/auth/{provider}")
-def auth_start(provider: str, request: Request, lang: str = "", who: str = "", v: str = ""):
-    if provider not in auth.providers():
-        raise HTTPException(404, "sign-in not set up")
+def _start(provider, request, lang, v, who=""):
+    """The provider's sign-in address and the response that sets the one-time state cookie."""
     url, state = auth.start(provider, f"{_base(request)}/auth/{provider}/callback", who=who if provider == "dev" else None)
     state["l"] = lang if lang in ("he", "en") else request.cookies.get("lang") if request.cookies.get("lang") in ("he", "en") else None
     vid, sid = _visit_ids(v)  # usage.js's ids, so the statistics can follow a visit through the provider and back
     if vid:
         state["x"] = f"{vid}.{sid}"
     _ev("signin_start", a=provider, vid=vid, sid=sid)
+    return url, state
+
+
+def _start_refused(provider, request, v):
+    """Why this visitor may not start signing in now (app.botcheck), else None."""
+    why = botcheck.allow_start(request.headers.get("cf-connecting-ip"), request.headers.get("user-agent"))
+    if why:
+        vid, sid = _visit_ids(v)
+        _ev("signin_fail", a=provider, b=f"start: {why}", vid=vid, sid=sid)
+    return why
+
+
+@app.get("/auth/{provider}")
+def auth_start(provider: str, request: Request, lang: str = "", who: str = "", v: str = ""):
+    """Sign-in by a plain link: only while the bot check is off (with it on, the page posts its token instead)."""
+    if provider not in auth.providers():
+        raise HTTPException(404, "sign-in not set up")
+    if botcheck.on():
+        return _back()
+    why = _start_refused(provider, request, v)
+    if why:
+        return _back("busy" if why == "busy" else "failed")
+    url, state = _start(provider, request, lang, v, who)
     resp = RedirectResponse(url, status_code=303)
+    _cookie(resp, request, auth.STATE_COOKIE, auth.sign(state), 900, path="/auth")
+    return resp
+
+
+@app.post("/auth/{provider}")
+def auth_start_checked(provider: str, request: Request, body: dict = Body(default={})):
+    """Sign-in from the sign-in page with its bot-check token: {token, lang, v, who} -> {url} to send the browser to."""
+    if provider not in auth.providers():
+        raise HTTPException(404, "sign-in not set up")
+    v = str(body.get("v") or "")[:80]
+    vid, sid = _visit_ids(v)
+    why = _start_refused(provider, request, v)
+    if why:
+        return JSONResponse({"detail": why}, status_code=429 if why == "busy" else 403)
+    if botcheck.on():
+        why = botcheck.verify(body.get("token"), request.headers.get("cf-connecting-ip"))
+        if why:
+            _ev("signin_fail", a=provider, b=f"bot check: {why}", vid=vid, sid=sid)
+            return JSONResponse({"detail": "bot check", "why": why}, status_code=403)
+    url, state = _start(provider, request, str(body.get("lang") or ""), v, str(body.get("who") or "")[:20])
+    resp = JSONResponse({"url": url})
     _cookie(resp, request, auth.STATE_COOKIE, auth.sign(state), 900, path="/auth")
     return resp
 
@@ -1848,12 +1896,19 @@ def auth_callback(provider: str, request: Request, code: str = "", state: str = 
         return fail("no state cookie", "failed")
     if st.get("p") != provider or not code or not hmac.compare_digest(str(st.get("s", "")), state):
         return fail("state mismatch", "failed")
+    if not botcheck.first_use(state):  # one bot check, one sign-in: a state comes back from the provider once
+        return fail("state reused", "failed")
     try:
         sub, email, verified, name, avatar = auth.finish(provider, code, f"{_base(request)}/auth/{provider}/callback", st.get("v"))
     except Exception as e:
         print(f"{provider} sign-in failed:", e, file=sys.stderr)
         return fail(f"provider: {str(e)[:100]}", "failed")
     c = con()
+    if auth.existing(c, provider, str(sub), email, verified) is None:  # a new account: the limits on new ones
+        if provider == "google" and not verified:
+            return fail("new account: address not verified by Google", "failed")
+        if botcheck.allow_new(request.headers.get("cf-connecting-ip")):
+            return fail("new account: limit reached", "busy")
     before = c.execute("SELECT coalesce(max(id), 0) FROM users").fetchone()[0]
     user_id = auth.sign_in(c, provider, str(sub), email, verified, (name or "")[:80], avatar, lang=st.get("l"))
     _ev("signin", a=provider, b="new" if user_id > before else "back", uid=user_id, vid=vid, sid=sid,
@@ -1869,7 +1924,7 @@ def get_me():
     """Who you are, whether sign-in is on (and with what), and your shopping preferences."""
     u, c = me(), con()
     out = {"mode": "accounts" if auth.accounts_on() or _public.get() else "local", "providers": auth.providers(),
-           "user": None, "prefs": None}
+           "user": None, "prefs": None, "turnstile": botcheck.site_key()}
     if u:
         u["providers"] = [r[0] for r in c.execute("SELECT provider FROM identities WHERE user_id=? ORDER BY created", (u["id"],))]
         out.update(user=auth.public(u), prefs=prefs())

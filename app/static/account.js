@@ -2,7 +2,7 @@
 // Signing in, the first-run setup (address, distance, what carts are), the address picker, the account sheet and the
 // language menu. Loads last: it starts the app (startApp in app.js) once it knows who you are.
 
-const ME = { mode: 'local', providers: [], user: null };
+const ME = { mode: 'local', providers: [], user: null, turnstile: null };
 let appStarted = false;
 const RADII = [1, 2, 3, 5, 10, 20, null];  // km; null = any distance (the nearest stores, up to 15 km)
 
@@ -66,22 +66,90 @@ function renderGate(err) {
   box.innerHTML = ME.providers.map(p => `<a class="sso ${p}" href="/auth/${p}?lang=${L()}&v=${encodeURIComponent(Usage.ids())}" data-sso="${p}">
       <span class="sso-ico">${ICON[p] || ''}</span><span>${esc(t('Continue with {name}', { name: PROVIDER_NAME[p] || p }))}</span><span class="spin" aria-hidden="true"></span></a>`).join('');
   const msg = { cancelled: t('Sign-in was cancelled.'), failed: t('Couldn’t sign you in. Try again.'),
+                bot: t('We couldn’t confirm you’re a person. Try again.'), busy: t('Too many sign-ins right now. Try again later.'),
                 expired: t('You were signed out. Sign in again.'), offline: t('Sal-Kal isn’t reachable right now. Try again in a minute.') }[err]
     || (!ME.providers.length ? t('Sign-in opens soon.') : '');
   $('#gate-error').hidden = !msg;
   $('#gate-error').textContent = msg || '';
   $('#gate-error').classList.toggle('soon', !ME.providers.length && !err);
   if (err === 'offline') box.innerHTML = `<button class="primary big" type="button" onclick="location.reload()">${t('Try again')}</button>`;
+  else if (ME.turnstile && ME.providers.length) BotCheck.start();
 }
-$('#gate-buttons').addEventListener('click', e => {
+
+// ---------------------------------------------------------------- the bot check (Cloudflare Turnstile)
+// Runs on the sign-in page while you read it: invisible for most people, a checkbox when Cloudflare isn't sure. Its
+// one-time token goes with the sign-in (POST /auth/<provider>); the server checks it with Cloudflare (app.botcheck).
+const BotCheck = (() => {
+  let widget = null, token = null, waiting = [], loading = null;
+  const load = () => loading ||= new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.onload = () => ok(window.turnstile);
+    s.onerror = () => { loading = null; fail(new Error('turnstile')); };
+    document.head.append(s);
+  });
+  const give = v => { token = v; waiting.splice(0).forEach(w => w(v)); };
+  async function start() {
+    const box = $('#gate-check');
+    if (!box) return;
+    let ts;
+    try { ts = await load(); } catch { return; }
+    if (widget !== null) return;
+    token = null;
+    const theme = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    widget = ts.render(box, {
+      sitekey: ME.turnstile, action: 'signin', appearance: 'interaction-only', theme, language: L(),
+      'refresh-expired': 'auto', 'response-field': false,
+      callback: give, 'expired-callback': () => { token = null; }, 'error-callback': () => { token = null; },
+      'before-interactive-callback': () => box.classList.add('asking'),  // Cloudflare shows its checkbox
+      'after-interactive-callback': () => box.classList.remove('asking'),
+    });
+  }
+  // the token, as soon as Cloudflare gives it (null after a minute: the check couldn't finish)
+  const get = () => token ? Promise.resolve(token) : new Promise(ok => {
+    waiting.push(ok);
+    setTimeout(() => { waiting = waiting.filter(w => w !== ok); ok(null); }, 60000);
+  });
+  // a token is good once: a new check for the next try
+  const again = () => {
+    token = null;
+    if (widget !== null) try { window.turnstile.reset(widget); } catch { widget = null; }
+  };
+  return { start, get, again };
+})();
+const ssoReady = () => $$('#gate-buttons .sso').forEach(x => { x.classList.remove('busy'); x.removeAttribute('aria-disabled'); });
+$('#gate-buttons').addEventListener('click', async e => {
   const a = e.target.closest('[data-sso]'); if (!a) return;
+  if (ME.turnstile || a.getAttribute('aria-disabled') === 'true') e.preventDefault();
+  if (a.getAttribute('aria-disabled') === 'true') return;
   haptic('select');
   Usage.ev('signin_click', { a: a.dataset.sso });
   Usage.send(true);
   a.classList.add('busy');
   $$('#gate-buttons .sso').forEach(x => x.setAttribute('aria-disabled', 'true'));
+  if (!ME.turnstile) return;  // a plain link: the browser follows it
+  const token = await BotCheck.get();
+  let r = null;
+  if (token) {
+    r = await fetch(`/auth/${a.dataset.sso}`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Sal-V': Usage.ids() },
+      body: JSON.stringify({ token, lang: L(), v: Usage.ids() }),
+    }).catch(() => null);
+  }
+  const out = r?.ok ? await r.json().catch(() => null) : null;
+  if (out?.url) return location.assign(out.url);
+  BotCheck.again();
+  ssoReady();
+  gateMessage(token && !r ? t('Couldn’t sign you in. Try again.') : r?.status === 429
+    ? t('Too many sign-ins right now. Try again later.') : t('We couldn’t confirm you’re a person. Try again.'));
 });
-window.addEventListener('pageshow', e => { if (e.persisted) $$('#gate-buttons .sso').forEach(x => { x.classList.remove('busy'); x.removeAttribute('aria-disabled'); }); });
+function gateMessage(msg) {
+  const el = $('#gate-error');
+  el.hidden = false;
+  el.classList.remove('soon');
+  el.textContent = msg;
+}
+window.addEventListener('pageshow', e => { if (e.persisted) { ssoReady(); BotCheck.again(); } });
 
 // ---------------------------------------------------------------- the address picker
 // Town and street come from Israel's official lists (the server's places module), so only real ones can be chosen;
