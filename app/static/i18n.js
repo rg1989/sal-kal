@@ -159,6 +159,9 @@ const HE = {
   'Delete your account? Your carts, address and settings are erased for good.': 'למחוק את החשבון? הסלים, הכתובת וההגדרות שלך יימחקו לצמיתות.',
   'Couldn’t delete the account — try again': 'לא הצלחנו למחוק את החשבון — נסו שוב', 'Live traffic is on': 'תנועה בזמן אמת פועלת',
   'Using typical drive times': 'משתמשים בזמני נסיעה רגילים', "Couldn't save the key": 'לא הצלחנו לשמור את המפתח',
+  // ---- installing the app (pwa.js)
+  'Install app': 'התקנת האפליקציה', 'Installed': 'האפליקציה הותקנה', 'Share': 'שיתוף', 'or under ⋯': 'או תחת ⋯',
+  'Add to Home Screen': 'הוספה למסך הבית', 'File › Add to Dock': 'קובץ ‹ הוספה ל־Dock',
 };
 
 // counted nouns: [one, many] in English; [one, many, "one X" written out] in Hebrew ("מוצר אחד", "3 מוצרים")

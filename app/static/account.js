@@ -435,6 +435,8 @@ function openAccount() {
       <li class="acc-row static"><span class="acc-k">${t('Theme')}</span>
         <span class="seg small" role="radiogroup" aria-label="${esc(t('Theme'))}">
           ${Object.keys(THEMES).map(k => `<button type="button" role="radio" data-theme-pick="${k}" aria-checked="${theme === k}">${t(THEMES[k][0])}</button>`).join('')}</span></li>
+      ${window.PWA?.offer() ? `<li><button type="button" class="acc-row" data-acc="install"><span class="acc-k">${t('Install app')}</span>
+        <span class="acc-v"></span><span class="acc-go">${SVG.chev}</span></button></li>` : ''}
     </ul>
     ${u?.admin || ME.mode === 'local' ? `<div class="acc-admin">
       <p class="loc-legend">${t('Drive times')}</p>
@@ -452,6 +454,7 @@ $('#account-body').addEventListener('click', async e => {
   if (b.dataset.lang) { setLang(b.dataset.lang); $$('#account-body [data-lang]').forEach(x => x.setAttribute('aria-checked', x === b)); openAccount(); return; }
   if (b.dataset.themePick) { setTheme(b.dataset.themePick); return; }
   if (b.dataset.acc === 'loc') { closeSheet($('#account')); setTimeout(openLocation, 180); return; }
+  if (b.dataset.acc === 'install') { closeSheet($('#account')); PWA.install(); return; }
   if (b.dataset.acc === 'out') {
     haptic('select');
     await api('/api/logout', { method: 'POST', noAuth: true }).catch(() => null);

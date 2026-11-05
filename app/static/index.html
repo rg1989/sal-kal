@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="Sal-Kal">
 <meta name="application-name" content="Sal-Kal">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="manifest" id="manifest" href="/static/manifest-he.webmanifest">
 <link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD23F'/%3E%3Cg fill='none' stroke='%231C2321' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.3 13 14 8.2M20.7 13 18 8.2'/%3E%3Cpath d='M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z'/%3E%3Cpath d='M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -284,10 +285,23 @@
   </div>
 </dialog>
 
+<dialog id="install" class="sheet narrow">
+  <div class="sheet-inner">
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <header class="sheet-head">
+      <h2 data-i18n="Install app">Install app</h2>
+      <button class="icon" data-close data-i18n-aria="Close" type="button"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+    </header>
+    <ol class="install-steps" id="install-steps"></ol>
+    <div class="sheet-actions"><button class="primary" data-close type="button" data-i18n="Done">Done</button></div>
+  </div>
+</dialog>
+
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="/static/i18n.js"></script>
 <script src="/static/ux.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/account.js"></script>
+<script src="/static/pwa.js"></script>
 </body>
 </html>

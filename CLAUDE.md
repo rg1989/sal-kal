@@ -220,5 +220,15 @@ distance (15 km without one; nearest of equal prices; weighed produce priced acr
 unit-less quantity (names carry other numbers: "PRO 20 גרם" = protein). The indexer now fills a product's quantity/unit
 from a later chain when the stored one is missing or "לא ידוע", so unit prices fill in as daily PriceFull files arrive.
 Test: .venv/bin/python tests/test_cards.py.
+Installable app (2026-11-05, PWA, no app stores): `manifest-he.webmanifest` / `manifest-en.webmanifest` (id "/",
+standalone; pwa.js switches the <link id="manifest"> and the iOS home-screen title with the page language; icons
+pwa-192/512 rounded, icon-512 + pwa-maskable-192 full-bleed for Android's mask). `sw.js` is served at /sw.js (server
+route, no-cache): it stores /static only (?v= URLs as is, other files refreshed in the background; never /api, /auth,
+/admin, photos or /static/landing). "/" and "/app" always come from the network, with a "No connection" page offline.
+Kill switch: deploy a sw.js that calls self.registration.unregister(). "Install app" row in the account sheet:
+Chrome/Edge/Samsung open their own install dialog (beforeinstallprompt, held by pwa.js); iPhone/iPad and Mac Safari
+get the steps sheet (#install). Needs https (sal-kal.com or the Tailscale URL); http://omarchy:8080 can't install.
+Not yet tested on a real iPhone: Google/Facebook sign-in inside the home-screen app (iOS keeps its cookies apart
+from Safari's).
 Left: git repo (none yet); category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

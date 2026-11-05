@@ -162,6 +162,12 @@ def index():
     return HTMLResponse(_index["html"], headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/sw.js")
+def service_worker():
+    """The service worker (installable app, offline start) sits at the root so that it covers the whole site."""
+    return FileResponse(os.path.join(STATIC, "sw.js"), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 os.makedirs(PHOTO_DIR, exist_ok=True)
 app.mount("/photos", StaticFiles(directory=PHOTO_DIR), name="photos")  # filled by `python -m app.images`
