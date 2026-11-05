@@ -886,9 +886,11 @@ const edge = () => innerWidth < 600 ? { top: 105, bottom: 45, left: 64, right: 6
 // home: the distance circle fills the map's height (no top fade there; the bottom fade takes a little more room).
 // Where the map is narrow the circle's top would run under the map-info pill, so it starts below it.
 const onHome = () => !!$('#map-wrap').closest('#home-map');
+// The home map also runs on under the first heading, very dark there (--map-ext): the circle keeps clear of that strip
+const mapExt = () => parseFloat(getComputedStyle($('#home-map')).getPropertyValue('--map-ext')) || 0;
 const circlePad = () => {
   const w = map.getContainer().clientWidth;
-  return { top: w < 900 ? 54 : 18, bottom: w < 600 ? 30 : 40, left: 24, right: 24 };
+  return { top: w < 900 ? 54 : 18, bottom: (w < 600 ? 30 : 40) + mapExt(), left: 24, right: 24 };
 };
 let fittedTo = null;
 function fitRoute(animate) {

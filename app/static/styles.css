@@ -1016,11 +1016,25 @@ body[data-view="basket"] #lc-cta { display: none; }
 /* on the home page the map starts right under the header line, so no fade at its top */
 #view-home { padding-top: 0; }
 #home-map .mapbox { margin-top: 0; }
+/* the home map runs on under the "Recent" pills and the first heading, down to the first row of cards (--map-ext):
+   full strength above, darkening towards the old bottom edge, very dark across the extra strip, gone at its end */
+#home-map { --map-ext: 120px; }
+#home-map .mapbox { height: calc(440px + var(--map-ext)); margin-bottom: calc(-1 * var(--map-ext)); z-index: 0; }
+#view-home > .hero, #view-home > .home-section { position: relative; z-index: 1; }
+#home-map .map-go { bottom: calc(16px + var(--map-ext)); }
+#home-map .maplibregl-ctrl-bottom-right { bottom: var(--map-ext); }
 #home-map .mapbox canvas.maplibregl-canvas {
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 13%, #000 87%, transparent 100%),
-                      linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
+                      linear-gradient(to bottom, #000 0, #000 calc(100% - var(--map-ext) - 200px), rgba(0, 0, 0, .34) calc(100% - var(--map-ext)),
+                                      rgba(0, 0, 0, .16) calc(100% - var(--map-ext) * .45), transparent 100%);
   mask-image: linear-gradient(to right, transparent 0, #000 13%, #000 87%, transparent 100%),
-              linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
+              linear-gradient(to bottom, #000 0, #000 calc(100% - var(--map-ext) - 200px), rgba(0, 0, 0, .34) calc(100% - var(--map-ext)),
+                              rgba(0, 0, 0, .16) calc(100% - var(--map-ext) * .45), transparent 100%);
+}
+@media (max-width: 520px) {
+  #home-map { --map-ext: 90px; }
+  #home-map .mapbox { height: calc(340px + var(--map-ext)); }
+  #home-map .map-go { bottom: calc(30px + var(--map-ext)); }  /* clear of the map credit, which spans the width here */
 }
 /* what's under the map starts right at its faded bottom edge */
 #home-map + .hero { margin-top: 0; }
@@ -1034,13 +1048,12 @@ body[data-view="basket"] #lc-cta { display: none; }
   display: inline-flex; align-items: center; justify-content: center; gap: 9px; text-decoration: none;
   background: var(--tag); color: var(--tag-ink); border: 1px solid var(--tag-edge); border-radius: 999px;
   padding: 12px 22px; font-size: 15.5px; font-weight: 700; letter-spacing: -.005em;
-  box-shadow: 0 10px 22px -10px color-mix(in srgb, var(--tag-edge) 85%, transparent), 0 2px 0 color-mix(in srgb, var(--tag-edge) 55%, transparent);
-  transition: transform .12s ease, box-shadow .12s ease, background-color .12s ease;
+  box-shadow: 0 0 18px 0 color-mix(in srgb, var(--tag) 34%, transparent);  /* a soft glow, even all round */
+  transition: box-shadow .15s ease, background-color .15s ease;
 }
 .go-compare svg { width: 20px; height: 20px; flex: none; }
-.go-compare:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--tag) 88%, #fff);
-  box-shadow: 0 14px 26px -10px color-mix(in srgb, var(--tag-edge) 95%, transparent), 0 2px 0 color-mix(in srgb, var(--tag-edge) 55%, transparent); }
-.go-compare:active { transform: translateY(1px); box-shadow: 0 6px 14px -8px color-mix(in srgb, var(--tag-edge) 85%, transparent); }
+.go-compare:hover { background: color-mix(in srgb, var(--tag) 88%, #fff); box-shadow: 0 0 26px 2px color-mix(in srgb, var(--tag) 46%, transparent); }
+.go-compare:active { box-shadow: 0 0 12px 0 color-mix(in srgb, var(--tag) 30%, transparent); }
 .live-cart .cta.go-compare { display: flex; background: var(--tag); color: var(--tag-ink); padding: 13px 18px; font-weight: 700; }
 .live-cart .cta.go-compare:hover { background: color-mix(in srgb, var(--tag) 88%, #fff); }
 .map-go { position: absolute; z-index: 3; bottom: 16px; inset-inline-end: 24px; }
