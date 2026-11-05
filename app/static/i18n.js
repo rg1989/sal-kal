@@ -162,6 +162,7 @@ const HE = {
   // ---- installing the app (pwa.js)
   'Install app': 'התקנת האפליקציה', 'Installed': 'האפליקציה הותקנה', 'Share': 'שיתוף', 'or under ⋯': 'או תחת ⋯',
   'Add to Home Screen': 'הוספה למסך הבית', 'File › Add to Dock': 'קובץ ‹ הוספה ל־Dock',
+  'Browser menu': 'תפריט הדפדפן', 'or Add to Home screen': 'או הוספה למסך הבית',
 };
 
 // counted nouns: [one, many] in English; [one, many, "one X" written out] in Hebrew ("מוצר אחד", "3 מוצרים")

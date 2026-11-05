@@ -225,9 +225,13 @@ standalone; pwa.js switches the <link id="manifest"> and the iOS home-screen tit
 pwa-192/512 rounded, icon-512 + pwa-maskable-192 full-bleed for Android's mask). `sw.js` is served at /sw.js (server
 route, no-cache): it stores /static only (?v= URLs as is, other files refreshed in the background; never /api, /auth,
 /admin, photos or /static/landing). "/" and "/app" always come from the network, with a "No connection" page offline.
-Kill switch: deploy a sw.js that calls self.registration.unregister(). "Install app" row in the account sheet:
-Chrome/Edge/Samsung open their own install dialog (beforeinstallprompt, held by pwa.js); iPhone/iPad and Mac Safari
-get the steps sheet (#install). Needs https (sal-kal.com or the Tailscale URL); http://omarchy:8080 can't install.
+Kill switch: deploy a sw.js that calls self.registration.unregister(). Install buttons: any [data-install] element
+(the sign-in page's button, shown signed out) and a row in the account sheet. Chrome/Edge/Samsung open their own install
+dialog once Chrome offers it (beforeinstallprompt, held by pwa.js; Chrome waits for a tap and ~30 s on the page).
+Before that, Android gets the steps sheet (#install: browser menu ⋮ › Install app). iPhone/iPad and Mac Safari always
+get the steps. /app?install opens the steps (for pages without #install, e.g. the landing page). Hidden once installed
+(display-mode, or getInstalledRelatedApps via related_applications in the manifests). Needs https (sal-kal.com or the
+Tailscale URL); http://omarchy:8080 can't install.
 Not yet tested on a real iPhone: Google/Facebook sign-in inside the home-screen app (iOS keeps its cookies apart
 from Safari's).
 Left: git repo (none yet); category ranking could prefer each category's core words; the price files' own

@@ -38,5 +38,16 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "/static/manifest-he.webmanifest"
+    },
+    {
+      "platform": "webapp",
+      "url": "/static/manifest-en.webmanifest"
+    }
+  ],
+  "prefer_related_applications": false
 }

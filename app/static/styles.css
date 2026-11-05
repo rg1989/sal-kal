@@ -1444,3 +1444,10 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
 .install-steps li::before { content: counter(step); font: 700 22px/1 'Barlow Condensed', sans-serif; color: var(--muted); min-width: 1ch; }
 .install-steps svg { width: 28px; height: 28px; flex: none; color: var(--ink); }
 .install-steps small { display: block; margin-top: 2px; font-weight: 400; font-size: 13px; color: var(--muted); }
+.gate-install {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; min-height: 44px; padding: 0 18px;
+  border: 1px solid var(--line-strong); border-radius: 999px; background: none; color: var(--ink); font-weight: 600; font-size: 15px;
+}
+.gate-install:hover { border-color: var(--ink-2); }
+.gate-install[hidden] { display: none; }
+.gate-install svg { width: 20px; height: 20px; flex: none; }
