@@ -323,5 +323,25 @@ only, each extra stop must save >= ₪1 (exact for 1-2 stops, a beam search beyo
 what to buy, +min/+km, Google Maps through the stops); the map draws the band, the trip and numbered stop pins.
 Landing: the "On the way" section right after the hero (phone-way-*.webp, demo account at Tel Aviv City Hall -> the
 Ramat Gan diamond exchange towers by bike). Tests: tests/test_commute.py, tests/test_way_server.py.
+Attack surface (2026-11-05, per user: the only way in is the public URL). `app/guard.py` + checks in server.py:
+`guard.Door` (outermost ASGI) caps bodies at 256 KB (read in full, 30 s) and counts each internet visitor
+(Cf-Connecting-IP; the LAN/Tailscale aren't counted) in token buckets (API 10/s burst 300, files 40/s, 12 API calls
+open at once); signed-in calls also per account (5/s). Every metered API call (all but OPEN, the owner's, and
+guard.WAITS that mostly wait on outside services) is charged the seconds it took to a compute budget per address
+(0.5 s/s, 120 s burst) and per account (0.35 s/s, 90 s): the one Python process can't be monopolised. Heavy pages
+(guard.HEAVY: compare is ~20 s for 400 items without an address, browse 1-3 s) queue one at a time per account,
+4 at once site-wide. Outside services go through `guard.outside(name)`: site-wide rate + concurrency (OSRM 60/min,
+FOSSGIS 30/min, Overpass 30/h, Google Routes 1500/day then OSRM, Nominatim 2 waiting): no visitor can get this IP
+banned there or pile up threads. Opening hours: the Overpass query runs outside the lock, 6 new areas/h per account,
+radius ≤ 30 km. Inputs: result limits capped, search ≤ 12 words/200 chars, prefs/delivery validated (delivery: 13-digit
+chain ids, numbers, ≤ 80), compare's request prefs cleaned (an address abroad is dropped), carts' photo fetches only
+for real products. Writes (POST/PUT/DELETE) with a foreign Origin get 403. stats.db: site-wide daily caps and a 2 GB
+ceiling (it shares the root disk with every home service). Headers: CSP on every HTML page (script-src 'self' + the
+pages' inline scripts by hash + the two handlers `this.remove()` / `location.reload()` via 'unsafe-hashes'; any new
+inline script or onX= attribute is blocked: add a .js file or a listener), HSTS on the internet, Permissions-Policy,
+COOP. No /docs or /openapi.json. sal-web: MemoryMax 3G, TasksMax 256, CPUQuota 400%, uvicorn --limit-concurrency 400;
+sal-tunnel MemoryMax 1G. Tests: tests/test_security.py. Several sessions work in this folder at once and deploy
+selected files: before deploying, compare /srv/sal/code/app with HEAD and your working copy, and install only your
+own files.
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

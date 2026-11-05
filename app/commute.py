@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.request
 
-from . import geo
+from . import geo, guard
 
 PROFILES = {  # OSRM route services; the FOSSGIS ones keep "driving" in the path whatever the profile
     "car": "https://router.project-osrm.org/route/v1/driving/",
@@ -46,7 +46,8 @@ def route(points, travel="car"):
         return hit[0]
     pts = ";".join(f"{lon:.5f},{lat:.5f}" for lat, lon in k[1])
     url = f"{PROFILES.get(travel, PROFILES['car'])}{pts}?overview=full&geometries=geojson"
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": geo.UA}), timeout=20) as r:
+    with guard.outside("osrm" if travel not in ("bike", "foot") else "fossgis"), \
+            urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": geo.UA}), timeout=20) as r:
         rt = json.load(r)["routes"][0]
     out = {"coords": [[round(x, 5), round(y, 5)] for x, y in rt["geometry"]["coordinates"]],
            "minutes": round(rt["duration"] / 60), "km": round(rt["distance"] / 1000, 1),

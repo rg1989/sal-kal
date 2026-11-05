@@ -14,6 +14,8 @@ Environment=HOME=/nonexistent
 ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --config /etc/cloudflared/sal.yml run
 Restart=on-failure
 RestartSec=5
+MemoryMax=1G
+TasksMax=256
 MemoryDenyWriteExecute=yes
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

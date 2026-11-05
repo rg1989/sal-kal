@@ -448,8 +448,11 @@ def want(codes):
     global _thread
     with _lock:
         for code in codes:
-            if not code or not code.isdigit() or len(code) < 8 or code in _asked or os.path.exists(photo_path(code)):
+            if not code or not code.isdigit() or not 8 <= len(code) <= 14 or code in _asked \
+                    or os.path.exists(photo_path(code)):
                 continue
+            if len(_asked) > 200000:  # a long-running server: forget, rather than grow
+                _asked.clear()
             _asked.add(code)
             _wanted.put(code)
         if not _wanted.empty() and (_thread is None or not _thread.is_alive()):

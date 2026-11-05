@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 from . import db as dbmod
+from . import guard
 
 log = logging.getLogger("geo")
 UA = "Sal-basket-prices/1.0 (self-hosted grocery price comparison)"
@@ -190,7 +191,7 @@ def _osrm(home, dests):
     """Typical drive minutes (no live traffic) from the free OSRM demo server."""
     pts = ";".join(f"{lon:.5f},{lat:.5f}" for lat, lon in [home] + dests)
     req = urllib.request.Request(f"{OSRM}{pts}?sources=0", headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with guard.outside("osrm"), urllib.request.urlopen(req, timeout=20) as r:
         row = json.load(r)["durations"][0][1:]
     return [round(s / 60) if s is not None else None for s in row]
 
@@ -203,7 +204,7 @@ def _google(home, dests, key):
     req = urllib.request.Request(GOOGLE, data=body, headers={
         "Content-Type": "application/json", "X-Goog-Api-Key": key,
         "X-Goog-FieldMask": "originIndex,destinationIndex,duration,condition"})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with guard.outside("google"), urllib.request.urlopen(req, timeout=20) as r:  # billed per use: a daily cap
         els = json.load(r)
     out = [None] * len(dests)
     for e in els:
@@ -224,7 +225,7 @@ def route(home, dest):
         return hit[0]
     pts = f"{home[1]:.5f},{home[0]:.5f};{dest[1]:.5f},{dest[0]:.5f}"
     req = urllib.request.Request(f"{OSRM_ROUTE}{pts}?overview=full&geometries=geojson", headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with guard.outside("osrm"), urllib.request.urlopen(req, timeout=20) as r:
         rt = json.load(r)["routes"][0]
     out = {"coords": [[round(x, 5), round(y, 5)] for x, y in rt["geometry"]["coordinates"]],
            "minutes": round(rt["duration"] / 60), "km": round(rt["distance"] / 1000, 1)}
@@ -245,6 +246,11 @@ def osm_shops(lat, lon, radius_m):
     q = (f'[out:json][timeout:90];nwr(around:{int(radius_m)},{lat:.5f},{lon:.5f})'
          '[shop~"^(supermarket|convenience|chemist|department_store|wholesale|general|greengrocer|deli)$"]'
          '[opening_hours];out tags center;')
+    with guard.outside("overpass"):  # a site-wide budget: nobody can get this address banned there
+        return _overpass(q)
+
+
+def _overpass(q):
     err = None
     for url in OVERPASS:  # public servers; the first is often busy
         try:
@@ -327,7 +333,12 @@ def drive_minutes(home, dests, key=None):
     for i in range(0, len(todo), 25):
         chunk = todo[i:i + 25]
         try:
-            mins = _google(home, chunk, key) if live else _osrm(home, chunk)
+            try:
+                mins = _google(home, chunk, key) if live else _osrm(home, chunk)
+            except guard.Busy:
+                if not live:
+                    raise
+                mins = _osrm(home, chunk)  # the day's live-traffic lookups are used up: typical times
             ttl = 600 if live else 7 * 86400  # traffic changes; typical times don't
         except Exception as e:
             log.warning("drive times unavailable (%s)", e)

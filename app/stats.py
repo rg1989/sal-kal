@@ -339,8 +339,28 @@ def _prune():
 
 
 # ---------------------------------------------------------------- recording
+METHODS = {"GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"}
+# Site-wide ceilings, whoever sends them: a flood from many addresses can't fill the disk (the machine's other
+# services share it). Far above real use (a busy day is a few thousand events).
+DAY_WEB, DAY_SERVER, MAX_DB_BYTES = 300000, 100000, 2 * 1024 ** 3
+_size = {"t": 0.0, "big": False}
+
+
+def _full():
+    """stats.db has reached MAX_DB_BYTES: new events are dropped (checked once a minute)."""
+    now = time.time()
+    if now - _size["t"] > 60:
+        try:
+            _size["big"] = sum(os.path.getsize(p) for p in (path(), path() + "-wal") if os.path.exists(p)) > MAX_DB_BYTES
+        except OSError:
+            _size["big"] = False
+        _size["t"] = now
+    return _size["big"]
+
+
 def hit(route, method, status, ms, bot):
     """One HTTP request, folded into today's per-route counts (written every 30 s)."""
+    method = method if method in METHODS else "OTHER"  # any word can be sent as a method: one row for all of them
     k = (day_of(time.time()), route, method, int(status), int(bool(bot)))
     b = next((i for i, ub in enumerate(BUCKETS) if ms < ub), len(BUCKETS))
     with _req_lock:
@@ -357,6 +377,8 @@ def hit(route, method, status, ms, bot):
 def event(kind, uid=None, vid=None, sid=None, admin=False, page=None, a=None, b=None, n=None, data=None, ts=None):
     """An event the server itself saw (sign-in, settings, carts, errors)."""
     ts = ts or time.time()
+    if _full() or not _allow(("day", "server"), 1, DAY_SERVER, 86400):
+        return
     vid = vid if vid and ID.fullmatch(vid) else None
     sid = sid if sid and ID.fullmatch(sid) else None
     _put(("events", [(ts, day_of(ts), sid, vid, uid, int(bool(admin) or vid in _owner_vids), "server", kind,
@@ -374,7 +396,8 @@ def ingest(body, *, uid, admin, ua, country, city, via, ip):
     if not isinstance(evs, list):
         return 0
     evs = evs[:60]
-    if not (_allow(("ip", ip), len(evs), 3000, 600) and _allow(("sid", sid), len(evs), 600, 600)):
+    if _full() or not (_allow(("ip", ip), len(evs), 1200, 600) and _allow(("sid", sid), len(evs), 600, 600)
+                       and _allow(("day", "web"), len(evs), DAY_WEB, 86400)):
         return 0
     now = time.time()
     sent = _num(body.get("now")) or now * 1000
@@ -586,7 +609,7 @@ def usage(R, names=lambda keys: {}):
         d = dw.setdefault(x["page"], {"ms": [], "depth": []})
         d["ms"].append(x["n"])
         dep = (json.loads(x["data"]) if x["data"] else {}).get("depth")
-        if dep is not None:
+        if isinstance(dep, (int, float)) and not isinstance(dep, bool):  # visitors send this: only numbers count
             d["depth"].append(dep)
     exits = {x["page"]: x["n"] for x in r.execute(f"""
         SELECT page, count(*) n FROM (SELECT sid, page, max(ts) FROM events WHERE {W} AND kind='view' GROUP BY sid) GROUP BY page""",

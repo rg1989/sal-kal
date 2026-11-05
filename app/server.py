@@ -3,7 +3,10 @@
 Accounts (app.auth): with Google or Facebook sign-in set up, every /api call except a few open ones needs a session,
 and carts, address, distance and delivery settings are each account's own. Without it ("local" mode) everything
 belongs to the household account, user 1, as before accounts existed."""
+import asyncio
+import base64
 import contextvars
+import hashlib
 import hmac
 import html
 import json
@@ -24,11 +27,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import auth, catalog, commute, engine, geo, places, reports, stats, trust
+from . import auth, catalog, commute, engine, geo, guard, places, reports, stats, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
-app = FastAPI(title="Basket")
+# no /docs, /redoc or /openapi.json: nobody outside needs a map of the API
+app = FastAPI(title="Basket", docs_url=None, redoc_url=None, openapi_url=None)
 dbmod.connect().close()  # create/migrate the schema once at startup, before requests race to do it
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 _local = threading.local()
@@ -196,9 +200,12 @@ async def who(request: Request, call_next):
     vtoken = _visit.set(_visit_ids(request.headers.get("x-sal-v")))
     status = 500
     try:
-        if path.startswith("/api/") and u is None and path not in OPEN:
-            resp = JSONResponse({"detail": "sign in"}, status_code=401)
-        else:
+        resp = _refuse(request, path, u, public)
+        # metered: from the internet, any API call but the open, cheap ones (the page must always be able to start)
+        # and the owner's own (the admin page's reports take a while)
+        if resp is None and public and guard.metered(path) and path not in OPEN and not (u or {}).get("admin"):
+            resp = await _metered(request, call_next, u, guard.heavy(path))
+        elif resp is None:
             resp = await call_next(request)
         status = resp.status_code
     except Exception as e:
@@ -216,24 +223,92 @@ async def who(request: Request, call_next):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), payment=(), usb=(), geolocation=(self)")
+    resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    if public:  # through Cloudflare, always https: browsers never try plain http again
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
     if path.startswith("/api/"):
         resp.headers.setdefault("Cache-Control", "no-store")
     return resp
 
 
+def _busy(status, text, retry):
+    return JSONResponse({"detail": text}, status_code=status, headers={"Retry-After": str(int(retry))})
+
+
+def _same_origin(request):
+    """A write (POST/PUT/DELETE) from a page on this site: browsers send Origin with every cross-site write, and
+    the session cookie is SameSite=Lax as well; scripts and curl send none."""
+    origin = request.headers.get("origin")
+    if not origin or request.method in ("GET", "HEAD", "OPTIONS"):
+        return True
+    return urllib.parse.urlsplit(origin).netloc == request.headers.get("host", "")
+
+
+def _refuse(request, path, u, public):
+    """The answer when this request may not go on (not signed in, from another site, too many), else None."""
+    if path.startswith(("/api/", "/auth/")) and not _same_origin(request):
+        return JSONResponse({"detail": "cross-site request"}, status_code=403)
+    if path.startswith("/api/") and u is None and path not in OPEN:
+        return JSONResponse({"detail": "sign in"}, status_code=401)
+    if public and u and path.startswith("/api/"):
+        wait = guard.allow("user", u["id"])
+        if wait:
+            return _busy(429, "too many requests, wait a moment", wait)
+    return None
+
+
+async def _metered(request, call_next, u, heavy):
+    """An API call from the internet: within this visitor's and account's compute budget, and the seconds it took
+    are charged to both. An expensive page also waits its turn: one at a time per account (guard.turn), at most
+    guard.HEAVY_SLOTS at once site-wide."""
+    keys = [("ip", request.headers.get("cf-connecting-ip", "")[:64])] + ([("user", u["id"])] if u else [])
+    wait = guard.budget_left(keys)
+    if wait:
+        _ev("throttled", a=_route_of(request, 429), n=wait)
+        return _busy(429, "too many requests, wait a moment", wait)
+
+    async def run():
+        t0 = time.monotonic()
+        try:
+            return await call_next(request)
+        finally:
+            guard.charge(keys, time.monotonic() - t0)
+    if not heavy:
+        return await run()
+    try:
+        async with guard.turn(keys, guard.HEAVY_WAIT):
+            return await run()
+    except asyncio.TimeoutError:
+        return _busy(503, "busy, try again in a moment", 5)
+
+
+app.add_middleware(guard.Door)  # outermost: counts and reads the request before anything else runs
+
+
 _limits, _limits_lock = {}, threading.Lock()
 
 
-def limit(name, n, per):
-    """At most n calls a `per` seconds per account to an endpoint that calls an outside service."""
+def _under(name, n, per):
+    """Counts one call to `name` for this account: False once it made n in the last `per` seconds."""
     k, now = (name, (me() or {}).get("id")), time.time()
     with _limits_lock:
+        if len(_limits) > 20000:  # accounts that went quiet
+            for old in [x for x, q in _limits.items() if not q or now - q[-1] > 3600]:
+                del _limits[old]
         q = _limits.setdefault(k, deque())
         while q and now - q[0] > per:
             q.popleft()
         if len(q) >= n:
-            raise HTTPException(429, "too many requests, wait a moment")
+            return False
         q.append(now)
+        return True
+
+
+def limit(name, n, per):
+    """At most n calls a `per` seconds per account to an endpoint that calls an outside service."""
+    if not _under(name, n, per):
+        raise HTTPException(429, "too many requests, wait a moment")
 
 
 def _admin():
@@ -255,8 +330,30 @@ def _page(name):
         def stamp(mt):
             f = os.path.join(STATIC, mt.group(2))
             return f'{mt.group(1)}/static/{mt.group(2)}?v={int(os.stat(f).st_mtime) if os.path.exists(f) else 0}"'
-        hit = _pages[name] = (m, re.sub(r'(src="|href=")/static/([\w./-]+\.(?:js|css))"', stamp, page))
-    return HTMLResponse(hit[1], headers={"Cache-Control": "no-cache"})
+        page = re.sub(r'(src="|href=")/static/([\w./-]+\.(?:js|css))"', stamp, page)
+        hit = _pages[name] = (m, page, _csp(page))
+    return HTMLResponse(hit[1], headers={"Cache-Control": "no-cache", "Content-Security-Policy": hit[2]})
+
+
+# Scripts only from this server: the pages' own small inline scripts by their hash, and the two inline handlers the
+# page code writes (a photo that fails removes itself; the offline page's "Try again"). Inline styles stay allowed:
+# the page builds them. Avatars come from Google or Facebook; the map's tiles, fonts and icons from OpenFreeMap.
+HANDLERS = ("this.remove()", "location.reload()")
+
+
+def _sha(text):
+    return "'sha256-" + base64.b64encode(hashlib.sha256(text.encode()).digest()).decode() + "'"
+
+
+def _csp(page):
+    inline = re.findall(r"<script>(.*?)</script>", page, re.S)
+    return ("default-src 'self'; "
+            f"script-src 'self' {' '.join(_sha(s) for s in inline)} 'unsafe-hashes' {' '.join(_sha(h) for h in HANDLERS)}; "
+            "worker-src 'self' blob:; child-src blob:; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: blob: https://*.googleusercontent.com https://platform-lookaside.fbsbx.com https://*.fbcdn.net; "
+            "connect-src 'self' https://tiles.openfreemap.org; media-src 'self'; manifest-src 'self'; object-src 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 
 
 @app.get("/")
@@ -293,8 +390,19 @@ def _img(code):
 
 
 # ---------------------------------------------------------------- status
+_status = {"t": 0.0, "v": None}
+
+
 @app.get("/api/status")
 def status():
+    """Open to everyone (the landing page's live counts): worked out at most every 30 seconds."""
+    if _status["v"] is not None and time.monotonic() - _status["t"] < 30:
+        return _status["v"]
+    _status["v"], _status["t"] = _status_now(), time.monotonic()
+    return _status["v"]
+
+
+def _status_now():
     c = con()
     st = engine.get_setting(c, "index_status", {})
     counts = c.execute("""SELECT (SELECT count(*) FROM products) products,
@@ -317,14 +425,22 @@ def reindex():
 
 
 # ---------------------------------------------------------------- products
+MAX_WORDS, MAX_QUERY = 12, 200  # a search is a few words; more would only make the full-text query slow
+
+
 def _tokens(q):
-    return [t for t in re.split(r"[\s\"'״׳()*:^-]+", q) if t]
+    return [t for t in re.split(r"[\s\"'״׳()*:^-]+", q[:MAX_QUERY]) if t][:MAX_WORDS]
+
+
+def _cap(n, hi, lo=1):
+    """A count from the query string, within what the page ever asks for."""
+    return max(lo, min(hi, int(n)))
 
 
 @app.get("/api/search")
 def search(q: str, limit: int = 30):
     c = con()
-    q = q.strip()
+    q, limit = q.strip()[:MAX_QUERY], _cap(limit, 200)
     if not q:
         return []
     if q.isdigit() and len(q) >= 4:
@@ -571,6 +687,7 @@ def categories():
 
 @app.get("/api/category/{slug}")
 def category(slug: str, limit: int = 60):
+    limit = _cap(limit, 300)
     cat = next((x for x in catalog.CATEGORIES if x["slug"] == slug), None)
     if not cat:
         raise HTTPException(404, "no such category")
@@ -651,8 +768,9 @@ def deal_pct(c, club):
 def browse(terms: str = "", cat: str = "", size: str = "", deal: int = 0, sort: str = "", limit: int = 120):
     """Results for stacked filters: every word in `terms` (|-separated) AND the category must match."""
     c = con()
-    words = [t.strip() for t in terms.split("|") if t.strip()]
-    toks = [tok for w in words for tok in _tokens(w)]
+    limit = _cap(limit, 200)
+    words = [t.strip() for t in terms[:MAX_QUERY].split("|") if t.strip()][:MAX_WORDS]
+    toks = [tok for w in words for tok in _tokens(w)][:MAX_WORDS]
     cdef = next((x for x in catalog.CATEGORIES if x["slug"] == cat), None)
     empty = {"total": 0, "products": [], "refine": [], "sizes": [], "deal_n": 0}
     if not toks and not cdef:
@@ -711,7 +829,7 @@ def classics():
 @app.get("/api/picks")
 def picks(limit: int = 12):
     """What this account adds to its carts most (and most recently)."""
-    c = con()
+    c, limit = con(), _cap(limit, 48)
     rows = c.execute("""SELECT p.*, count(*) n, max(ca.updated) last FROM cart_items i
                          JOIN carts ca ON ca.id=i.cart_id JOIN products p ON p.key=i.key
                          WHERE p.store_count > 0 AND ca.user_id=? GROUP BY i.key ORDER BY n DESC, last DESC LIMIT ?""",
@@ -740,7 +858,7 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: i
     """Real savings vs the product's typical price, at stores within the user's distance.
     kind: biggest | new | ending | mine (mine = only `keys`, e.g. the cart and recently viewed).
     skip_basket: leave out products already in a cart (the home page is for finding new things)."""
-    c = con()
+    c, limit = con(), _cap(limit, 48)
     if not c.execute("SELECT 1 FROM sqlite_master WHERE name='deals'").fetchone():
         return []
     p = prefs()
@@ -862,7 +980,7 @@ def product(key: str):
 def stores_near(limit: int = 600):
     """Branches with prices around the user's home, for the map: inside the distance limit,
     or the nearest ones when there is no limit."""
-    c = con()
+    c, limit = con(), _cap(limit, 1500)
     p = prefs()
     home, max_km = p.get("home"), p.get("max_km")
     if not home:
@@ -948,7 +1066,10 @@ def places_locate(town: int, street: int = 0, number: int = 0):
         raise HTTPException(422, "house number out of range")
     limit("locate", 30, 60)
     try:
-        return places.locate(town, street or None, number or None)
+        with guard.outside("nominatim"):
+            return places.locate(town, street or None, number or None)
+    except guard.Busy:
+        raise HTTPException(503, "busy, try again in a moment")
     except ValueError:
         raise HTTPException(404, "no such town")
     except LookupError:
@@ -965,7 +1086,10 @@ def places_reverse(lat: float, lon: float):
         raise HTTPException(422, "outside Israel")
     limit("locate", 30, 60)
     try:
-        return places.reverse(lat, lon)
+        with guard.outside("nominatim"):
+            return places.reverse(lat, lon)
+    except guard.Busy:
+        raise HTTPException(503, "busy, try again in a moment")
     except LookupError:
         raise HTTPException(404, "no address here")
     except Exception as e:
@@ -977,15 +1101,21 @@ def places_reverse(lat: float, lon: float):
 def drive(body: dict = Body(...)):
     """Drive minutes from body.home to the listed stores: {"chain:store": minutes}."""
     home = body.get("home") or {}
-    if "lat" not in home:
+    if not isinstance(home, dict) or "lat" not in home:
         return {"times": {}, "live": False}
+    home = _clean_home(home)
     limit("drive", 40, 60)
     c = con()
     coords = geo.store_coords(c)
-    want = {(str(cid), int(sid)) for cid, sid in (body.get("stores") or [])[:60]}
+    want = set()
+    for x in (body.get("stores") if isinstance(body.get("stores"), list) else [])[:60]:
+        try:
+            want.add((str(x[0]), int(x[1])))
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
     pts = {k: coords[k] for k in want if k in coords}
     key = engine.get_setting(c, "maps_key", None)
-    mins = geo.drive_minutes((float(home["lat"]), float(home["lon"])), list(pts.values()), key)
+    mins = geo.drive_minutes((home["lat"], home["lon"]), list(pts.values()), key)
     return {"times": {f"{k[0]}:{k[1]}": mins.get(p) for k, p in pts.items()}, "live": bool(key)}
 
 
@@ -1072,7 +1202,7 @@ def cart_history(body: dict = Body(...)):
     which products changed price there in the last 30 days. A chain has a point on a day only when every one of them
     had a confirmed price there that day; `ends` lists the days its cart stopped being fully priced."""
     c = con()
-    qty = {i["key"]: float(i.get("qty") or 1) for i in body.get("items") or []}
+    qty = {i["key"]: i["qty"] for i in _items(body.get("items"), MAX_ITEMS)}
     chains = [str(x) for x in (body.get("chains") or [])][:8]
     if not qty or not chains:
         return {"since": _since(c), "series": {}, "ends": {}, "changes": {}}
@@ -1117,14 +1247,18 @@ def cart_history(body: dict = Body(...)):
 
 # ---------------------------------------------------------------- one store: address, opening hours, route from home
 HOURS_FILE = os.path.join(os.path.dirname(PHOTO_DIR), "hours.json")
-_areas, _area_retry, _area_lock = None, 0, threading.Lock()
+_areas, _area_retry, _area_lock, _area_busy = None, 0, threading.Lock(), set()
 MAX_AREAS = 300  # one per address + distance in use; the oldest go first
+HOURS_KM = 30    # the widest area asked for in one query; branches farther from home are looked up around themselves
 
 
 def _osm_area(home, max_km):
     """Every food shop with opening hours around an address (OpenStreetMap), fetched in one query and kept in
-    hours.json for two weeks, per address and distance. After a failure, waits 10 minutes."""
+    hours.json for two weeks, per address and distance. After a failure, waits 10 minutes. The query runs outside
+    the lock (it can take half a minute): meanwhile other areas answer from what's kept, and the same area isn't
+    asked for twice. An account asks for at most a few new areas an hour."""
     global _areas, _area_retry
+    key = json.dumps([round(home["lat"], 3), round(home["lon"], 3), max_km])
     with _area_lock:
         if _areas is None:
             try:
@@ -1133,23 +1267,30 @@ def _osm_area(home, max_km):
                 _areas = saved.get("areas") or ({json.dumps(saved["key"]): saved} if saved.get("key") else {})
             except (OSError, ValueError, KeyError):
                 _areas = {}
-        key = json.dumps([round(home["lat"], 3), round(home["lon"], 3), max_km])
         area = _areas.get(key) or {}
-        fresh = area.get("until", 0) > time.time()
-        if not fresh and time.time() > _area_retry:
-            try:
-                shops = geo.osm_shops(home["lat"], home["lon"], (float(max_km or 15) + 1) * 1000)
-                area = _areas[key] = {"until": time.time() + 14 * 86400, "shops": shops}
-                for k in sorted(_areas, key=lambda k: _areas[k].get("until", 0))[:max(0, len(_areas) - MAX_AREAS)]:
-                    del _areas[k]
-                tmp = HOURS_FILE + ".tmp"
-                with open(tmp, "w") as f:
-                    json.dump({"areas": _areas}, f, ensure_ascii=False)
-                os.replace(tmp, HOURS_FILE)
-            except Exception as e:
-                print("opening hours unavailable:", e, file=sys.stderr)
+        if area.get("until", 0) > time.time() or time.time() <= _area_retry or key in _area_busy \
+                or not _under("hours-area", 6, 3600):
+            return area.get("shops") or [], bool(area)
+        _area_busy.add(key)
+    try:
+        shops = geo.osm_shops(home["lat"], home["lon"], (min(float(max_km or 15), HOURS_KM) + 1) * 1000)
+    except Exception as e:
+        print("opening hours unavailable:", e, file=sys.stderr)
+        with _area_lock:
+            _area_busy.discard(key)
+            if not isinstance(e, guard.Busy):  # the service failed (not our own limit): give it 10 minutes
                 _area_retry = time.time() + 600
         return area.get("shops") or [], bool(area)
+    with _area_lock:
+        _area_busy.discard(key)
+        _areas[key] = {"until": time.time() + 14 * 86400, "shops": shops}
+        for k in sorted(_areas, key=lambda k: _areas[k].get("until", 0))[:max(0, len(_areas) - MAX_AREAS)]:
+            del _areas[k]
+        tmp = HOURS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"areas": _areas}, f, ensure_ascii=False)
+        os.replace(tmp, HOURS_FILE)
+    return shops, True
 
 
 def _store_row(c, chain_id, store_id):
@@ -1201,9 +1342,12 @@ def store_hours(chain_id: str, store_id: int):
     ll = geo.store_coords(c).get((chain_id, store_id))
     if not ll or not p.get("home"):
         return {"hours": None, "week": None, "checked": False}
-    # on my way the branch can be far from home: the shops around the branch itself (cells of about a kilometre)
-    shops, ok = _osm_area({"lat": round(ll[0], 2), "lon": round(ll[1], 2)}, 1) if _commuting(p) \
-        else _osm_area(p["home"], p.get("max_km"))
+    # on my way the branch can be far from home: the shops around the branch itself (cells of about a kilometre);
+    # so is a branch beyond HOURS_KM of home
+    home, max_km = p["home"], p.get("max_km")
+    far = max_km is not None and float(max_km) > HOURS_KM and geo.km(home["lat"], home["lon"], *ll) > HOURS_KM
+    shops, ok = _osm_area({"lat": round(ll[0], 2), "lon": round(ll[1], 2)}, 1) if _commuting(p) or far \
+        else _osm_area(home, min(float(max_km), HOURS_KM) if max_km is not None else None)
     hours, name = geo.match_hours(shops, ll[0], ll[1], [chain, BRAND_HE.get(chain, ""), he])
     return {"hours": hours, "week": geo.parse_hours(hours), "name": name, "checked": ok}
 
@@ -1213,14 +1357,48 @@ def store_hours(chain_id: str, store_id: int):
 def compare(body: dict = Body(...)):
     c = con()
     try:
-        p = effective({**prefs(), **(body.get("prefs") or {})})
+        p = effective({**prefs(), **_request_prefs(body.get("prefs"))})
         _, way = _way(c, p)
     except (KeyError, TypeError, ValueError, AttributeError):  # malformed places in the request: the saved ones
         p, way = prefs(), None
-    res = engine.compare(c, (body.get("items") or [])[:400], p, overrides=overrides(), way=way)
+    res = engine.compare(c, _items(body.get("items"), MAX_ITEMS), p, overrides=overrides(), way=way)
     for it in res["items"]:
         it["img"] = _img(it["key"])
     return res
+
+
+def _items(raw, n):
+    """Cart lines from a request: [{"key", "qty"}], at most n, keys of a sane length, quantities as numbers."""
+    out = []
+    for i in (raw if isinstance(raw, list) else [])[:n]:
+        if isinstance(i, dict) and isinstance(i.get("key"), str) and 0 < len(i["key"]) <= 40:
+            try:
+                q = float(i.get("qty") or 1)
+            except (TypeError, ValueError):
+                continue
+            if q == q:  # not NaN
+                out.append({**i, "qty": max(0.01, min(999.0, q))})
+    return out
+
+
+def _request_prefs(raw):
+    """Prefs a request may try without saving them (the comparison page sends its own): the same checks as saving,
+    and anything that fails them is simply left out (then the saved value counts)."""
+    out = {}
+    for k, v in (raw.items() if isinstance(raw, dict) else ()):
+        if k not in PREF_KEYS:
+            continue
+        try:
+            if k in ("home", "work"):
+                v = _clean_home(v)
+            elif k == "places":
+                v = _clean_places(v)
+            else:
+                v = _clean_pref(k, v)
+        except HTTPException:
+            continue
+        out[k] = v
+    return out
 
 
 # ---------------------------------------------------------------- settings
@@ -1242,6 +1420,59 @@ def get_settings():
 
 
 PREF_KEYS = {"home", "max_km", "club", "mode", "work", "area", "travel", "detour_km", "places", "at", "from", "to"}
+
+
+def _clean_pref(k, v):
+    """One of the simple prefs as it may be kept: a known value, a number in range, or a place id."""
+    try:
+        if k == "max_km":
+            return None if v is None else max(0.5, min(100.0, float(v)))
+        if k == "detour_km":
+            return None if v is None else max(0.1, min(5.0, float(v)))
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"bad {k}")
+    if k == "club":
+        return bool(v)
+    if k == "mode":
+        return "delivery" if v == "delivery" else "store"
+    if k == "area":
+        return "route" if v == "route" else "home"
+    if k == "travel":
+        return v if v in commute.TRAVEL else "car"
+    if k in ("at", "from", "to"):
+        if v is None or (isinstance(v, str) and PLACE_ID.fullmatch(v)):
+            return v
+        raise HTTPException(422, f"bad {k}")
+    raise HTTPException(422, f"bad {k}")
+
+
+CHAIN_ID, MAX_DELIVERY = re.compile(r"\d{13}"), 80  # chain ids are GS1 location numbers; ~35 chains publish
+DELIVERY_NUM = ("fee", "reduced_fee", "reduced_above", "free_above", "min_order")
+DELIVERY_FLAG = ("delivers", "delivers_here")
+
+
+def _clean_delivery(rule):
+    """A delivery-fee edit: amounts in shekels (or none), and yes/no flags."""
+    if not isinstance(rule, dict):
+        raise HTTPException(422, "bad delivery rule")
+    out = {}
+    for k in DELIVERY_NUM:
+        if k in rule:
+            v = rule[k]
+            if v is None or v == "":
+                out[k] = None
+                continue
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(422, f"bad {k}")
+            if not 0 <= v <= 10000:
+                raise HTTPException(422, f"bad {k}")
+            out[k] = v
+    for k in DELIVERY_FLAG:
+        if k in rule:
+            out[k] = None if rule[k] is None else bool(rule[k])
+    return out
 
 
 def _clean_home(h):
@@ -1314,14 +1545,9 @@ def put_settings(body: dict = Body(...)):
             p["places"] = pl
         p.pop("home", None)
         p.pop("work", None)
-        if "max_km" in p and p["max_km"] is not None:
-            p["max_km"] = max(0.5, min(100.0, float(p["max_km"])))
-        if "area" in p:  # around home, or on my way (home -> work)
-            p["area"] = "route" if p["area"] == "route" else "home"
-        if "travel" in p:
-            p["travel"] = p["travel"] if p["travel"] in commute.TRAVEL else "car"
-        if "detour_km" in p and p["detour_km"] is not None:
-            p["detour_km"] = max(0.1, min(5.0, float(p["detour_km"])))
+        for k in ("max_km", "club", "mode", "area", "travel", "detour_km"):  # around home, or on my way (home -> work)
+            if k in p:
+                p[k] = _clean_pref(k, p[k])
         was, new = effective(old), effective({**old, **p})
         # home and work are kept in the saved prefs too, for what reads them directly (the usage statistics)
         _save_user(c, prefs=json.dumps({**old, **p, "home": new["home"], "work": new["work"]}, ensure_ascii=False))
@@ -1342,15 +1568,16 @@ def put_settings(body: dict = Body(...)):
         _admin()
         engine.put_setting(c, "maps_key", (body["maps_key"] or "").strip() or None)
     if "delivery" in body:
+        if not isinstance(body["delivery"], dict):
+            raise HTTPException(422, "bad delivery")
         cur = overrides()
         for cid, rule in body["delivery"].items():
-            clean = {k: rule.get(k) for k in ("fee", "reduced_fee", "reduced_above", "free_above", "min_order", "delivers",
-                                                    "delivers_here")
-                     if k in rule}
-            if rule.get("reset"):
+            if not CHAIN_ID.fullmatch(cid) or (cid not in cur and len(cur) >= MAX_DELIVERY):  # bounded: chains only
+                continue
+            if isinstance(rule, dict) and rule.get("reset"):
                 cur.pop(cid, None)
             else:
-                cur[str(cid)[:20]] = clean
+                cur[cid] = _clean_delivery(rule)
         _save_user(c, delivery=json.dumps(cur))
         _ev("delivery_edit", n=len(body["delivery"]))
     return get_settings()
@@ -1382,8 +1609,9 @@ def create_cart(body: dict = Body(default={})):
     if c.execute("SELECT count(*) FROM carts WHERE user_id=?", (uid(),)).fetchone()[0] >= MAX_CARTS:
         raise HTTPException(409, "too many carts")
     now = int(time.time())
+    name = body.get("name") if isinstance(body.get("name"), str) else ""
     cur = c.execute("INSERT INTO carts(name, created, updated, user_id) VALUES(?,?,?,?)",
-                    ((body.get("name") or "New basket").strip()[:80], now, now, uid()))
+                    (name.strip()[:80] or "New basket", now, now, uid()))
     cid = cur.lastrowid
     _write_items(c, cid, body.get("items") or [])
     c.commit()
@@ -1392,12 +1620,13 @@ def create_cart(body: dict = Body(default={})):
 
 
 def _write_items(c, cid, items):
-    items = [i for i in items if isinstance(i, dict) and isinstance(i.get("key"), str) and len(i["key"]) <= 40][:MAX_ITEMS]
-    want_photos([i["key"] for i in items if ":" not in (i.get("key") or "")])  # cart products' photos first
+    items = _items(items, MAX_ITEMS)
+    codes = [i["key"] for i in items if ":" not in i["key"]]
+    if codes:  # cart products' photos first: real products only, so a cart can't send the photo fetcher anywhere
+        want_photos([r[0] for r in c.execute(f"SELECT code FROM products WHERE scope='global' AND key IN ({','.join('?' * len(codes))})", codes)])
     c.execute("DELETE FROM cart_items WHERE cart_id=?", (cid,))
     c.executemany("INSERT OR REPLACE INTO cart_items(cart_id, key, qty, name, position) VALUES(?,?,?,?,?)",
-                  [(cid, i["key"], max(0.01, min(999.0, float(i.get("qty") or 1))), str(i.get("name") or "")[:200], n)
-                   for n, i in enumerate(items)])
+                  [(cid, i["key"], i["qty"], str(i.get("name") or "")[:200], n) for n, i in enumerate(items)])
 
 
 @app.get("/api/carts/{cid}")
@@ -1410,7 +1639,8 @@ def update_cart(cid: int, body: dict = Body(...)):
     c = con()
     _cart(c, cid)
     if "name" in body:
-        c.execute("UPDATE carts SET name=? WHERE id=?", ((body["name"] or "Untitled").strip()[:80], cid))
+        name = body["name"] if isinstance(body["name"], str) else ""
+        c.execute("UPDATE carts SET name=? WHERE id=?", (name.strip()[:80] or "Untitled", cid))
     if "items" in body:
         _write_items(c, cid, body["items"])
     c.execute("UPDATE carts SET updated=? WHERE id=?", (int(time.time()), cid))
@@ -1795,7 +2025,10 @@ def _legal_page(kind, request, lang):
 <link rel="stylesheet" href="/static/styles.css"></head><body class="legal"><main class="legal-page">
 <p class="legal-top"><a href="/">{'← סל קל' if lang == 'he' else '← Sal-Kal'}</a><a href="?lang={other}" lang="{other}">{'English' if lang == 'he' else 'עברית'}</a></p>
 <h1>{html.escape(title)}</h1>{body}</main></body></html>"""
-    return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache", "Content-Security-Policy":
+                                       "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' "
+                                       "https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                                       "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"})
 
 
 @app.get("/privacy")

@@ -9,9 +9,19 @@ User=sal
 Group=sal
 WorkingDirectory=/srv/sal/code
 Environment=HOME=/srv/sal/data BASKET_DB=/srv/sal/data/basket.db DUMPS_PATH=/srv/sal/data/dumps PYTHONDONTWRITEBYTECODE=1
-# fd 3 is the Unix socket systemd passes in from sal-web.socket
-ExecStart=/srv/sal/venv/bin/uvicorn app.server:app --fd 3
+# fd 3 is the Unix socket systemd passes in from sal-web.socket. Beyond 400 connections at once it answers
+# "503 busy" instead of queueing without end (app/guard.py limits each visitor long before that).
+ExecStart=/srv/sal/venv/bin/uvicorn app.server:app --fd 3 --limit-concurrency 400 --no-server-header
 Restart=on-failure
+RestartSec=2
+# It faces the internet and shares this machine with other home services: however it is pushed, it can't take
+# more than this. (The admin's reindex button runs the indexer inside this unit: ~2 GB at its peak.)
+MemoryHigh=2560M
+MemoryMax=3G
+TasksMax=256
+CPUQuota=400%
+CPUWeight=80
+IOWeight=80
 MemoryDenyWriteExecute=yes
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

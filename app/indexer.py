@@ -231,7 +231,9 @@ def iter_records(path, tags, require):
     """Stream records: elements whose local tag is in `tags` and that contain a `require` field."""
     src = open_xml(path)
     try:
-        ctx = etree.iterparse(src, events=("end",), recover=True, huge_tree=True)
+        # no entities, DTDs or network: the files come from outside (a chain's portal), so they get no say
+        ctx = etree.iterparse(src, events=("end",), recover=True, huge_tree=True, resolve_entities=False,
+                              load_dtd=False, no_network=True)
         header = {}
         for _, el in ctx:
             t = local(el.tag)
