@@ -272,5 +272,16 @@ pasted barcodes), price changes, deals by chain, price gaps (across chains / acr
 and 2+ chains so carton-vs-pack and internal codes stay out), product tracker (words, barcode prefix = a maker, or
 barcodes). Cached 15 min per data version. History began 2026-11-05: time reports grow more valuable daily.
 Tests: tests/test_reports.py.
+Sign-in only on the base address (2026-11-05): a first Google sign-in started on http://omarchy:8080 failed ("no state
+cookie": the cookie was on the LAN host, Google returns to sal-kal.com). With accounts on, GET /, /app, /about, /admin
+and /auth/* from any other host get a 307 to auth.json base_url (/api stays); failures land on /app#/signin?signin=…
+(the landing page at / can't show them). Tests: tests/test_signin.py.
+Loading (2026-11-05, per user): never "empty" before data: S.cartsLoaded gates the cart (cartSkeleton rows, storeSkeleton)
+and checkout (resultsSkeleton); S.comparing shows a shimmer for each cart line price; showView() switches to the page in
+the address with its skeleton before settings/carts arrive; the home's first deal shelf and category tiles show skeletons.
+Deal colour (per user: red read as an error): deals use --deal/--deal-soft/--deal-ink (green #0B7A45; dark #3DD68C with
+dark ink), --promo stays for errors, price rises, "closed", danger. A cart line's deal is a % icon beside the price
+(dealTip; ux.js [data-tip] tooltip on hover, focus or tap) instead of the cut-off description. "Go to comparison"
+(מעבר להשוואה, cart icon, yellow) in the cart and at the home map's cart-side bottom corner (#map-go, hidden when empty).
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

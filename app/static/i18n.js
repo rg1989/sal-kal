@@ -57,7 +57,7 @@ const HE = {
   'Price looks wrong': 'המחיר נראה שגוי', 'Name not checked': 'השם לא נבדק', 'Being checked': 'בבדיקה',
   'Named differently': 'בשם אחר', 'Not confirmed': 'לא מאומת', '{n} for {price}': '{n} ב־{price}',
   'Deal not counted': 'המבצע לא נספר', 'not on sale anywhere right now': 'לא נמכר כרגע באף מקום',
-  'Not at {chain}': 'אין ב{chain}', 'Not counted': 'לא נספר', 'Similar': 'דומה', 'deal': 'מבצע',
+  'Not at {chain}': 'אין ב{chain}', 'Not counted': 'לא נספר', 'Similar': 'דומה', 'deal': 'מבצע', 'Deal details': 'פרטי המבצע', 'Regular price {p}': 'מחיר רגיל {p}',
   'Not sold here': 'לא נמכר כאן', 'not sold here': 'לא נמכר כאן', 'Missing': 'חסר', 'Club': 'מועדון',
   // ---- the cart
   'Weekly shop': 'קניות שבועיות', 'Remove': 'הסרה', 'Quantity': 'כמות', 'prices at {chain}': 'מחירים ב{chain}',
@@ -76,7 +76,7 @@ const HE = {
   'Your cart': 'הסל שלך', 'Your carts': 'הסלים שלך', 'Close the cart': 'סגירת הסל', 'Cart name': 'שם הסל',
   'Compare your carts': 'השוואת הסלים שלך', 'Empty this cart': 'ריקון הסל', 'Duplicate this cart': 'שכפול הסל',
   'Delete this cart': 'מחיקת הסל', 'This cart is empty': 'הסל ריק', 'Where this cart costs least': 'איפה הסל הכי זול',
-  'Every branch near you, cheapest first': 'כל הסניפים לידך, מהזול ליקר', 'Compare stores': 'השוואת חנויות',
+  'Every branch near you, cheapest first': 'כל הסניפים לידך, מהזול ליקר', 'Compare stores': 'השוואת חנויות', 'Go to comparison': 'מעבר להשוואה',
   // ---- checkout
   'Where to buy': 'איפה לקנות', 'How you shop': 'איך קונים', 'In store': 'בחנות', 'Delivered home': 'משלוח הביתה',
   'Club prices': 'מחירי מועדון', 'Delivery fees': 'דמי משלוח', 'Compare Stores': 'השוואת חנויות',

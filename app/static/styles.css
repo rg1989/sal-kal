@@ -12,6 +12,9 @@
   --tag-edge: #E8B800;
   --promo: #C8102E;
   --promo-soft: #FCE8EB;
+  --deal: #0B7A45;        /* deals are good news: green, not the red of errors (and not the brand's yellow) */
+  --deal-soft: #E2F3E9;
+  --deal-ink: #FFFFFF;
   --good: #1F7A4D;
   --warn: #9A5B00;
   --warn-soft: #FFF3D6;
@@ -28,7 +31,7 @@
   :root:not([data-theme="light"]) {
     --paper: #121715; --surface: #1A201E; --surface-2: #202725; --ink: #E9EDE9; --ink-2: #C3CBC6;
     --muted: #8D9792; --line: #2D3532; --line-strong: #3E4844; --tag: #FFD23F; --tag-ink: #1C2321;
-    --tag-edge: #C79F00; --promo: #FF5C72; --promo-soft: #3A1A20; --good: #4CC48A; --warn: #F0B040;
+    --tag-edge: #C79F00; --promo: #FF5C72; --promo-soft: #3A1A20; --deal: #3DD68C; --deal-soft: #10301F; --deal-ink: #062214; --good: #4CC48A; --warn: #F0B040;
     --warn-soft: #33290F; --focus: #7AA5FF; --shadow: 0 8px 28px -14px rgba(0,0,0,.7);
     color-scheme: dark;
   }
@@ -36,7 +39,7 @@
 :root[data-theme="dark"] {
   --paper: #121715; --surface: #1A201E; --surface-2: #202725; --ink: #E9EDE9; --ink-2: #C3CBC6;
   --muted: #8D9792; --line: #2D3532; --line-strong: #3E4844; --tag: #FFD23F; --tag-ink: #1C2321;
-  --tag-edge: #C79F00; --promo: #FF5C72; --promo-soft: #3A1A20; --good: #4CC48A; --warn: #F0B040;
+  --tag-edge: #C79F00; --promo: #FF5C72; --promo-soft: #3A1A20; --deal: #3DD68C; --deal-soft: #10301F; --deal-ink: #062214; --good: #4CC48A; --warn: #F0B040;
   --warn-soft: #33290F; --focus: #7AA5FF; --shadow: 0 8px 28px -14px rgba(0,0,0,.7);
   color-scheme: dark;
 }
@@ -96,14 +99,14 @@ button { cursor: pointer; }
   display: inline-block; font-size: 11.5px; font-weight: 600; padding: 0 6px; border-radius: 4px; line-height: 18px;
   background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); vertical-align: 1px;
 }
-.chip.promo { background: var(--promo-soft); color: var(--promo); border-color: transparent; }
+.chip.promo { background: var(--deal-soft); color: var(--deal); border-color: transparent; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .chip.muted { background: transparent; color: var(--muted); border: 1px dashed var(--line-strong); font-weight: 500; }
 /* a confirmed deal the quantity doesn't reach ("2 for ₪55"); in the cart it's a button that buys that many */
-.chip.more { background: transparent; color: var(--promo); border-color: color-mix(in srgb, var(--promo) 45%, transparent); }
+.chip.more { background: transparent; color: var(--deal); border-color: color-mix(in srgb, var(--deal) 45%, transparent); }
 button.chip { font-family: inherit; cursor: pointer; }
-button.chip.more:hover { background: var(--promo-soft); }
-.sbs-table small.more { color: var(--promo); }
+button.chip.more:hover { background: var(--deal-soft); }
+.sbs-table small.more { color: var(--deal); }
 
 .items { list-style: none; margin: 0; padding: 4px 8px 8px; overflow: auto; flex: 1; }
 .item {
@@ -180,7 +183,7 @@ button.chip.more:hover { background: var(--promo-soft); }
 .lines .l-name small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 1px; }
 .lines .l-cost { text-align: end; white-space: nowrap; font-family: var(--num); font-size: 17px; font-weight: 600; }
 .lines .l-cost s { color: var(--muted); font-weight: 500; font-size: 14px; margin-inline-end: 6px; }
-.lines .l-cost.promo { color: var(--promo); }
+.lines .l-cost.promo { color: var(--deal); }
 .lines tr.missing .l-name, .lines tr.missing .l-cost { color: var(--muted); }
 .lines tr.missing .l-cost { font-family: var(--ui); font-size: 13px; font-weight: 500; }
 .lines .l-name small.shelf { font-size: 12px; }
@@ -367,7 +370,7 @@ a.brand { color: inherit; text-decoration: none; }
 .q-clear svg { width: 16px; height: 16px; }
 .q-clear:hover { background: var(--tag); color: var(--tag-ink); }
 .top-search input:placeholder-shown + .q-clear { display: none; }
-.c-ends { font-weight: 600; color: var(--promo); }
+.c-ends { font-weight: 600; color: var(--deal); }
 .top-actions { align-items: center; }
 .basket-btn {
   display: inline-flex; align-items: center; gap: 7px; background: var(--ink); color: var(--paper); border: 0; border-radius: 999px;
@@ -425,16 +428,16 @@ a.brand { color: inherit; text-decoration: none; }
 .c-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fff; padding: 6px; }
 .c-thumb .ph { width: 36%; color: var(--line-strong); }
 .c-badge {
-  position: absolute; top: 6px; inset-inline-start: 6px; background: var(--promo); color: #fff; font-family: var(--num); font-weight: 700;
+  position: absolute; top: 6px; inset-inline-start: 6px; background: var(--deal); color: var(--deal-ink); font-family: var(--num); font-weight: 700;
   font-size: 15px; padding: 1px 7px; border-radius: 6px; z-index: 1;
 }
 .c-name { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.c-deal { color: var(--promo); font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-deal { color: var(--deal); font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .c-meta { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .c-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 6px; padding: 4px 10px 10px; }
 .c-price { font-family: var(--num); font-size: 21px; font-weight: 700; line-height: 1.05; }
 .c-price small { display: block; font-family: var(--ui); font-size: 11px; font-weight: 400; color: var(--muted); }
-.c-price.deal { color: var(--promo); }
+.c-price.deal { color: var(--deal); }
 .add { background: var(--ink); color: var(--paper); border: 0; border-radius: 999px; padding: 7px 14px; font-weight: 600; font-size: 13.5px; white-space: nowrap; }
 .add:hover { opacity: .88; }
 .qty-ctl { display: inline-flex; align-items: center; background: var(--tag); color: var(--tag-ink); border-radius: 999px; }
@@ -467,7 +470,7 @@ a.brand { color: inherit; text-decoration: none; }
 .buy .qty-ctl .num { font-size: 19px; min-width: 34px; }
 .in-cart { color: var(--ink-2); font-size: 14px; }
 .p-deal {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; background: var(--promo-soft); border-radius: var(--r);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; background: var(--deal-soft); border-radius: var(--r);
   padding: 10px 14px; margin: 0 0 22px; font-size: 14px;
 }
 .p-deal .c-badge { position: static; }
@@ -543,7 +546,7 @@ button.pill { cursor: pointer; font: inherit; font-size: 14px; }
 .pill.on { background: var(--tag); color: var(--tag-ink); border-color: var(--tag-edge); }
 .pill.on span { color: inherit; opacity: .7; }
 .facet-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.pill.toggle[aria-pressed="true"] { background: var(--promo); border-color: var(--promo); color: #fff; }
+.pill.toggle[aria-pressed="true"] { background: var(--deal); border-color: var(--deal); color: var(--deal-ink); }
 .pill.toggle[aria-pressed="true"] span { color: inherit; opacity: .85; }
 .sort { margin-inline-start: auto; color: var(--muted); font-size: 14px; display: inline-flex; gap: 8px; align-items: center; }
 .sort select {
@@ -573,7 +576,7 @@ button.pill { cursor: pointer; font: inherit; font-size: 14px; }
 /* prices read like the shelf labels in Israeli supermarkets: yellow tag, red when it's a deal */
 .c-price { background: var(--tag); color: var(--tag-ink); padding: 4px 9px 3px; border-radius: 7px; }
 .c-price small { color: inherit; opacity: .72; }
-.c-price.deal { background: var(--promo); color: #fff; }
+.c-price.deal { background: var(--deal); color: var(--deal-ink); }
 .c-price:empty { display: none; }
 .buy .primary, .cta { background: var(--tag); color: var(--tag-ink); }
 .buy .primary:hover, .cta:hover { background: var(--tag-edge); }
@@ -722,7 +725,7 @@ html, * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--tag) 
 }
 .live-cart .item-meta { grid-column: 2; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-meta .warn { color: var(--warn); font-weight: 600; }
-.item-meta .promo { color: var(--promo); font-weight: 600; }
+.item-meta .promo { color: var(--deal); font-weight: 600; }
 .live-cart .stepper { grid-column: 3; }
 .live-cart .stepper button { width: 28px; height: 28px; }
 .live-cart .stepper button svg { width: 14px; height: 14px; }
@@ -732,7 +735,19 @@ html, * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--tag) 
 .item.unconfirmed .item-name, .item.unconfirmed .lc-price { color: var(--muted); }
 .item.unconfirmed .lc-price { font-weight: 500; }
 .item-meta .unc { color: var(--muted); }
-.item.deal .lc-price { color: var(--promo); }
+.item.deal .lc-price { color: var(--deal); }
+/* a deal in a cart row: % beside the price; its words in a tooltip (hover, focus or tap) */
+.deal-tip {
+  position: relative; display: inline-grid; place-items: center; width: 19px; height: 19px; margin-inline-end: 6px; padding: 0;
+  border: 0; border-radius: 50%; background: var(--deal); color: var(--deal-ink); font: 700 12px/1 var(--num); vertical-align: 2px; cursor: help;
+}
+.deal-tip::before { content: ""; position: absolute; inset: -9px; }  /* a finger-sized target */
+.deal-tip:hover, .deal-tip[aria-describedby] { box-shadow: 0 0 0 3px var(--deal-soft); }
+.tip {
+  position: fixed; z-index: 400; max-width: min(280px, calc(100vw - 16px)); padding: 8px 11px; border-radius: 10px;
+  background: var(--ink); color: var(--paper); font-size: 13px; line-height: 1.45; white-space: pre-line; unicode-bidi: plaintext;
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, .45); pointer-events: none;
+}
 .live-cart .empty-basket { flex: 1; }
 
 .lc-foot { border-top: 1px solid var(--line); padding: 10px 12px 12px; display: grid; gap: 8px; background: color-mix(in srgb, var(--surface-2) 55%, var(--surface)); }
@@ -826,7 +841,7 @@ body[data-view="basket"] #lc-cta { display: none; }
 .sbs-table td.miss { color: var(--muted); font: 500 13px var(--ui); }
 .sbs-table td.unc { color: var(--muted); font-weight: 500; }
 .sbs-table tr.unconfirmed .sb-name { color: var(--muted); }
-.sbs-table small.promo { color: var(--promo); max-width: 160px; margin-inline-start: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbs-table small.promo { color: var(--deal); max-width: 160px; margin-inline-start: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sbs-table td.best small.promo { color: var(--tag-ink); }
 .mv { font-family: var(--num); font-size: 12.5px; font-weight: 700; margin-inline-start: 4px; }
 .mv.up { color: var(--promo); } .mv.down { color: var(--good); }
@@ -996,8 +1011,29 @@ body[data-view="basket"] #lc-cta { display: none; }
   mask-image: linear-gradient(to right, transparent 0, #000 13%, #000 87%, transparent 100%),
               linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
 }
-#home-map + .hero { margin-top: 12px; }
+/* what's under the map starts right at its faded bottom edge */
+#home-map + .hero { margin-top: 0; }
+#view-home .home-section h2 { margin-top: 20px; }
+#view-home .hero + .home-section h2 { margin-top: 4px; }
+@media (min-width: 1280px) { #view-home .hero + .home-cats + .home-section h2 { margin-top: 4px; } }
 .mapbox .map-info { inset-inline-start: 24px; top: 10px; }
+
+/* "Go to comparison": the app's main step, in the cart and on the home map (the cart's side), in the price-tag yellow */
+.go-compare {
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px; text-decoration: none;
+  background: var(--tag); color: var(--tag-ink); border: 1px solid var(--tag-edge); border-radius: 999px;
+  padding: 12px 22px; font-size: 15.5px; font-weight: 700; letter-spacing: -.005em;
+  box-shadow: 0 10px 22px -10px color-mix(in srgb, var(--tag-edge) 85%, transparent), 0 2px 0 color-mix(in srgb, var(--tag-edge) 55%, transparent);
+  transition: transform .12s ease, box-shadow .12s ease, background-color .12s ease;
+}
+.go-compare svg { width: 20px; height: 20px; flex: none; }
+.go-compare:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--tag) 88%, #fff);
+  box-shadow: 0 14px 26px -10px color-mix(in srgb, var(--tag-edge) 95%, transparent), 0 2px 0 color-mix(in srgb, var(--tag-edge) 55%, transparent); }
+.go-compare:active { transform: translateY(1px); box-shadow: 0 6px 14px -8px color-mix(in srgb, var(--tag-edge) 85%, transparent); }
+.live-cart .cta.go-compare { display: flex; background: var(--tag); color: var(--tag-ink); padding: 13px 18px; font-weight: 700; }
+.live-cart .cta.go-compare:hover { background: color-mix(in srgb, var(--tag) 88%, #fff); }
+.map-go { position: absolute; z-index: 3; bottom: 16px; inset-inline-end: 24px; }
+body[data-view="basket"] .map-go { display: none; }
 .mapbox .maplibregl-cooperative-gesture-screen { display: none !important; }  /* no "use ⌘ + scroll" nag */
 .mapbox .maplibregl-ctrl-attrib, .mapbox .maplibregl-ctrl.maplibregl-ctrl-attrib { background: transparent; opacity: .7; }
 .mapbox .maplibregl-ctrl-bottom-right { right: 18px; }
@@ -1074,11 +1110,24 @@ button, .pill, .cat, .lc-store, .sso, .add, .acc-row { transition: transform .12
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* skeletons: the shape of what's coming, with a soft shine */
-.sk-line, .sk-foot, .sk-thumb, .sk-btn, .sk-row, .sk-tag, .sk-back, .card.skel .c-thumb, .skeleton {
+.sk-line, .sk-foot, .sk-thumb, .sk-btn, .sk-row, .sk-tag, .sk-back, .sk-price, .card.skel .c-thumb, .cat.skel .cat-icon, .skeleton {
   background: linear-gradient(90deg, var(--surface-2) 0%, color-mix(in srgb, var(--tag) 12%, var(--surface)) 50%, var(--surface-2) 100%);
   background-size: 200% 100%; animation: sk 1.3s ease-in-out infinite; border-radius: 8px; display: block;
 }
-[dir="rtl"] :is(.sk-line, .sk-foot, .sk-thumb, .sk-btn, .sk-row, .sk-tag, .sk-back, .skeleton), [dir="rtl"] .card.skel .c-thumb { animation-direction: reverse; }
+[dir="rtl"] :is(.sk-line, .sk-foot, .sk-thumb, .sk-btn, .sk-row, .sk-tag, .sk-back, .sk-price, .skeleton), [dir="rtl"] :is(.card.skel .c-thumb, .cat.skel .cat-icon) { animation-direction: reverse; }
+/* the cart while carts and prices load: rows, line prices, the cheapest stores; category tiles on the home page */
+.sk-price { display: inline-block; width: 48px; height: 16px; border-radius: 6px; vertical-align: middle; }
+.sk-price.big { width: 74px; height: 24px; }
+.item.skel, .lc-store.skel, .cat.skel { pointer-events: none; }
+.item.skel .item-name .sk-line { height: 12px; width: 78%; }
+.item.skel .item-meta .sk-line { height: 10px; width: 44%; margin-top: 6px; }
+.stepper.sk-step { width: 98px; height: 32px; border-color: var(--line); }
+.lc-store.skel { min-height: 54px; }
+.lc-store.skel .ls-name .sk-line { height: 13px; width: 52%; }
+.lc-store.skel .ls-sub .sk-line { height: 10px; width: 78%; margin-top: 7px; }
+.cat.skel { min-height: 62px; }
+.cat.skel .cat-icon { width: 36px; height: 36px; border-radius: 10px; }
+.cat.skel .sk-line { height: 13px; width: 66%; }
 .skeleton.short { height: 120px; }
 .card.skel { min-height: 0; pointer-events: none; }
 .card.skel .c-thumb { margin: 10px 10px 6px; }

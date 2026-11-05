@@ -139,10 +139,17 @@ async def who(request: Request, call_next):
     u = None
     public = _from_internet(request)
     base = auth.config().get("base_url")
-    if public and base:  # www.sal-kal.com and any other name -> the one address sign-in returns to (its cookies live there)
+    if base:  # www.sal-kal.com and any other name -> the one address sign-in returns to (its cookies live there)
         want, host = urllib.parse.urlsplit(base).netloc, request.headers.get("host", "")
-        if host and host != want:
-            return RedirectResponse(base + path + (f"?{request.url.query}" if request.url.query else ""), status_code=301)
+        to = base + path + (f"?{request.url.query}" if request.url.query else "")
+        if public and host and host != want:
+            return RedirectResponse(to, status_code=301)
+        # the home network (omarchy:8080, Tailscale) once accounts are on: a session can only live on the base address
+        # (the provider sends the browser back there), so pages and sign-in move there. Temporary: turning accounts
+        # off brings local mode back. /api calls stay, for scripts and status checks.
+        if (host and host != want and request.method == "GET" and auth.accounts_on()
+                and (path in ("/", "/app", "/about", "/admin") or path.startswith("/auth/"))):
+            return RedirectResponse(to, status_code=307)
     t0 = time.perf_counter()
     if path.startswith(("/api/", "/auth/", "/admin")):
         c = con()
@@ -1254,7 +1261,8 @@ def _cookie(resp, request, name, value, max_age, path="/"):
 
 
 def _back(why=None):
-    resp = RedirectResponse("/#/signin" + (f"?signin={why}" if why else ""), status_code=303)
+    # /app, not /: signed out, / is the landing page, which wouldn't show why sign-in failed
+    resp = RedirectResponse("/app#/signin" + (f"?signin={why}" if why else ""), status_code=303)
     resp.delete_cookie(auth.STATE_COOKIE, path="/auth")
     return resp
 

@@ -53,6 +53,8 @@ const S = {
   meta: {},           // product key -> {name, manufacturer, is_weighted, min, max, stores}
   prefs: { mode: 'store', club: false, home: null, max_km: null },
   result: null,       // last /api/compare response for the current basket + prefs
+  cartsLoaded: false, // the account's carts have arrived (until then: skeletons, never "empty")
+  comparing: false,   // a /api/compare is on its way
   status: null,
   lastAdded: null,
   traffic: false,    // a Google Maps key is set on the server -> live drive times
@@ -132,21 +134,32 @@ function itemNote(it, c, l) {
     const p = ncPick(l);
     return `<span class="unc">${t('Not compared')}${p ? ` · ${l.own ? '' : t('Similar') + ' · '}${each(p.price)}` : ` · ${t('Not at {chain}', { chain: esc(cn(c.name)) })}`}</span>`;
   }
-  return each(l.price)
-    + (l.promo ? ` · <span class="promo" dir="auto">${esc(l.promo.description || t('deal'))}</span>` : '')
+  return each(l.price)  // the deal itself is in the % icon beside the price (itemPrice): the row has no room for it
     + (l.deals_more?.length ? ' ' + dealsMore(l, 'button') : '')
     + (l.deals_not_counted?.length ? ` · <span class="unc" title="${esc(l.deals_not_counted.join(' · '))}">${t('Deal not counted')}</span>` : '');
 }
 function itemPrice(it, l) {
-  if (!l) return '';
-  if (l.status === 'ok') return money(l.cost);
+  if (!l) return S.comparing && !S.result ? '<span class="sk-price" aria-hidden="true"></span>' : '';
+  if (l.status === 'ok') return (l.promo ? dealTip(l) : '') + money(l.cost);
   if (l.status === 'unconfirmed') return money(l.full ?? l.price * it.qty);
   if (l.status === 'not_compared') { const p = ncPick(l); return p ? money(p.price * it.qty) : '—'; }
   return '—';
 }
+// a deal in a cart row: a % beside the price, with the deal's own words and the regular price on hover or tap
+function dealTip(l) {
+  const tip = `${l.promo.description || t('deal')}\n${t('Regular price {p}', { p: money(l.price) })}`;
+  return `<button type="button" class="deal-tip" data-tip="${esc(tip)}" aria-label="${esc(t('Deal details'))}">%</button>`;
+}
 const itemClass = l => !l ? '' : l.status === 'missing' ? ' missing' : l.status !== 'ok' ? ' unconfirmed' : l.promo ? ' deal' : '';
 
 function renderBasket() {
+  if (!S.cartsLoaded) {  // still on their way: the shape of a cart
+    $('#drawer-items').innerHTML = cartSkeleton(4);
+    $('#drawer-items').hidden = $('#drawer-foot').hidden = false;
+    $('#drawer-empty').hidden = true;
+    $('#lc-stores').innerHTML = storeSkeleton(3);
+    return;
+  }
   const items = S.cart.items, c = pinned();
   const a = document.activeElement, li = a?.closest?.('#drawer-items .item');
   const keep = li && { i: li.dataset.i, val: a.matches('input') ? a.value : null,
@@ -189,6 +202,7 @@ function updateTotals() {
   $('#lc-sum').innerHTML = !n ? '' : `${plural(n, 'product')}${units !== n ? ` · ${plural(units, 'item')}` : ''}`
     + (c ? ` · ${t('prices at {chain}', { chain: `<strong>${esc(cn(c.name))}</strong>` })}` : '');
   $('#cart-bar').hidden = !n;
+  $('#map-go').hidden = !n;  // "Go to comparison" under the home map, once the cart has something
   $('#cb-n').textContent = n;
   const v = c && view(c);
   $('#cb-txt').innerHTML = !c ? t('Finding the cheapest store…') : !nCompared() ? t('Not compared')
@@ -199,6 +213,7 @@ function updateTotals() {
 // the stores the cart costs least at; tap one to see every line priced there
 function renderStores() {
   const el = $('#lc-stores'), ch = S.result?.chains || [], p = pinned();
+  if (!S.cartsLoaded || (S.comparing && !S.result && S.cart.items.length)) { el.innerHTML = storeSkeleton(3); return; }
   if (!S.cart.items.length) { el.innerHTML = ''; return; }
   const n = nCompared();
   if (!S.result) { el.innerHTML = `<p class="lc-wait"><span class="spin" aria-hidden="true"></span>${t('Finding the cheapest store…')}</p>`; return; }
@@ -315,6 +330,7 @@ async function openCart(id) {
     S.cart = { id: c.id, name: c.name, items: c.items };
     local.set('cart', c.id);
   } catch { S.cart = { id: null, name: t('Weekly shop'), items: [] }; }
+  S.cartsLoaded = true;
   S.result = null;
   S.pin = null;
   S.sel = null;
@@ -552,9 +568,12 @@ async function renderHome() {
   $('#viewed').innerHTML = v.map(x => card({ ...x, min_price: null, max_price: null })).join('');
   $('#viewed-wrap').hidden = !v.length;
   if (v.length) fill($('#viewed'), $('#viewed-wrap'), () => api('/api/cards?keys=' + encodeURIComponent(v.map(x => x.key).join(','))));
-  for (const [id] of HOME_ROWS) if (!$('#' + id).children.length) $('#' + id).innerHTML = skeletons(6);
+  // while the deals load, the first shelf shows its shape (the others appear when they have something)
+  const [first] = HOME_ROWS[0];
+  if (!$('#' + first).children.length) { $('#' + first).innerHTML = skeletons(6); $(`#${first}-wrap`).hidden = false; }
   initMap();
   dealRows();
+  if (!cats) $('#cats').innerHTML = catSkeleton(8);
   cats = cats || await api('/api/categories').catch(() => null);
   $('#cats').innerHTML = (cats || []).map(catTile).join('');
 }
@@ -902,6 +921,7 @@ function renderTerms() {
 let listSeq = 0;
 async function openBrowse(live) {
   const my = ++listSeq, grid = $('#b-cards');
+  if (!cats && !grid.querySelector('.card')) grid.innerHTML = skeletons(12);  // categories first come over the network
   cats = cats || await api('/api/categories').catch(() => []);
   $('#b-cats').innerHTML = cats.map(c => `<a class="pill${c.slug === B.cat ? ' on' : ''}" href="${browseHash({ ...B, cat: c.slug === B.cat ? '' : c.slug, sizes: [] })}">${catIcon(c)} ${esc(catName(c))}</a>`).join('');
   renderTerms();
@@ -1105,14 +1125,25 @@ function route() {
   Usage.view(v, v === 'browse' ? B.cat || undefined : v === 'product' ? arg : undefined);
 }
 window.addEventListener('hashchange', route);
+// at start-up, before settings and carts arrive: the right page, showing its skeleton (route() fills it in after)
+function showView() {
+  const m = location.hash.match(/^#\/([a-z]*)/) || [], v = VIEWS[m[1] || ''] || 'home';
+  for (const id of ['home', 'browse', 'product', 'basket']) $(`#view-${id}`).hidden = id !== v;
+  document.body.dataset.view = v;
+  if (v === 'basket') $('#results').innerHTML = resultsSkeleton();
+  if (v === 'home') { $('#biggest').innerHTML = skeletons(6); $('#biggest-wrap').hidden = false; $('#cats').innerHTML = catSkeleton(8); }
+  if (v === 'product') $('#view-product').innerHTML = productSkeleton();
+  if (v === 'browse') $('#b-cards').innerHTML = skeletons(12);
+}
 
 // ---------------------------------------------------------------- compare
 const comparePost = body => api('/api/compare', { method: 'POST', body });
 let compareSeq = 0;
 async function compareNow() {
   const my = ++compareSeq;
-  if (!S.cart.items.length) { S.result = null; drawPins(); drawDots(); if (mapData) renderMapInfo(); renderStoreCard(false); updateTotals(); return renderResults(); }
-  if (!S.result) renderResults(true);
+  if (!S.cart.items.length) { S.result = null; S.comparing = false; drawPins(); drawDots(); if (mapData) renderMapInfo(); renderStoreCard(false); updateTotals(); return renderResults(); }
+  S.comparing = true;
+  if (!S.result) { renderBasket(); renderResults(true); }  // price and store skeletons while the first prices come
   try {
     const r = await comparePost({ items: S.cart.items, prefs: S.prefs });
     if (my !== compareSeq) return;
@@ -1131,6 +1162,12 @@ async function compareNow() {
     loadTrend();
     if (document.body.dataset.view === 'basket') compared(r);
   } catch (e) { if (my === compareSeq && e.message !== 'signed out') toast(t("Couldn't compare prices — is the server up?"), null, null, 'error'); }
+  finally {
+    if (my === compareSeq) {
+      S.comparing = false;
+      if (!S.result) renderBasket();  // it failed: no skeletons left spinning
+    }
+  }
 }
 const compareSoon = debounce(compareNow, 250);
 // statistics: what checkout showed (how many stores had the whole cart, which chain was cheapest), once per cart state
@@ -1337,6 +1374,7 @@ function renderResults(loading) {
     el.innerHTML = emptyState(t('Prices are still downloading'), '', bar);
     return;
   }
+  if (!S.cartsLoaded) { el.innerHTML = resultsSkeleton(); return; }
   if (!S.cart.items.length) {
     el.innerHTML = emptyState(t('Your cart is empty'), '');
     return;
@@ -1763,6 +1801,8 @@ function relabel() {
 
 // ---------------------------------------------------------------- start (account.js calls this once you're signed in)
 async function startApp() {
+  showView();      // the page the address asks for, in its loading shape, before anything has arrived
+  renderBasket();  // the cart's shape too
   const settings = await api('/api/settings').catch(() => null);
   if (settings) { S.prefs = { ...S.prefs, ...settings.prefs }; S.traffic = settings.traffic; }
   applyPrefsUI();
@@ -1772,6 +1812,6 @@ async function startApp() {
   const carts = S.carts;
   const want = carts.find(c => c.id === +local.get('cart')) || carts[0];
   if (want) await openCart(want.id);
-  else { renderBasket(); renderResults(); }
+  else { S.cartsLoaded = true; renderBasket(); renderResults(); }
   pollStatus();
 }

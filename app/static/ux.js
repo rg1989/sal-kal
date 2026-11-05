@@ -179,11 +179,59 @@ function confirmSheet(question, yes) {
   });
 }
 
+// ---------------------------------------------------------------- tooltips: [data-tip] shows its text on hover or focus,
+// and on a tap (phones have no hover); a tap anywhere else, scrolling or Esc closes it
+const tipEl = Object.assign(document.createElement('div'), { className: 'tip', id: 'tip' });
+tipEl.setAttribute('role', 'tooltip');
+tipEl.hidden = true;
+document.body.append(tipEl);
+let tipFor = null;
+function showTip(el) {
+  if (!el.isConnected || !el.dataset.tip) return;
+  tipFor = el;
+  tipEl.textContent = el.dataset.tip;
+  tipEl.hidden = false;
+  el.setAttribute('aria-describedby', 'tip');
+  const r = el.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  const x = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+  const y = r.top - h - 8 >= 8 ? r.top - h - 8 : r.bottom + 8;
+  tipEl.style.left = `${Math.round(x)}px`;
+  tipEl.style.top = `${Math.round(y)}px`;
+}
+function hideTip() {
+  tipFor?.removeAttribute('aria-describedby');
+  tipFor = null;
+  tipEl.hidden = true;
+}
+const canHover = matchMedia('(hover: hover)');
+document.addEventListener('mouseover', e => { const el = e.target.closest?.('[data-tip]'); if (el && canHover.matches && el !== tipFor) showTip(el); });
+document.addEventListener('mouseout', e => { if (tipFor && canHover.matches && !tipFor.contains(e.relatedTarget)) hideTip(); });
+document.addEventListener('focusin', e => { const el = e.target.closest?.('[data-tip]'); if (el) showTip(el); });
+document.addEventListener('focusout', e => { if (tipFor && e.target === tipFor) hideTip(); });
+document.addEventListener('click', e => {  // capture: a tap on the icon only opens its tip, never what's behind it
+  const el = e.target.closest?.('[data-tip]');
+  if (el) { e.preventDefault(); e.stopPropagation(); haptic('select'); showTip(el); } else if (tipFor) hideTip();
+}, true);
+addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
+addEventListener('keydown', e => { if (e.key === 'Escape' && tipFor) hideTip(); });
+
 // ---------------------------------------------------------------- skeletons: the page's shape while it loads
 function productSkeleton() {
   return `<div class="sk-product" aria-hidden="true"><span class="sk-back"></span>
     <div class="sk-head"><span class="sk-thumb"></span><div><span class="sk-line w70"></span><span class="sk-line w40"></span><span class="sk-line w30 tall"></span><span class="sk-btn"></span></div></div>
     <span class="sk-line w30"></span>${'<span class="sk-row"></span>'.repeat(4)}</div>`;
+}
+// a cart's rows while the carts load (never "this cart is empty" before we know)
+function cartSkeleton(n) {
+  return '<li class="item skel" aria-hidden="true"><span class="lc-thumb"></span><span class="item-name"><span class="sk-line"></span></span><span class="item-meta"><span class="sk-line"></span></span><span class="stepper sk-step"></span><span class="lc-price"><span class="sk-price"></span></span></li>'.repeat(n);
+}
+// the cheapest stores while the comparison runs
+function storeSkeleton(n) {
+  return '<div class="lc-store skel" aria-hidden="true"><span class="ls-name"><span class="sk-line"></span></span><span class="ls-sub"><span class="sk-line"></span></span><span class="ls-total"><span class="sk-price big"></span></span></div>'.repeat(n)
+    + `<p class="sr-only">${t('Finding the cheapest store…')}</p>`;
+}
+function catSkeleton(n) {
+  return '<span class="cat skel" aria-hidden="true"><span class="cat-icon"></span><span class="sk-line"></span></span>'.repeat(n);
 }
 function resultsSkeleton() {
   return `<div class="sk-results" aria-hidden="true"><span class="sk-line w40"></span>
