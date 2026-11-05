@@ -11,6 +11,7 @@ import hmac
 import html
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -20,7 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -674,6 +675,8 @@ def _enrich(c, items):
 # ---------------------------------------------------------------- shop: categories, deals, picks, photos
 @app.get("/api/categories")
 def categories():
+    if me():  # the page shows the categories next: have their lists ready for where this account shops
+        _warm_lists()
     # duotone line icons: two masks the page paints in the theme's ink and the brand yellow
     have = lambda slug: os.path.exists(os.path.join(STATIC, "cat", f"{slug}-line.png"))
     return [{**catalog.public(cat), **({"line": f"/static/cat/{cat['slug']}-line.png",
@@ -711,14 +714,15 @@ def _stale_deal_stores(c):
     return sorted(sk for sk in ((r[0], r[1]) for r in old) if sk in have)
 
 
-def _live_deals(c, alias="d", stores=True):
+def _live_deals(c, alias="d", stores=True, upcoming=False):
     """Which stored deals can be shown right now, checked on every request (the deals table is rebuilt only after
     an index run): the deal has started and not ended, and (unless the caller checks stores itself) its store's
     prices are current. Returns (SQL condition on `alias`, its args, a signature of the stores part for caches).
-    Out-of-date stores are named in the condition: on two million deal rows that beats joining stores."""
+    Out-of-date stores are named in the condition: on two million deal rows that beats joining stores.
+    upcoming: deals that haven't started yet count too (the caller checks start times itself, as LiveDeals does)."""
     now = int(time.strftime("%Y%m%d%H%M"))
-    sql, args = (f"({alias}.end_ts IS NULL OR {alias}.end_ts >= ?) AND ({alias}.start_ts IS NULL OR {alias}.start_ts <= ?)",
-                 [now, now])
+    sql, args = (f"({alias}.end_ts IS NULL OR {alias}.end_ts >= ?)", [now]) if upcoming else \
+        (f"({alias}.end_ts IS NULL OR {alias}.end_ts >= ?) AND ({alias}.start_ts IS NULL OR {alias}.start_ts <= ?)", [now, now])
     stale = _stale_deal_stores(c) if stores else []
     by_chain = {}
     for cid, sid in stale:
@@ -737,40 +741,175 @@ def _cache_ok(entry):
     return entry is not None and int(time.strftime("%Y%m%d%H%M")) <= entry[0]
 
 
-_deal_pct = {}
+class LiveDeals:
+    """Each product's deals with their saving and when they run, best saving first, read once per deals table (each
+    index run). Which one is live is decided when asked, so a deal ending somewhere doesn't mean reading the ~2
+    million deal rows again (seconds; up to 17 s from a cold disk), as it did when only today's best was kept."""
+    def __init__(self, table):
+        self.table = table  # key -> [(save_pct, start_ts or None, end_ts or None), ...]
+
+    def get(self, key, default=None, now=None):
+        now = now or int(time.strftime("%Y%m%d%H%M"))
+        for save, start, end in self.table.get(key, ()):
+            if (start is None or start <= now) and (end is None or end >= now):
+                return save
+        return default
+
+    def live(self, now=None):
+        """{product key: best saving %} for every deal live now."""
+        now = now or int(time.strftime("%Y%m%d%H%M"))
+        return {k: v for k in self.table if (v := self.get(k, now=now)) is not None}
+
+    def next_change(self, keys, now=None):
+        """The last minute (YYYYMMDDHHMM) through which these products' live savings stay as they are now: the first
+        of their deals to end or to start."""
+        now, until = now or int(time.strftime("%Y%m%d%H%M")), 999912312359
+        for k in keys:
+            for _, start, end in self.table.get(k, ()):
+                if end is not None and end >= now:
+                    until = min(until, end)
+                if start is not None and start > now:
+                    until = min(until, start - 1)  # the minute before it starts (an ordinal: always below `start`)
+        return until
+
+
+_deal_pct, _deal_pct_lock = {}, threading.Lock()
 
 
 def deal_pct(c, club):
-    """product key -> best saving % among deals live now, for the "On deal" filter and sorting."""
+    """product key -> best saving % among deals live now (LiveDeals.get), for the "On deal" filter and sorting."""
     if not c.execute("SELECT 1 FROM sqlite_master WHERE name='deals'").fetchone():
-        return {}
-    live, args, sig = _live_deals(c)
+        return LiveDeals({})
+    live, args, sig = _live_deals(c, upcoming=True)
     k = (engine.get_setting(c, "deals_version", 0), bool(club), sig)
     hit = _deal_pct.get(k)
-    if not _cache_ok(hit):
-        where = live + ("" if club else " AND d.description NOT LIKE '%מועדון%'")
-        pct, until = {}, 999912312359
-        for key, save, end in c.execute(f"SELECT key, max(save_pct), end_ts FROM deals d WHERE {where} GROUP BY key", args):
-            if comparable(key):
-                pct[key] = save
-                until = min(until, end or until)
-        hit = (until, pct)
-        _deal_pct.clear()
-        _deal_pct[k] = hit
-    return hit[1]
+    if hit is None:
+        with _deal_pct_lock:  # read once: the other requests (and the warm-up) wait for it rather than read it again
+            hit = _deal_pct.get(k)
+            if hit is None:
+                where = live + ("" if club else " AND d.description NOT LIKE '%מועדון%'")
+                table = {}
+                for key, save, start, end in c.execute(
+                        f"SELECT key, max(save_pct), start_ts, end_ts FROM deals d WHERE {where} GROUP BY key, start_ts, end_ts", args):
+                    if comparable(key):
+                        table.setdefault(key, []).append((save, start, end))
+                for v in table.values():
+                    v.sort(key=lambda x: -(x[0] or 0))
+                hit = LiveDeals(table)
+                for old in [x for x in _deal_pct if (x[0], x[2]) != (k[0], k[2])]:  # an older deals table
+                    del _deal_pct[old]
+                _deal_pct[k] = hit
+    return hit
+
+
+def _deal_warmer():
+    """Reads the new deal tables as soon as an index run writes them (checked every 30 s), with and without club
+    deals, so no visitor waits for that read. Its own connection; off the request path (not charged to anyone)."""
+    c = None
+    while True:
+        try:
+            c = c or dbmod.connect()
+            for club in (False, True):
+                deal_pct(c, club)
+        except Exception as e:
+            print("deal warm-up:", repr(e), file=sys.stderr)
+            c = None
+        time.sleep(30)
+
+
+@app.on_event("startup")
+def _warm_deals():
+    threading.Thread(target=_deal_warmer, name="deal-warmer", daemon=True).start()
+
+
+_lists, _lists_lock = OrderedDict(), threading.Lock()  # query + where you shop + data version -> (until, expires, result)
+_lists_busy = {}  # key -> Event, while one thread reads that list
+LIST_TTL, MAX_LISTS = 600, 400
+
+
+def _list_key(c, p, q):
+    """What a list depends on: the query, where you shop (prices near you; on the way, the route), club deals, and the
+    data (new prices, a new check of them, new deals: each makes a new key)."""
+    way = _commuting(p)
+    where = [p.get("home"), p.get("max_km"), bool(p.get("club")), p.get("work") if way else None,
+             [p.get("travel"), _detour(p)] if way else None]
+    ver = [engine.get_setting(c, "deals_version", 0), _confirmed_through(c),
+           c.execute("SELECT max(last_price_ts) FROM stores").fetchone()[0]]
+    return json.dumps([q, where, ver], sort_keys=True, ensure_ascii=False, default=str)
 
 
 @app.get("/api/browse")
 def browse(terms: str = "", cat: str = "", size: str = "", deal: int = 0, sort: str = "", limit: int = 120):
-    """Results for stacked filters: every word in `terms` (|-separated) AND the category must match."""
+    """Results for stacked filters: every word in `terms` (|-separated) AND the category must match. Kept for
+    LIST_TTL per query and place, or until a deal among them starts or ends, whichever is first; new data is a new key."""
     c = con()
     limit = _cap(limit, 200)
+    k = _list_key(c, prefs(), [terms[:MAX_QUERY], cat, size[:MAX_QUERY], int(bool(deal)), sort, limit])
+    now = int(time.strftime("%Y%m%d%H%M"))
+    with _lists_lock:
+        hit = _lists.get(k)
+        if hit and hit[1] > time.time() and now <= hit[0]:
+            _lists.move_to_end(k)
+            return hit[2]
+        busy = _lists_busy.get(k)  # being read already (the warm-up, or another tab): wait for it, don't read it twice
+        if busy is None:
+            _lists_busy[k] = threading.Event()
+    if busy is not None:
+        busy.wait(30)
+        with _lists_lock:
+            hit = _lists.get(k)
+        if hit and hit[1] > time.time() and now <= hit[0]:
+            return hit[2]
+    try:
+        until, out = _browse(c, terms, cat, size, deal, sort, limit)
+        with _lists_lock:
+            _lists[k] = (until, time.time() + LIST_TTL, out)
+            while len(_lists) > MAX_LISTS:
+                _lists.popitem(last=False)
+    finally:
+        if busy is None:
+            with _lists_lock:
+                _lists_busy.pop(k).set()
+    return out
+
+
+_warm_q = queue.Queue(maxsize=240)
+_warm_thread = None
+
+
+def _warm_lists():
+    """Every category's list for where this account shops, read in the background (one worker, one list at a time,
+    off the request path) when its home page asks for the categories, so the first tap on one is instant."""
+    global _warm_thread
+    ctx = contextvars.copy_context()  # who is asking: their places and settings
+    for cat in catalog.CATEGORIES:
+        try:
+            _warm_q.put_nowait((ctx, cat["slug"]))
+        except queue.Full:
+            return
+    if _warm_thread is None or not _warm_thread.is_alive():
+        _warm_thread = threading.Thread(target=_warm_worker, name="list-warmer", daemon=True)
+        _warm_thread.start()
+
+
+def _warm_worker():
+    while True:
+        ctx, slug = _warm_q.get()
+        try:
+            ctx.run(browse, cat=slug, limit=120)  # the same query the page sends: a cache hit costs nothing
+        except Exception as e:
+            print("list warm-up:", repr(e), file=sys.stderr)
+        time.sleep(0.05)  # let requests in between
+
+
+def _browse(c, terms, cat, size, deal, sort, limit):
+    """browse() without the cache: (the minute through which it stays right, the result)."""
     words = [t.strip() for t in terms[:MAX_QUERY].split("|") if t.strip()][:MAX_WORDS]
     toks = [tok for w in words for tok in _tokens(w)][:MAX_WORDS]
     cdef = next((x for x in catalog.CATEGORIES if x["slug"] == cat), None)
     empty = {"total": 0, "products": [], "refine": [], "sizes": [], "deal_n": 0}
     if not toks and not cdef:
-        return empty
+        return 999912312359, empty
     parts = (["(" + catalog.fts_query(cdef) + ")"] if cdef else []) + \
             (["(" + " AND ".join('"' + t.replace('"', '""') + '"*' for t in toks) + ")"] if toks else [])
     sql = """SELECT p.* FROM products_fts f JOIN products p ON p.key=f.key WHERE products_fts MATCH ? AND p.store_count > 0
@@ -798,10 +937,11 @@ def browse(terms: str = "", cat: str = "", size: str = "", deal: int = 0, sort: 
         shown.sort(key=lambda d: -d["store_count"])
     elif sort == "saving":
         shown.sort(key=lambda d: -(d["save"] or 0))
-    return {"total": len(shown), "more": len(rows) >= 1500, "products": _enrich(c, shown[:limit]),
-            "refine": catalog.refine_words(shown, toks),
-            "sizes": [{"size": k, "n": n} for k, n in size_counts.most_common(14)] if len(size_counts) > 1 or sizes else [],
-            "deal_n": sum(1 for d in items if d["save"] and size_ok(d))}
+    return pct.next_change([d["key"] for d in items]), {
+        "total": len(shown), "more": len(rows) >= 1500, "products": _enrich(c, shown[:limit]),
+        "refine": catalog.refine_words(shown, toks),
+        "sizes": [{"size": k, "n": n} for k, n in size_counts.most_common(14)] if len(size_counts) > 1 or sizes else [],
+        "deal_n": sum(1 for d in items if d["save"] and size_ok(d))}
 
 
 _classics = {}

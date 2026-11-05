@@ -88,7 +88,7 @@ c.executemany("""INSERT INTO deals(key, chain_id, store_id, price, unit_price, t
 engine.put_setting(c, "deals_version", 1)
 got = server.deals(kind="mine", keys=f"{MILK},{SOAP}", limit=5)
 assert [d["deal"]["description"] for d in got] == ["live"], got
-assert server.deal_pct(c, False) == {MILK: 0.23, SOAP: 0.37}   # the filter counts live deals at current stores
+assert server.deal_pct(c, False).live() == {MILK: 0.23, SOAP: 0.37}   # the filter counts live deals at current stores
 c.execute("UPDATE prices SET price=7.5 WHERE key=? AND chain_id='A' AND store_id=1", (MILK,))  # shelf price changed
 engine.put_setting(c, "deals_version", 2)
 assert server.deals(kind="mine", keys=MILK, limit=5) == []

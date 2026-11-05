@@ -349,5 +349,12 @@ COOP. No /docs or /openapi.json. sal-web: MemoryMax 3G, TasksMax 256, CPUQuota 4
 sal-tunnel MemoryMax 1G. Tests: tests/test_security.py. Several sessions work in this folder at once and deploy
 selected files: before deploying, compare /srv/sal/code/app with HEAD and your working copy, and install only your
 own files.
+Lists fast (2026-11-05, per user): deal_pct() returns LiveDeals (each product's deals with start/end, read once per
+deals table + stale-store set; live-ness checked when asked; deal-warmer thread re-reads within 30 s of an index run),
+instead of a dict thrown away whenever any deal ended (a ~2M-row read, up to 17 s cold). browse() keeps results in
+_lists per query + where you shop + club + data version (deals_version, confirmed_through, newest price file) for
+LIST_TTL 10 min or until a deal among them starts/ends; a list being read is waited for, not read twice. /api/categories
+queues every category's list for that account (list-warmer thread, off the request path). Browser: lists remembered 10
+min (refreshed after 1), a category fetched on pointer-over/touch of its link. Tests: tests/test_lists.py.
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.
