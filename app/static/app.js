@@ -145,10 +145,12 @@ function itemPrice(it, l) {
   if (l.status === 'not_compared') { const p = ncPick(l); return p ? money(p.price * it.qty) : '—'; }
   return '—';
 }
-// a deal in a cart row: a % beside the price, with the deal's own words and the regular price on hover or tap
+// the usual "more about this" mark: a circled i, in the deal colour where it explains a deal
+const INFO_I = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 9.2v4.9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="10" cy="6.1" r="1.15" fill="currentColor"/></svg>';
+// a deal in a cart row: an (i) beside the price, with the deal's own words and the regular price on hover or tap
 function dealTip(l) {
   const tip = `${l.promo.description || t('deal')}\n${t('Regular price {p}', { p: money(l.price) })}`;
-  return `<button type="button" class="deal-tip" data-tip="${esc(tip)}" aria-label="${esc(t('Deal details'))}">%</button>`;
+  return `<button type="button" class="deal-tip" data-tip="${esc(tip)}" aria-label="${esc(t('Deal details'))}">${INFO_I}</button>`;
 }
 const itemClass = l => !l ? '' : l.status === 'missing' ? ' missing' : l.status !== 'ok' ? ' unconfirmed' : l.promo ? ' deal' : '';
 
@@ -482,11 +484,18 @@ const photo = h => h.img ? `<img src="${esc(h.img)}" alt="" decoding="async" one
 const catIcon = c => c.line
   ? `<span class="ci" aria-hidden="true"><i class="a" style="--m:url('${esc(c.accent)}')"></i><i class="l" style="--m:url('${esc(c.line)}')"></i></span>`
   : `<span class="cat-emoji">${c.icon}</span>`;
+// Add: a round "+", or "+2" / "+3" for a deal's quantity, small enough to sit beside the price
+function addBtn(key, n = 1) {
+  const say = n > 1 ? t('Add {n}', { n }) : t('Add');
+  return `<button class="add" type="button" data-add="${esc(key)}"${n > 1 ? ` data-qty="${n}"` : ''} aria-label="${esc(say)}" title="${esc(say)}"><bdi dir="ltr">+${n > 1 ? n : ''}</bdi></button>`;
+}
+// a discount, big enough to see at a glance: "69%" (green already says it's off, so no minus)
+const saveBadge = d => `<span class="c-badge"><bdi dir="ltr">${Math.round(d.save_pct * 100)}%</bdi></span>`;
 function qtyCtl(h, deal) {
   const it = S.cart.items.find(i => i.key === h.key);
   return it
     ? `<span class="qty-ctl" data-ckey="${esc(h.key)}"><button type="button" data-cstep="-1" aria-label="${t('One less')}">−</button><span class="num">${fmtQty(it.qty, h.is_weighted)}</span><button type="button" data-cstep="1" aria-label="${t('One more')}">+</button></span>`
-    : `<button class="add" type="button" data-add="${esc(h.key)}"${deal && deal.min_qty > 1 ? ` data-qty="${deal.min_qty}"` : ''}>${deal && deal.min_qty > 1 ? t('Add {n}', { n: deal.min_qty }) : t('Add')}</button>`;
+    : addBtn(h.key, deal && deal.min_qty > 1 ? deal.min_qty : 1);
 }
 const perText = u => u ? `${money(u.v)} / ${sizeText(u.per)}` : '';
 // a deal in its last days (end time YYYYMMDDHHMM): "ends today", "ends tomorrow", "ends Sat"
@@ -496,6 +505,9 @@ function endsText(ts) {
   const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()), n = Math.round((day(end) - day(new Date())) / 864e5);
   return n < 0 || n > 2 ? '' : n === 0 ? t('ends today') : n === 1 ? t('ends tomorrow') : t('ends {day}', { day: end.toLocaleDateString(locale(), { weekday: 'short' }) });
 }
+// the chain's own words for a deal ("קאלבו סלט טונה 150 גרם 2 ב-10"): an (i) by the product's name, the words on hover
+// or tap (not a button: the card is a link; a tap on it opens the tip, not the product)
+const cardDealTip = d => `<span class="deal-tip" data-tip="${esc(d.description || t('deal'))}" role="img" aria-label="${esc(`${t('Deal details')}: ${d.description || t('deal')}`)}">${INFO_I}</span>`;
 function card(h) {
   S.hits[h.key] = { ...S.hits[h.key], ...h };
   // produce / deli: one chain's own item, priced at that chain only; other chains' items of the same name aren't compared
@@ -511,8 +523,7 @@ function card(h) {
     : '<span class="c-price"></span>';
   const where = n && n.km != null ? ` · ${kmText(n.km)}` : '';
   const info = d
-    ? `<span class="c-deal" dir="auto">${esc(d.description)}</span>
-       <span class="c-meta">${esc(cn(d.chain))}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · ${t('usually {price}', { price: money(d.typical) })}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
+    ? `<span class="c-meta">${esc(cn(d.chain))}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · ${t('usually {price}', { price: money(d.typical) })}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
        ${facts ? `<span class="c-meta">${bdi(facts)}</span>` : ''}`
     : `<span class="c-meta">${facts ? bdi(facts) : ''}</span>`
       + (own != null
@@ -522,8 +533,8 @@ function card(h) {
         : `<span class="c-meta">${h.chain_count ? plural(h.chain_count, 'chain') : ''}</span>`);
   return `<li class="card${d ? ' has-deal' : ''}" data-key="${esc(h.key)}">
     <a class="c-link" href="#/p/${encodeURIComponent(h.key)}">
-      <span class="c-thumb">${PH}${photo(h)}${d ? `<span class="c-badge">−${Math.round(d.save_pct * 100)}%</span>` : ''}</span>
-      <span class="c-name" dir="auto">${esc(h.name)}</span>
+      <span class="c-thumb">${PH}${photo(h)}${d ? saveBadge(d) : ''}</span>
+      <span class="c-name" dir="auto">${d ? cardDealTip(d) : ''}${esc(h.name)}</span>
       ${info}
     </a>
     <div class="c-foot">${price}<span class="c-ctl">${qtyCtl(h, d)}</span></div>
@@ -993,10 +1004,10 @@ async function openProduct(key) {
   const deal = (await api(`/api/deals?kind=mine&limit=1&keys=${encodeURIComponent(key)}`).catch(() => []))[0];
   if (my !== prodSeq || !deal) return;
   const d = deal.deal;
-  $('#p-deal').innerHTML = `<span class="c-badge">−${Math.round(d.save_pct * 100)}%</span>
+  $('#p-deal').innerHTML = `${saveBadge(d)}
     <span>${t('{deal} at {chain}', { deal: `<strong dir="auto">${esc(d.description)}</strong>`, chain: esc(cn(d.chain)) })}${d.distance_km != null ? ` (${kmText(d.distance_km)})` : ''}:
     ${d.min_qty > 1 ? t('{price} each when you buy {n}', { price: money(d.unit_price), n: d.min_qty }) : t('{price} each', { price: money(d.unit_price) })}, ${t('usually {price}', { price: money(d.typical) })}.</span>
-    ${d.min_qty > 1 && !S.cart.items.some(i => i.key === key) ? `<button class="add" type="button" data-add="${esc(key)}" data-qty="${d.min_qty}">${t('Add {n}', { n: d.min_qty })}</button>` : ''}`;
+    ${d.min_qty > 1 && !S.cart.items.some(i => i.key === key) ? addBtn(key, d.min_qty) : ''}`;
   $('#p-deal').hidden = false;
 }
 

@@ -186,10 +186,10 @@ tipEl.setAttribute('role', 'tooltip');
 tipEl.hidden = true;
 document.body.append(tipEl);
 let tipFor = null;
-function showTip(el) {
-  if (!el.isConnected || !el.dataset.tip) return;
+function showTip(el, text = el.dataset.tip) {
+  if (!el.isConnected || !text) return;
   tipFor = el;
-  tipEl.textContent = el.dataset.tip;
+  tipEl.textContent = text;
   tipEl.hidden = false;
   el.setAttribute('aria-describedby', 'tip');
   const r = el.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
@@ -204,7 +204,26 @@ function hideTip() {
   tipEl.hidden = true;
 }
 const canHover = matchMedia('(hover: hover)');
-document.addEventListener('mouseover', e => { const el = e.target.closest?.('[data-tip]'); if (el && canHover.matches && el !== tipFor) showTip(el); });
+// text cut short by an ellipsis or a line clamp anywhere on the page: its full words, in the same tooltip, on hover
+function clipped(target) {
+  for (let el = target, i = 0; el && el !== document.body && i < 4; el = el.parentElement, i++) {
+    const cs = getComputedStyle(el);
+    const cuts = cs.textOverflow === 'ellipsis' || (cs.webkitLineClamp && cs.webkitLineClamp !== 'none');
+    if (cuts && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1)) return el;
+  }
+  return null;
+}
+document.addEventListener('mouseover', e => {
+  if (!canHover.matches) return;
+  const el = e.target.closest?.('[data-tip]');
+  if (el) { if (el !== tipFor) showTip(el); return; }
+  const cut = clipped(e.target);
+  if (cut && cut !== tipFor) {
+    const copy = cut.cloneNode(true);
+    copy.querySelectorAll('[data-tip], [aria-hidden="true"], .sr-only').forEach(x => x.remove());  // its words only
+    showTip(cut, copy.textContent.replace(/\s+/g, ' ').trim());
+  }
+});
 document.addEventListener('mouseout', e => { if (tipFor && canHover.matches && !tipFor.contains(e.relatedTarget)) hideTip(); });
 document.addEventListener('focusin', e => { const el = e.target.closest?.('[data-tip]'); if (el) showTip(el); });
 document.addEventListener('focusout', e => { if (tipFor && e.target === tipFor) hideTip(); });

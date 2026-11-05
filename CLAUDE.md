@@ -280,8 +280,11 @@ Loading (2026-11-05, per user): never "empty" before data: S.cartsLoaded gates t
 and checkout (resultsSkeleton); S.comparing shows a shimmer for each cart line price; showView() switches to the page in
 the address with its skeleton before settings/carts arrive; the home's first deal shelf and category tiles show skeletons.
 Deal colour (per user: red read as an error): deals use --deal/--deal-soft/--deal-ink (green #0B7A45; dark #3DD68C with
-dark ink), --promo stays for errors, price rises, "closed", danger. A cart line's deal is a % icon beside the price
-(dealTip; ux.js [data-tip] tooltip on hover, focus or tap) instead of the cut-off description. "Go to comparison"
+dark ink), --promo stays for errors, price rises, "closed", danger. A deal's own wording is a circled (i) (INFO_I, the
+usual info mark, in --deal) beside a cart line's price (dealTip) and before a card's name (cardDealTip; the green
+description line on cards is gone): ux.js [data-tip] tooltip on hover, focus or tap. Any text cut by an ellipsis or a
+line clamp shows in full in the same tooltip on hover (clipped()). Card discount badge: big "69%", no minus (saveBadge).
+Card Add is a round "+", or "+2"/"+3" for a deal's quantity (addBtn), beside the price on phones too. "Go to comparison"
 (מעבר להשוואה, cart icon, yellow) in the cart and at the home map's cart-side bottom corner (#map-go, hidden when empty).
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.

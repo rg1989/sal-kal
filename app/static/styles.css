@@ -427,9 +427,11 @@ a.brand { color: inherit; text-decoration: none; }
 }
 .c-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fff; padding: 6px; }
 .c-thumb .ph { width: 36%; color: var(--line-strong); }
+/* the discount: big enough to read at a glance; it may sit over a corner of the photo */
 .c-badge {
-  position: absolute; top: 6px; inset-inline-start: 6px; background: var(--deal); color: var(--deal-ink); font-family: var(--num); font-weight: 700;
-  font-size: 15px; padding: 1px 7px; border-radius: 6px; z-index: 1;
+  position: absolute; top: 7px; inset-inline-start: 7px; background: var(--deal); color: var(--deal-ink); font-family: var(--num); font-weight: 700;
+  font-size: 24px; line-height: 1; letter-spacing: -.01em; padding: 5px 10px 4px; border-radius: 10px; z-index: 1;
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, .35);
 }
 .c-name { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .c-deal { color: var(--deal); font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -438,7 +440,13 @@ a.brand { color: inherit; text-decoration: none; }
 .c-price { font-family: var(--num); font-size: 21px; font-weight: 700; line-height: 1.05; }
 .c-price small { display: block; font-family: var(--ui); font-size: 11px; font-weight: 400; color: var(--muted); }
 .c-price.deal { color: var(--deal); }
-.add { background: var(--ink); color: var(--paper); border: 0; border-radius: 999px; padding: 7px 14px; font-weight: 600; font-size: 13.5px; white-space: nowrap; }
+/* Add on a card: a round "+", or "+2" / "+3" for a deal's quantity */
+.add {
+  display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--ink); color: var(--paper); font: 700 19px/1 var(--num); letter-spacing: -.02em; white-space: nowrap;
+}
+.add[data-qty] { font-size: 17px; }
+.add:not([data-qty]) { font-size: 24px; font-weight: 600; }  /* a lone + reads small at the same size */
 .add:hover { opacity: .88; }
 .qty-ctl { display: inline-flex; align-items: center; background: var(--tag); color: var(--tag-ink); border-radius: 999px; }
 .qty-ctl button { width: 30px; height: 30px; border: 0; background: none; color: inherit; font-size: 17px; border-radius: 50%; }
@@ -736,13 +744,16 @@ html, * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--tag) 
 .item.unconfirmed .lc-price { font-weight: 500; }
 .item-meta .unc { color: var(--muted); }
 .item.deal .lc-price { color: var(--deal); }
-/* a deal in a cart row: % beside the price; its words in a tooltip (hover, focus or tap) */
+/* a deal's details: the usual circled (i), in the deal colour, beside the price (cart) or the name (cards);
+   its words in a tooltip on hover, focus or tap */
 .deal-tip {
-  position: relative; display: inline-grid; place-items: center; width: 19px; height: 19px; margin-inline-end: 6px; padding: 0;
-  border: 0; border-radius: 50%; background: var(--deal); color: var(--deal-ink); font: 700 12px/1 var(--num); vertical-align: 2px; cursor: help;
+  position: relative; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-inline-end: 5px; padding: 0;
+  border: 0; border-radius: 50%; background: none; color: var(--deal); vertical-align: -3px; cursor: help;
 }
+.deal-tip svg { width: 100%; height: 100%; display: block; }
 .deal-tip::before { content: ""; position: absolute; inset: -9px; }  /* a finger-sized target */
-.deal-tip:hover, .deal-tip[aria-describedby] { box-shadow: 0 0 0 3px var(--deal-soft); }
+.c-name .deal-tip { width: 16px; height: 16px; margin-inline-end: 4px; }
+.deal-tip:hover, .deal-tip[aria-describedby] { background: var(--deal-soft); }
 .tip {
   position: fixed; z-index: 400; max-width: min(280px, calc(100vw - 16px)); padding: 8px 11px; border-radius: 10px;
   background: var(--ink); color: var(--paper); font-size: 13px; line-height: 1.45; white-space: pre-line; unicode-bidi: plaintext;
@@ -1596,7 +1607,8 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
   /* product cards: the price, then a full-width Add (or − n +) the thumb can't miss */
   .c-foot { flex-direction: column; align-items: stretch; gap: 8px; }
   .c-ctl { margin: 0; display: flex; }
-  .c-ctl .add { flex: 1; min-height: 40px; }
+  .c-foot:has(.add) { flex-direction: row; align-items: flex-end; }  /* the round + fits beside the price */
+  .c-ctl .add { width: 44px; height: 44px; }
   .c-ctl .qty-ctl { flex: 1; justify-content: space-between; }
   .qty-ctl button { width: 44px; height: 40px; }
 
