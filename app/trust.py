@@ -10,6 +10,12 @@ import time
 FRESH_HOURS = 26          # chains publish a full price file daily; the downloader runs every 3 h
 OUTLIER = (1 / 3, 3.0)    # a price outside this share of the product's median price is not trusted
 OUTLIER_MIN_STORES = 4    # with fewer stores there is nothing to compare against: the published price stands
+NAMES_DAYS = 3            # a chain's shelf name for a barcode counts this long after the newest file it was seen in
+
+
+def names_cutoff(now=None):
+    """Shelf names last seen before this (YYYYMMDDHHMM) no longer confirm anything."""
+    return int(time.strftime("%Y%m%d%H%M", time.localtime((now or time.time()) - NAMES_DAYS * 86400)))
 
 
 def fresh_cutoff(now=None):

@@ -100,28 +100,61 @@ def search(q: str, limit: int = 30):
     return _present(c, rows, limit, _tokens(q) or [q])
 
 
+def _comparable(key):
+    from .indexer import is_global_code
+    return bool(key) and ":" not in key and not re.fullmatch(r"729000000\d{4}", key) and is_global_code(key)
+
+
+# A manufacturer barcode: the same product at every chain, so its prices can be set side by side. Chain codes
+# (produce, deli, "<chain>:<code>") and bare codes that aren't real barcodes are each one chain's own item.
+comparable = getattr(engine, "comparable", None) or _comparable
+
+
+def _confirmed_through(c):
+    """Newest price file time (YYYYMMDDHHMM) the indexer's confirm() has checked; None while it isn't tracked (then
+    every price counts as checked)."""
+    try:
+        return int(engine.get_setting(c, "confirmed_through", 0) or 0) or None
+    except (TypeError, ValueError):
+        return None
+
+
+def _named_sql(c):
+    """SQL condition on prices `p`: a barcode's price counts only at a chain whose own name for it was checked against
+    the other chains' (no name from that chain: nothing to check). Empty on an old database without names."""
+    if not c.execute("SELECT 1 FROM item_names LIMIT 1").fetchone():
+        return ""
+    return ("AND (instr(p.key, ':') > 0 OR EXISTS (SELECT 1 FROM item_names n WHERE n.key=p.key AND n.chain_id=p.chain_id"
+            f" AND n.ts >= {int(trust.names_cutoff())}))")
+
+
 def _present(c, rows, limit, toks=None):
-    """Search-style result list: one entry per weighed product across chains, best matches first."""
+    """Search-style result list: one entry per weighed product (its chain's own item), best matches first."""
     names = {r["chain_id"]: r["name_he"] for r in c.execute("SELECT chain_id, name_he FROM chains")}
     out, groups = [], {}
     for r in rows:
         d = dict(r)
         if d["scope"] == "chain":
-            # weighed produce has a different code at every chain: show one entry, priced across all of them
+            # weighed produce has a different code at every chain: one card per name, priced at its own chain only;
+            # chain_count says how many chains have an item of the same name (never priced together)
             if d["norm"] and len(d["norm"]) >= 2:
                 if d["norm"] in groups:
                     continue
                 groups[d["norm"]] = d
             cid = d["key"].split(":", 1)[0]
             d["chain"] = chain_name(cid, names.get(cid))
+        elif not comparable(d["key"]):  # a code several chains use for different things: no price across chains
+            d.update(min_price=None, max_price=None)
         d["img"] = _img(d["code"]) if d["scope"] == "global" else None
         out.append(d)
     if groups:
         ph = ",".join("?" * len(groups))
-        for g in c.execute(f"""SELECT norm, count(DISTINCT substr(key, 1, instr(key, ':')-1)) chains, sum(store_count) stores,
-                                      min(min_price) mn, max(max_price) mx FROM products
-                               WHERE scope='chain' AND store_count > 0 AND norm IN ({ph}) GROUP BY norm""", list(groups)):
-            groups[g["norm"]].update(chain_count=g["chains"], store_count=g["stores"], min_price=g["mn"], max_price=g["mx"])
+        brands = {}  # one brand can publish under two chain ids
+        for norm, cid in c.execute(f"""SELECT DISTINCT norm, substr(key, 1, instr(key, ':')-1) FROM products
+                                       WHERE scope='chain' AND store_count > 0 AND norm IN ({ph})""", list(groups)):
+            brands.setdefault(norm, set()).add(chain_name(cid, names.get(cid)))
+        for norm, d in groups.items():
+            d["chain_count"] = max(len(brands.get(norm, ())), 1)
     # "ביצים" should find eggs before chocolate eggs: names that start with the first word win,
     # ignoring a leading pack size ("12 ביצים L"); then the most widely sold
     if toks:
@@ -145,8 +178,8 @@ def _near_stores(c):
     if not home:
         return None
     k = (home["lat"], home["lon"], max_km, int(time.time() // 600))
-    if k not in _near_cache:
-        _near_cache.clear()
+    near = _near_cache.get(k)  # read once: another request may clear the cache
+    if near is None:
         kind = {(r[0], r[1]): r[2] for r in c.execute("SELECT chain_id, store_id, store_type FROM stores WHERE price_full_ts > 0")}
         near = {}
         for sk, (lat, lon) in geo.store_coords(c).items():
@@ -154,8 +187,9 @@ def _near_stores(c):
                 d = geo.km(home["lat"], home["lon"], lat, lon)
                 if d <= float(max_km or 15):
                     near[sk] = round(d, 1)
+        _near_cache.clear()
         _near_cache[k] = near
-    return _near_cache[k]
+    return near
 
 
 def _per_measure(price, size):
@@ -188,37 +222,42 @@ def _pack(d):
 
 
 def _enrich(c, items):
-    """Adds to each product card: `near` = the cheapest shelf price at a branch near you (chain + distance; the nearest
-    of equally cheap ones), `pack` = its size, and `per` = its price per 100 g / litre."""
-    near = _near_stores(c)
-    if near and items:
+    """Adds to each product card, from confirmed shelf prices now (current store files, checked by the indexer, no
+    outliers, no chain that names the barcode differently or not at all): `near` = the cheapest at a branch near you
+    (chain + distance; the nearest of equally cheap ones), `min_price` / `max_price` = the range at every store
+    (stats stored by the indexer can be out of date), `pack` = its size and `per` = its price per 100 g / litre.
+    A chain's own item (produce, deli) is priced only at that chain, under its own code."""
+    near = _near_stores(c) or {}
+    keys = [d["key"] for d in items if ":" in d["key"] or comparable(d["key"])]
+    if keys:
         names = {r[0]: r[1] for r in c.execute("SELECT chain_id, name_he FROM chains")}
-        keys = {d["key"]: d["key"] for d in items}  # price key -> the card it belongs to
-        # produce sold by weight has its own code at every chain: price the card at all of them
-        norms = {d["norm"]: d["key"] for d in items if d.get("scope") == "chain" and d.get("norm")}
-        if norms:
-            for r in c.execute(f"""SELECT key, norm FROM products WHERE scope='chain' AND store_count > 0
-                                   AND norm IN ({','.join('?' * len(norms))})""", list(norms)):
-                keys.setdefault(r[0], norms[r[1]])
-        best = {}
-        # confirmed shelf prices only: current store files, no outliers, no chain that names the barcode differently
-        for k, chain, store, price in c.execute(
-                f"""SELECT p.key, p.chain_id, p.store_id, p.price FROM prices p
+        best, span, checked = {}, {}, _confirmed_through(c)
+        ph = ",".join("?" * len(keys))
+        named = {(r[0], r[1]) for r in c.execute(f"SELECT DISTINCT key, chain_id FROM item_names WHERE key IN ({ph})"
+                                                 f" AND ts >= {int(trust.names_cutoff())}", keys)}
+        check_names = bool(_named_sql(c))  # an old database without names: nothing to check against
+        for k, chain, store, price, ts in c.execute(
+                f"""SELECT p.key, p.chain_id, p.store_id, p.price, p.ts FROM prices p
                     JOIN stores s ON s.chain_id=p.chain_id AND s.store_id=p.store_id
-                    WHERE p.key IN ({','.join('?' * len(keys))}) AND p.ts >= s.price_full_ts AND s.last_price_ts >= ?
+                    WHERE p.key IN ({ph}) AND p.ts >= s.price_full_ts AND s.last_price_ts >= ? AND p.price > 0
                       AND NOT EXISTS (SELECT 1 FROM price_flags f WHERE f.key=p.key AND f.chain_id=p.chain_id AND f.store_id=p.store_id)
                       AND NOT EXISTS (SELECT 1 FROM name_flags nf WHERE nf.key=p.key AND nf.chain_id=p.chain_id)""",
                 [*keys, trust.fresh_cutoff()]):
-            km = near.get((chain, store))
-            if km is None or not price:
+            if (checked and ts > checked) or (":" in k and chain != k.split(":", 1)[0]) \
+                    or (check_names and ":" not in k and (k, chain) not in named):
                 continue
-            card, b = keys[k], best.get(keys[k])
-            if b is None or (price, km) < (b[0], b[2]):
-                best[card] = (price, chain, km)
+            lo, hi = span.get(k, (price, price))
+            span[k] = (min(lo, price), max(hi, price))
+            km = near.get((chain, store))
+            if km is not None and (k not in best or (price, km) < (best[k][0], best[k][2])):
+                best[k] = (price, chain, km)
         for d in items:
+            if d["key"] in keys:
+                d["min_price"], d["max_price"] = span.get(d["key"], (None, None))
             b = best.get(d["key"])
             d["near"] = {"price": b[0], "chain": chain_name(b[1], names.get(b[1])), "km": b[2]} if b else None
     for d in items:
+        d.setdefault("near", None)
         d["size"] = d.get("size") or catalog.size_of(d["name"], d.get("quantity"), d.get("unit"))
         d["pack"] = _pack(d)
         deal = d.get("deal")
@@ -249,19 +288,70 @@ def category(slug: str, limit: int = 60):
     return {**catalog.public(cat), "products": _present(c, rows, limit)}
 
 
+_deal_stores = {}
+
+
+def _stale_deal_stores(c):
+    """Stores with deals in the table whose price or deal files have gone out of date since it was built (it is built
+    from current stores only, so this is usually empty while the index timer runs)."""
+    v = engine.get_setting(c, "deals_version", 0)
+    have = _deal_stores.get(v)
+    if have is None:
+        have = {(r[0], r[1]) for r in c.execute("SELECT DISTINCT chain_id, store_id FROM deals")}
+        _deal_stores.clear()
+        _deal_stores[v] = have
+    cutoff = trust.fresh_cutoff()
+    old = c.execute("SELECT chain_id, store_id FROM stores WHERE last_price_ts < ? OR promo_full_ts < ?", (cutoff, cutoff))
+    return sorted(sk for sk in ((r[0], r[1]) for r in old) if sk in have)
+
+
+def _live_deals(c, alias="d", stores=True):
+    """Which stored deals can be shown right now, checked on every request (the deals table is rebuilt only after
+    an index run): the deal has started and not ended, and (unless the caller checks stores itself) its store's
+    prices are current. Returns (SQL condition on `alias`, its args, a signature of the stores part for caches).
+    Out-of-date stores are named in the condition: on two million deal rows that beats joining stores."""
+    now = int(time.strftime("%Y%m%d%H%M"))
+    sql, args = (f"({alias}.end_ts IS NULL OR {alias}.end_ts >= ?) AND ({alias}.start_ts IS NULL OR {alias}.start_ts <= ?)",
+                 [now, now])
+    stale = _stale_deal_stores(c) if stores else []
+    by_chain = {}
+    for cid, sid in stale:
+        by_chain.setdefault(cid, []).append(sid)
+    conds = []
+    for cid, ids in by_chain.items():
+        conds.append(f"({alias}.chain_id=? AND {alias}.store_id IN ({','.join('?' * len(ids))}))")
+        args += [cid, *ids]
+    if conds:
+        sql += f" AND NOT ({' OR '.join(conds)})"
+    return sql, args, tuple(map(tuple, stale))
+
+
+def _cache_ok(entry):
+    """A cached deal list stays right until the first of its deals ends."""
+    return entry is not None and int(time.strftime("%Y%m%d%H%M")) <= entry[0]
+
+
 _deal_pct = {}
 
 
 def deal_pct(c, club):
-    """product key -> best saving %, for the "On deal" filter and sorting."""
+    """product key -> best saving % among deals live now, for the "On deal" filter and sorting."""
     if not c.execute("SELECT 1 FROM sqlite_master WHERE name='deals'").fetchone():
         return {}
-    k = (engine.get_setting(c, "deals_version", 0), bool(club))
-    if k not in _deal_pct:
-        where = "" if club else " WHERE description NOT LIKE '%מועדון%'"
+    live, args, sig = _live_deals(c)
+    k = (engine.get_setting(c, "deals_version", 0), bool(club), sig)
+    hit = _deal_pct.get(k)
+    if not _cache_ok(hit):
+        where = live + ("" if club else " AND d.description NOT LIKE '%מועדון%'")
+        pct, until = {}, 999912312359
+        for key, save, end in c.execute(f"SELECT key, max(save_pct), end_ts FROM deals d WHERE {where} GROUP BY key", args):
+            if comparable(key):
+                pct[key] = save
+                until = min(until, end or until)
+        hit = (until, pct)
         _deal_pct.clear()
-        _deal_pct[k] = dict(c.execute("SELECT key, max(save_pct) FROM deals" + where + " GROUP BY key").fetchall())
-    return _deal_pct[k]
+        _deal_pct[k] = hit
+    return hit[1]
 
 
 @app.get("/api/browse")
@@ -335,6 +425,19 @@ def picks(limit: int = 12):
     return _enrich(c, _present(c, rows, limit))
 
 
+@app.get("/api/cards")
+def cards(keys: str = ""):
+    """Cards for these products, in this order, with today's confirmed prices (recently viewed: the browser keeps
+    only which products, never their prices)."""
+    want = [k for k in dict.fromkeys(keys.split(",")) if k][:24]
+    if not want:
+        return []
+    c = con()
+    rows = c.execute(f"SELECT * FROM products WHERE key IN ({','.join('?' * len(want))}) AND store_count > 0", want).fetchall()
+    order = {k: i for i, k in enumerate(want)}
+    return _enrich(c, sorted(_present(c, rows, len(want)), key=lambda d: order.get(d["key"], len(want))))
+
+
 _deals_cache = {}
 
 
@@ -351,16 +454,23 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12):
     if kind == "basket":  # the basket = every product in any of the household's carts
         want = [r[0] for r in c.execute("SELECT DISTINCT key FROM cart_items")][:300]
         kind = "mine"
-    ck = (engine.get_setting(c, "deals_version", 0), kind, json.dumps(home), max_km, tuple(want), limit)
-    if ck in _deals_cache:
-        return _deals_cache[ck]
+    nearby = bool(home and max_km)  # the nearby stores are joined below, current ones only
+    live, live_args, sig = _live_deals(c, stores=not nearby)
+    checked, cutoff = _confirmed_through(c), trust.fresh_cutoff()
+    fresh = {(r[0], r[1]) for r in c.execute("SELECT chain_id, store_id FROM stores WHERE last_price_ts >= ? AND promo_full_ts >= ?",
+                                              (cutoff, cutoff))}
+    ck = (engine.get_setting(c, "deals_version", 0), kind, json.dumps(home), max_km, tuple(want), limit, sig, checked,
+          hash(frozenset(fresh)) if nearby else 0)
+    hit = _deals_cache.get(ck)  # (deals stay right until, cards); read once: other threads may clear the cache
+    if _cache_ok(hit):
+        return hit[1]
     coords = geo.store_coords(c) if home else {}
     dist = lambda sk: geo.km(home["lat"], home["lon"], *coords[sk]) if sk in coords else None
-    join, where, params = "", [], []
-    if home and max_km:
+    join, where, params = "", [live], list(live_args)
+    if nearby:
         c.execute("CREATE TEMP TABLE IF NOT EXISTS near(chain_id TEXT, store_id INTEGER, PRIMARY KEY(chain_id, store_id))")
         c.execute("DELETE FROM near")
-        c.executemany("INSERT INTO near VALUES(?,?)", [sk for sk in coords if dist(sk) <= float(max_km)])
+        c.executemany("INSERT INTO near VALUES(?,?)", [sk for sk in coords if sk in fresh and dist(sk) <= float(max_km)])
         join = "JOIN near n ON n.chain_id=d.chain_id AND n.store_id=d.store_id"
     if not prefs.get("club"):
         where.append("d.description NOT LIKE '%מועדון%'")
@@ -378,10 +488,27 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12):
     rows = c.execute(f"""SELECT g.*, p.name, p.manufacturer, p.quantity, p.unit, p.is_weighted, p.chain_count,
                                 p.store_count, p.min_price, p.max_price, p.scope, p.code FROM (
                            SELECT d.key, min(d.unit_price) unit_price, d.chain_id, d.store_id, d.price, d.typical,
-                                  d.save_pct, d.min_qty, d.description, d.start_ts FROM deals d {join}
-                           {"WHERE " + " AND ".join(where) if where else ""} GROUP BY d.key) g
+                                  d.save_pct, d.min_qty, d.description, d.start_ts, d.end_ts FROM deals d {join}
+                           WHERE {" AND ".join(where)} GROUP BY d.key) g
                          JOIN products p ON p.key=g.key {"" if kind == "mine" else "WHERE p.chain_count >= 3"}
                          ORDER BY {order} LIMIT ?""", params + [limit * 4]).fetchall()
+    rows = [r for r in rows if comparable(r["key"])]
+    # the shelf price the deal was worked out from must still be the store's confirmed price now
+    now_price = {}
+    if rows:
+        ph = ",".join("(?,?,?)" for _ in rows)
+        for k, cid, sid, price, ts in c.execute(
+                f"""WITH want(key, chain_id, store_id) AS (VALUES {ph})
+                    SELECT p.key, p.chain_id, p.store_id, p.price, p.ts FROM want w
+                    JOIN prices p ON p.key=w.key AND p.chain_id=w.chain_id AND p.store_id=w.store_id
+                    JOIN stores s ON s.chain_id=p.chain_id AND s.store_id=p.store_id
+                    WHERE p.ts >= s.price_full_ts AND s.last_price_ts >= ? {_named_sql(c)}
+                      AND NOT EXISTS (SELECT 1 FROM price_flags f WHERE f.key=p.key AND f.chain_id=p.chain_id AND f.store_id=p.store_id)
+                      AND NOT EXISTS (SELECT 1 FROM name_flags nf WHERE nf.key=p.key AND nf.chain_id=p.chain_id)""",
+                [x for r in rows for x in (r["key"], r["chain_id"], r["store_id"])] + [cutoff]):
+            if not checked or ts <= checked:
+                now_price[(k, cid, sid)] = price
+    rows = [r for r in rows if abs((now_price.get((r["key"], r["chain_id"], r["store_id"])) or -1) - r["price"]) < 0.005]
     seen, uniq = set(), []
     for r in rows:  # one card per deal: "3 for ₪10.90" covering five crisp flavours shows once
         k = (r["chain_id"], r["description"]) if kind != "mine" else r["key"]
@@ -405,7 +532,7 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12):
     _enrich(c, out)
     if len(_deals_cache) > 64:
         _deals_cache.clear()
-    _deals_cache[ck] = out
+    _deals_cache[ck] = (min([r["end_ts"] for r in rows if r["end_ts"]] or [999912312359]), out)
     return out
 
 
@@ -478,25 +605,70 @@ def _since(c):
     return int(r[0]) if r else None
 
 
+def _flagged(c, keys, chains=None):
+    """(key, chain) pairs a chain currently names differently: another product under the same barcode."""
+    if not keys:
+        return set()
+    sql = f"SELECT DISTINCT key, chain_id FROM name_flags WHERE key IN ({','.join('?' * len(keys))})"
+    return {(k, cid) for k, cid in c.execute(sql, list(keys)) if chains is None or cid in chains}
+
+
+def _series(rows):
+    """Change-only history rows [[day, mn, mx], ...] -> (points with a price, days a series ended). An end-marker row
+    (mn and mx NULL) means the chain had no confirmed price from that day on, until its next row."""
+    pts, ends = [], []
+    for day, mn, mx in rows:
+        if mn is None:
+            if pts and (not ends or ends[-1] < pts[-1][0]):
+                ends.append(day)
+        else:
+            pts.append([day, mn, mx])
+    return pts, ends
+
+
 @app.get("/api/history")
 def product_history(key: str):
-    """A product's price over time at each chain: [day, cheapest branch, dearest branch], on the days it changed."""
+    """A product's price over time at each chain: points [day, cheapest branch, dearest branch] on the days it changed,
+    and `ends`, the days a chain stopped having a confirmed price (a gap until its next point; `ended` when it hasn't
+    come back). Only for a product that is the same everywhere (a barcode) or one chain's own item."""
     c = con()
+    out = {"since": _since(c), "today": int(time.strftime("%Y%m%d")), "chains": []}
+    if ":" not in key and not comparable(key):
+        return out
     names = {r[0]: r[1] for r in c.execute("SELECT chain_id, name_he FROM chains")}
-    series = {}
+    rows, flagged = {}, _flagged(c, [key])
     for cid, day, mn, mx in c.execute("SELECT chain_id, day, mn, mx FROM price_history WHERE key=? ORDER BY day", (key,)):
-        series.setdefault(cid, []).append([day, mn, mx])
-    by_name = {}  # one line per brand (a few brands publish under two chain ids)
-    for cid, pts in series.items():
-        name = chain_name(cid, names.get(cid))
-        if name not in by_name or pts[-1][1] < by_name[name]["points"][-1][1]:
-            by_name[name] = {"chain_id": cid, "chain": name, "points": pts}
-    return {"since": _since(c), "today": int(time.strftime("%Y%m%d")), "chains": list(by_name.values())}
+        if (key, cid) not in flagged and (":" not in key or cid == key.split(":", 1)[0]):
+            rows.setdefault(cid, []).append((day, mn, mx))
+    by_name = {}  # one line per brand (a few brands publish under two chain ids): a current one, else the cheapest
+    for cid, r in rows.items():
+        pts, ends = _series(r)
+        if not pts:
+            continue
+        s = {"chain_id": cid, "chain": chain_name(cid, names.get(cid)), "points": pts, "ends": ends,
+             "ended": bool(ends) and ends[-1] > pts[-1][0]}
+        b = by_name.get(s["chain"])
+        if b is None or (s["ended"], pts[-1][1]) < (b["ended"], b["points"][-1][1]):
+            by_name[s["chain"]] = s
+    out["chains"] = list(by_name.values())
+    return out
 
 
 def _at(points, day):
-    """The price on `day` from change-only points: the last change on or before it (the first one before history)."""
+    """The price on `day` from change-only points: the last change on or before it (the first one before history).
+    Not used for anything shown: it back-fills days before the first price. See _on."""
     v = points[0][1]
+    for d, p in points:
+        if d > day:
+            break
+        v = p
+    return v
+
+
+def _on(points, day):
+    """The price on `day` from change-only points [[day, price or None], ...]: the last change on or before it.
+    None before the first one and after an end marker: there was no confirmed price that day. Never a later price."""
+    v = None
     for d, p in points:
         if d > day:
             break
@@ -506,26 +678,51 @@ def _at(points, day):
 
 @app.post("/api/history/cart")
 def cart_history(body: dict = Body(...)):
-    """What a cart cost at each chain over time (every product at the chain's cheapest branch that day), and which
-    products changed price there in the last 30 days."""
+    """What a cart's barcode products cost at each chain over time (each at the chain's cheapest branch that day), and
+    which products changed price there in the last 30 days. A chain has a point on a day only when every one of them
+    had a confirmed price there that day; `ends` lists the days its cart stopped being fully priced."""
     c = con()
     qty = {i["key"]: float(i.get("qty") or 1) for i in body.get("items") or []}
     chains = [str(x) for x in (body.get("chains") or [])][:8]
     if not qty or not chains:
-        return {"since": _since(c), "series": {}, "changes": {}}
+        return {"since": _since(c), "series": {}, "ends": {}, "changes": {}}
+    flagged = _flagged(c, list(qty), set(chains))
     pts = {}
     for k, cid, day, mn in c.execute(
             f"""SELECT key, chain_id, day, mn FROM price_history WHERE key IN ({','.join('?' * len(qty))})
                 AND chain_id IN ({','.join('?' * len(chains))}) ORDER BY day""", [*qty, *chains]):
-        pts.setdefault(cid, {}).setdefault(k, []).append([day, mn])
+        if (k, cid) not in flagged and (":" in k or comparable(k)) and (":" not in k or cid == k.split(":", 1)[0]):
+            pts.setdefault(cid, {}).setdefault(k, []).append([day, mn])
+    today = int(time.strftime("%Y%m%d"))
     month_ago = int(time.strftime("%Y%m%d", time.localtime(time.time() - 30 * 86400)))
-    series, changes = {}, {}
+    need = [k for k in qty if comparable(k)]
+    series, ends, changes = {}, {}, {}
     for cid, items in pts.items():
-        days = sorted({d for p in items.values() for d, _ in p})
-        series[cid] = [[d, round(sum(qty[k] * _at(p, d) for k, p in items.items()), 2)] for d in days]
-        moved = {k: [_at(p, month_ago), p[-1][1]] for k, p in items.items()}
-        changes[cid] = {k: v for k, v in moved.items() if abs(v[1] - v[0]) >= 0.005}
-    return {"since": _since(c), "series": series, "changes": changes}
+        moved = {}
+        for k, p in items.items():
+            then, now = _on(p, month_ago), _on(p, today)
+            if then is not None and now is not None and abs(now - then) >= 0.005:
+                moved[k] = [then, now]
+        if moved:
+            changes[cid] = moved
+        # the total covers what the comparison totals: barcode products (produce is never compared), all of them
+        if not need or any(k not in items for k in need):  # one never had a confirmed price here: no cart total
+            continue
+        line, gaps = [], []
+        for d in sorted({d for k in need for d, _ in items[k]}):
+            vals = [_on(items[k], d) for k in need]
+            if any(v is None for v in vals):
+                if line and (not gaps or gaps[-1] < line[-1][0]):
+                    gaps.append(d)
+            else:
+                total = round(sum(qty[k] * v for k, v in zip(need, vals)), 2)
+                if not line or gaps and gaps[-1] > line[-1][0] or abs(line[-1][1] - total) >= 0.005:
+                    line.append([d, total])
+        if line:
+            series[cid] = line
+            if gaps:
+                ends[cid] = gaps
+    return {"since": _since(c), "series": series, "ends": ends, "changes": changes}
 
 
 # ---------------------------------------------------------------- one store: address, opening hours, route from home
@@ -644,7 +841,8 @@ def put_settings(body: dict = Body(...)):
     if "delivery" in body:
         cur = engine.get_setting(c, "delivery", {})
         for cid, rule in body["delivery"].items():
-            clean = {k: rule.get(k) for k in ("fee", "reduced_fee", "reduced_above", "free_above", "min_order", "delivers")
+            clean = {k: rule.get(k) for k in ("fee", "reduced_fee", "reduced_above", "free_above", "min_order", "delivers",
+                                                    "delivers_here")
                      if k in rule}
             if rule.get("reset"):
                 cur.pop(cid, None)

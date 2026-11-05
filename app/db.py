@@ -3,6 +3,8 @@ import sqlite3
 
 DB_PATH = os.environ.get("BASKET_DB", os.path.expanduser("~/il-prices/basket.db"))
 
+ITEM_NAMES_COLS = "key TEXT, chain_id TEXT, name TEXT, ts INTEGER DEFAULT 0, PRIMARY KEY(key, chain_id, name)"
+
 # Price data: written by the indexer in long transactions.
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -40,17 +42,20 @@ CREATE TABLE IF NOT EXISTS price_history(key TEXT, chain_id TEXT, day INTEGER, m
   PRIMARY KEY(key, chain_id, day)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS price_last(key TEXT, chain_id TEXT, mn REAL, mx REAL, day INTEGER,
   PRIMARY KEY(key, chain_id)) WITHOUT ROWID;
--- what each chain calls a barcode product (the name on its shelf)
-CREATE TABLE IF NOT EXISTS item_names(key TEXT, chain_id TEXT, name TEXT, PRIMARY KEY(key, chain_id)) WITHOUT ROWID;
--- barcode products a chain names differently from the other chains (app.trust.odd_names): not the same product
+-- every name a chain uses for a barcode product (the names on its shelves); ts = newest file (YYYYMMDDHHMM) it was in
+CREATE TABLE IF NOT EXISTS item_names(ITEM_NAMES_COLS) WITHOUT ROWID;
+-- barcode products a chain names differently from the other chains (app.names.odd_names): not the same product.
+-- name = the chain's odd name (its newest one when several disagree)
 CREATE TABLE IF NOT EXISTS name_flags(key TEXT, chain_id TEXT, name TEXT, PRIMARY KEY(key, chain_id)) WITHOUT ROWID;
 -- shelf prices far from the product's median price at other stores (app.trust.OUTLIER): not trusted
 CREATE TABLE IF NOT EXISTS price_flags(key TEXT, chain_id TEXT, store_id INTEGER, median REAL,
   PRIMARY KEY(key, chain_id, store_id)) WITHOUT ROWID;
-"""
+""".replace("ITEM_NAMES_COLS", ITEM_NAMES_COLS)
 
 # columns added after the first release: (table, column, type)
-ADDED_COLUMNS = (("products", "median", "REAL"), ("promos", "max_qty", "REAL"), ("promos", "remarks", "TEXT"))
+# promos.club_ids: the ClubId values as published, comma-separated ("0", "1,2"); NULL on rows indexed before it existed
+ADDED_COLUMNS = (("products", "median", "REAL"), ("promos", "max_qty", "REAL"), ("promos", "remarks", "TEXT"),
+                 ("promos", "club_ids", "TEXT"))
 
 # The household's own data lives in a separate file (attached as `u`), so saving a cart never
 # waits behind the indexer's long write locks on the price data. Unqualified names resolve here.
@@ -85,12 +90,23 @@ def connect(path=None):
     return con
 
 
+def _cols(con, table):
+    return {r[1] for r in con.execute(f"PRAGMA main.table_info({table})")}
+
+
 def _migrate(con):
-    """Columns added since the tables were created, and a one-time move of user tables from the price DB into
-    user.db (else main's copies would shadow them)."""
+    """Columns added since the tables were created, item_names' move from one name per (barcode, chain) to every
+    name with a timestamp, and a one-time move of user tables from the price DB into user.db (else main's copies
+    would shadow them). Each step re-checks inside its write lock: the web server's threads connect concurrently."""
     for table, col, typ in ADDED_COLUMNS:
-        if col not in {r[1] for r in con.execute(f"PRAGMA main.table_info({table})")}:
-            con.execute(f"ALTER TABLE main.{table} ADD COLUMN {col} {typ}")
+        if col not in _cols(con, table):
+            try:
+                con.execute(f"ALTER TABLE main.{table} ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                if col not in _cols(con, table):  # another connection added it in between
+                    raise
+    if "ts" not in _cols(con, "item_names"):
+        _migrate_item_names(con)
     old = [t for t in USER_TABLES
            if con.execute("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?", (t,)).fetchone()]
     if not old:
@@ -100,3 +116,26 @@ def _migrate(con):
             if not con.execute(f"SELECT 1 FROM u.{t} LIMIT 1").fetchone():
                 con.execute(f"INSERT INTO u.{t} SELECT * FROM main.{t}")
             con.execute(f"DROP TABLE main.{t}")
+
+
+def _migrate_item_names(con):
+    """item_names(key, chain_id, name) PK(key, chain_id) -> every distinct name, PK(key, chain_id, name), with ts.
+    The old rows' file times weren't kept: each gets its chain's newest PriceFull time (the names were read from
+    the chain's current files), so they vote in the name check until newer files replace them (indexer.NAMES_DAYS).
+    ~0.5 M rows: a few seconds."""
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        if "ts" not in _cols(con, "item_names"):
+            con.execute("ALTER TABLE main.item_names RENAME TO item_names_v1")
+            con.execute(f"CREATE TABLE main.item_names({ITEM_NAMES_COLS}) WITHOUT ROWID")
+            con.execute("""CREATE TEMP TABLE chain_ts AS SELECT chain_id, max(price_full_ts) ts FROM main.stores
+                           GROUP BY chain_id""")
+            con.execute("""INSERT OR IGNORE INTO main.item_names(key, chain_id, name, ts)
+                           SELECT i.key, i.chain_id, i.name, coalesce(c.ts, 0) FROM main.item_names_v1 i
+                           LEFT JOIN temp.chain_ts c ON c.chain_id=i.chain_id WHERE coalesce(i.name, '') != ''""")
+            con.execute("DROP TABLE temp.chain_ts")
+            con.execute("DROP TABLE main.item_names_v1")
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise

@@ -1,7 +1,11 @@
-"""Run: .venv/bin/python tests/test_cards.py"""
+"""Run: .venv/bin/python tests/test_cards.py  (card prices across chains: tests/test_server.py)"""
 import os
 import sys
+import tempfile
 
+TMP = tempfile.mkdtemp(prefix="sal-test-")
+os.environ["BASKET_DB"] = os.path.join(TMP, "basket.db")  # app.server connects at import: keep it off the live DB
+os.environ["BASKET_USER_DB"] = os.path.join(TMP, "user.db")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.server import _pack, _per_measure  # noqa: E402
 

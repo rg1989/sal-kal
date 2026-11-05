@@ -68,7 +68,14 @@ function pricesFrom(ts) {  // "Prices from 09:30" today, "Prices from 4 Nov 22:1
   const t = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   return 'Prices from ' + (d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${t}`);
 }
-const unconfText = l => l.reason === 'price' ? 'Price looks wrong' : `Named differently: ${bdi(l.shelf_name || '')}`;
+// why a price isn't counted (engine `reason`)
+const unconfText = l => ({ price: 'Price looks wrong', noname: 'Name not checked', new: 'Being checked' })[l.reason]
+  || (l.reason === 'name' ? 'Named differently' + (l.shelf_name ? `: ${bdi(l.shelf_name)}` : '') : 'Not confirmed');
+// confirmed deals this quantity doesn't reach: "2 for ₪55"
+const dealMoreText = d => `${d.units} for ₪${Number.isInteger(+d.total) ? +d.total : (+d.total).toFixed(2)}`;
+const dealsMore = (l, tag = 'span') => (l.deals_more || []).filter(d => d.units > 0 && d.total != null).map(d =>
+  `<${tag} ${tag === 'button' ? `type="button" data-dealqty="${d.units}" ` : ''}class="chip more" dir="auto" title="${esc(d.description || '')}">${dealMoreText(d)}</${tag}>`).join(' ');
+const notCounted = l => l.deals_not_counted?.length ? `<span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>` : '';
 // produce at one store: its own item, or items with the same name; null when it has neither
 const ncPick = l => l.own && l.price != null ? { name: l.shelf_name, price: l.price } : l.similar?.[0] || null;
 const radius = () => S.prefs.home && S.prefs.max_km ? S.prefs.max_km : null;
@@ -113,6 +120,7 @@ function itemNote(it, c, l) {
   }
   return each(l.price)
     + (l.promo ? ` · <span class="promo" dir="auto">${esc(l.promo.description || 'deal')}</span>` : '')
+    + (l.deals_more?.length ? ' ' + dealsMore(l, 'button') : '')
     + (l.deals_not_counted?.length ? ` · <span class="unc" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>` : '');
 }
 function itemPrice(it, l) {
@@ -276,8 +284,9 @@ function removeAt(i) {
 }
 
 $('#drawer-items').addEventListener('click', e => {
-  const li = e.target.closest('.item'), step = e.target.closest('[data-step]');
+  const li = e.target.closest('.item'), step = e.target.closest('[data-step]'), dq = e.target.closest('[data-dealqty]');
   if (li && step) stepCart(S.cart.items[+li.dataset.i].key, +step.dataset.step);
+  if (li && dq) setQty(+li.dataset.i, +dq.dataset.dealqty);  // "2 for ₪55": buy the deal's quantity
 });
 $('#drawer-items').addEventListener('change', e => {
   if (e.target.matches('input')) setQty(+e.target.closest('.item').dataset.i, parseFloat(e.target.value));
@@ -443,21 +452,28 @@ function qtyCtl(h, deal) {
 const perText = u => u ? `${money(u.v)} / ${u.per}` : '';
 function card(h) {
   S.hits[h.key] = { ...S.hits[h.key], ...h };
-  const d = h.deal, n = h.near, unit = h.is_weighted ? '/kg' : '';
+  // produce / deli: one chain's own item, priced at that chain only; other chains' items of the same name aren't compared
+  const own = h.scope === 'chain' ? h.chain || '' : null;
+  const d = h.deal, n = own != null && h.near && h.near.chain !== own ? null : h.near, unit = h.is_weighted ? '/kg' : '';
   // the server's pack size (null when the name's number is something else, e.g. grams of protein); no bare numbers
   const facts = ['pack' in h ? h.pack : h.size, perText(h.per)].filter(Boolean).join(' · ');
+  const label = own != null ? esc(own) + (!n && h.min_price !== h.max_price ? ' · from' : '')
+    : n ? 'near you' : h.min_price === h.max_price ? 'price' : 'from';
   const price = d
     ? `<span class="c-price deal"><small>${d.min_qty > 1 ? `each, ×${d.min_qty}` : 'deal price'}</small>${money(d.unit_price)}${unit}</span>`
-    : n ? `<span class="c-price"><small>near you</small>${money(n.price)}${unit}</span>`
-    : h.min_price == null ? '<span class="c-price"></span>'
-    : `<span class="c-price"><small>${h.min_price === h.max_price ? 'price' : 'from'}</small>${money(h.min_price)}${unit}</span>`;
+    : (n || h.min_price != null) ? `<span class="c-price"><small>${label}</small>${money(n ? n.price : h.min_price)}${unit}</span>`
+    : '<span class="c-price"></span>';
+  const where = n && n.km != null ? ` · ${kmText(n.km)}` : '';
   const info = d
     ? `<span class="c-deal" dir="auto">${esc(d.description)}</span>
        <span class="c-meta">${esc(d.chain)}${d.distance_km != null ? ` · ${kmText(d.distance_km)}` : ''} · usually ${money(d.typical)}</span>
        ${facts ? `<span class="c-meta">${bdi(facts)}</span>` : ''}`
     : `<span class="c-meta">${facts ? bdi(facts) : ''}</span>`
-      + (n ? `<span class="c-near">Cheapest <strong>${money(n.price)}${unit}</strong> at ${esc(n.chain)}${n.km != null ? ` · ${kmText(n.km)}` : ''}</span>`
-           : `<span class="c-meta">${h.scope === 'chain' && h.chain_count <= 1 ? esc(h.chain || '') + ' only' : plural(h.chain_count, 'chain')}</span>`);
+      + (own != null
+        ? (n ? `<span class="c-near"><strong>${money(n.price)}${unit}</strong> at ${esc(n.chain)}${where}</span>` : '')
+          + `<span class="c-meta">${h.chain_count > 1 ? `Similar at ${plural(h.chain_count - 1, 'other chain')}` : esc(own) + ' only'}</span>`
+        : n ? `<span class="c-near">Cheapest <strong>${money(n.price)}${unit}</strong> at ${esc(n.chain)}${where}</span>`
+        : `<span class="c-meta">${h.chain_count ? plural(h.chain_count, 'chain') : ''}</span>`);
   return `<li class="card${d ? ' has-deal' : ''}" data-key="${esc(h.key)}">
     <a class="c-link" href="#/p/${encodeURIComponent(h.key)}">
       <span class="c-thumb">${PH}${photo(h)}${d ? `<span class="c-badge">−${Math.round(d.save_pct * 100)}%</span>` : ''}</span>
@@ -488,8 +504,7 @@ function remember(text) {
 }
 const viewed = () => { try { return JSON.parse(local.get('viewed')) || []; } catch { return []; } };
 function rememberViewed(p) {
-  const keep = ['key', 'name', 'manufacturer', 'quantity', 'unit', 'is_weighted', 'min_price', 'max_price',
-                'store_count', 'chain_count', 'scope', 'chain', 'img'];
+  const keep = ['key', 'name', 'manufacturer', 'quantity', 'unit', 'is_weighted', 'scope', 'chain', 'img'];  // no prices
   const o = Object.fromEntries(keep.map(k => [k, p[k]]));
   local.set('viewed', JSON.stringify([o, ...viewed().filter(v => v.key !== p.key)].slice(0, 12)));
 }
@@ -500,8 +515,10 @@ async function renderHome() {
   const r = recent(), v = viewed();
   $('#recent').innerHTML = r.map(t => `<a class="pill" href="#/s/${encodeURIComponent(t)}" dir="auto">${esc(t)}</a>`).join('');
   $('#recent-wrap').hidden = !r.length;
-  $('#viewed').innerHTML = v.map(card).join('');
+  // what you looked at, with today's confirmed prices (never prices kept in this browser)
+  $('#viewed').innerHTML = v.map(x => card({ ...x, min_price: null, max_price: null })).join('');
   $('#viewed-wrap').hidden = !v.length;
+  if (v.length) fill($('#viewed'), $('#viewed-wrap'), () => api('/api/cards?keys=' + encodeURIComponent(v.map(x => x.key).join(','))));
   for (const id of ['biggest', 'fresh']) if (!$('#' + id).children.length) $('#' + id).innerHTML = skeletons(6);
   initMap();
   // your basket = every product in any of your carts; nothing to show until a cart has items
@@ -896,22 +913,26 @@ function offer(c, best) {
   const s = c.in_store, l = offerLine(c), kg = S.product.p.is_weighted, ol = c.online?.lines?.[0];
   const flags = [
     l?.promo && `<span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>`,
-    l?.deals_not_counted?.length && `<span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>`,
+    l && dealsMore(l),
+    l && notCounted(l),
   ].filter(Boolean).join(' ');
   const online = ol && offerPrice(ol) != null ? `<small>Online ${money(offerPrice(ol))}</small>` : '';
+  // branches are ranked by the cart total; with nothing compared (produce) that is no price order
+  const of = s.branch_count > 1 ? (S.product.res.n ? ` · cheapest of ${s.branch_count} branches` : ` · ${s.branch_count} branches`) : '';
   return `<li class="offer${best ? ' best' : ''}">
     <span class="o-chain">${esc(c.name)}${best ? ' <span class="o-badge">Cheapest</span>' : ''}</span>
-    <span class="o-store">${storePlace(s)}${s.branch_count > 1 ? ` · cheapest of ${s.branch_count} branches` : ''}${l?.shelf_name ? ` · ${bdi(l.shelf_name)}` : ''}</span>
+    <span class="o-store">${storePlace(s)}${of}${l?.shelf_name ? ` · ${bdi(l.shelf_name)}` : ''}</span>
     ${flags ? `<span class="o-flags">${flags}</span>` : ''}
     <span class="o-price">${l?.promo ? `<s>${money(l.full)}</s>` : ''}${money(offerPrice(l))}${kg ? '<em>/kg</em>' : ''}${online}</span>
   </li>`;
 }
 // a chain whose price can't be confirmed (or produce matched only by name): greyed, below the offers
 function offerOther(c) {
-  const s = c.in_store, l = offerLine(c), kg = S.product.p.is_weighted;
+  const s = c.in_store, l = offerLine(c), kg = S.product.p.is_weighted, own = l.status === 'not_compared' && l.own && l.price != null;
   const what = l.status === 'unconfirmed' ? `${unconfText(l)} · Not counted`
+    : own ? 'Not compared' + (l.shelf_name ? ` · ${bdi(l.shelf_name)}` : '')
     : (l.similar || []).map(x => `Similar: ${bdi(x.name)} ${money(x.price)}${kg ? '/kg' : ''}`).join(' · ');
-  const price = l.status === 'unconfirmed' ? l.price : l.similar?.[0]?.price;
+  const price = l.status === 'unconfirmed' || own ? l.price : l.similar?.[0]?.price;
   return `<li class="offer unconfirmed">
     <span class="o-chain">${esc(c.name)}</span>
     <span class="o-store">${storePlace(s)}</span>
@@ -929,11 +950,13 @@ function renderBuy() {
 
 function renderProduct() {
   const { p, res } = S.product, el = $('#view-product'), kg = !!p.is_weighted, r = radius();
-  // counted prices first (barcode: confirmed lines, ranked by the engine; produce: its own chain's branches)
-  const chains = res.chains.filter(c => offerPrice(offerLine(c)) != null)
+  // counted prices first (barcode: confirmed lines, ranked by the engine; produce: its own chain's branches). A bare
+  // code that isn't a real barcode is a different item at each chain: every chain's item is listed as not compared
+  const ownItem = res.n > 0 || p.key.includes(':');
+  const chains = !ownItem ? [] : res.chains.filter(c => offerPrice(offerLine(c)) != null)
     .sort((a, b) => res.n ? 0 : offerPrice(offerLine(a)) - offerPrice(offerLine(b)));
   const others = res.chains.filter(c => { const l = offerLine(c); return l && !chains.includes(c)
-    && (l.status === 'unconfirmed' || (l.status === 'not_compared' && l.similar?.length)); });
+    && (l.status === 'unconfirmed' || (l.status === 'not_compared' && (l.similar?.length || (l.own && l.price != null)))); });
   const meta = [clean(p.manufacturer), qtyText(p.quantity, p.unit), kg ? 'sold by weight' : ''].filter(Boolean);
   const shown = chains.slice(0, 6), more = chains.slice(6);
   el.innerHTML = `<a class="back" href="#/" data-back>← Back</a>
@@ -942,19 +965,19 @@ function renderProduct() {
       <div class="p-info">
         <h1 dir="auto">${esc(p.name)}</h1>
         ${meta.length ? `<p class="p-meta">${meta.map(bdi).join(' · ')}</p>` : ''}
-        ${chains.length ? `<p class="p-from">From <strong class="num">${money(offerPrice(offerLine(chains[0])))}${kg ? '/kg' : ''}</strong> at ${esc(chains[0].name)}</p>` : ''}
+        ${chains.length ? `<p class="p-from">${res.n ? 'From ' : ''}<strong class="num">${money(offerPrice(offerLine(chains[0])))}${kg ? '/kg' : ''}</strong> at ${esc(chains[0].name)}</p>` : ''}
         <div class="buy" id="p-buy"></div>
       </div>
     </div>
     <p class="p-deal" id="p-deal" hidden></p>
-    ${chains.length ? `<h2 class="p-h">Price at ${plural(chains.length, 'chain')}${r ? ` within ${r} km` : ''} · cheapest first</h2>
-      <ol class="offers">${shown.map((c, i) => offer(c, i === 0)).join('')}</ol>
+    ${chains.length ? `<h2 class="p-h">Price at ${plural(chains.length, 'chain')}${r ? ` within ${r} km` : ''}${res.n ? ' · cheapest first' : ''}</h2>
+      <ol class="offers">${shown.map((c, i) => offer(c, i === 0 && res.n > 0 && !!c.in_store?.complete)).join('')}</ol>
       ${more.length ? `<details class="pricier"><summary>More expensive (${more.length})
         <span class="range">${money(offerPrice(offerLine(more[0])))}${more.length > 1 ? ' – ' + money(offerPrice(offerLine(more.at(-1)))) : ''}</span></summary>
         <ol class="offers">${more.map(c => offer(c, false)).join('')}</ol></details>` : ''}`
-    : emptyState(r ? `Not sold within ${r} km` : 'Not on sale right now', '',
+    : others.length ? '' : emptyState(r ? `Not sold within ${r} km` : 'Not on sale right now', '',
         r ? '<div class="actions"><button class="primary" type="button" data-open-loc>Change distance</button></div>' : '')}
-    ${others.length ? `<details class="pricier"><summary>${res.n ? 'Not counted' : 'Not compared'} (${others.length})</summary>
+    ${others.length ? `<details class="pricier"${chains.length ? '' : ' open'}><summary>${res.n ? 'Not counted' : 'Not compared'} (${others.length})</summary>
       <ol class="offers">${others.map(offerOther).join('')}</ol></details>` : ''}
     <section class="p-history"></section>`;
   renderBuy();
@@ -965,7 +988,8 @@ async function productHistory(key, names) {
   const t = await api('/api/history?key=' + encodeURIComponent(key)).catch(() => null);
   const el = $('#view-product .p-history');
   if (!t || !el || S.product?.p.key !== key) return;
-  const series = t.chains.filter(c => names.includes(c.chain)).map(c => ({ name: c.chain, points: c.points.map(p => [p[0], p[1]]) }));
+  const series = t.chains.filter(c => names.includes(c.chain))
+    .map(c => ({ name: c.chain, points: withGaps(c.points.map(p => [p[0], p[1]]), c.ends) })).filter(sr => sr.points.some(p => p[1] != null));
   const days = new Set(series.flatMap(sr => sr.points.map(p => p[0])));
   el.innerHTML = !series.length ? '' : '<h2 class="p-h">Price history</h2>' + (days.size < 2 && (t.since || 0) >= todayNum()
     ? `<p class="trend-note">Tracking since ${fmtDay(t.since || todayNum())}.</p>`
@@ -1062,11 +1086,13 @@ async function fillDrive(root = $('#results')) {
 
 // What a chain costs in store, online, delivered — shared by the hero and the rows.
 function facts(c, skipHeadline) {
-  const o = c.online, s = c.in_store, out = [];
-  if (s && !(skipHeadline && !delivery())) out.push(['In store', money(s.total)]);
+  const o = c.online, s = c.in_store, out = [], n = nCompared();
+  const of = v => v.complete || !n ? '' : ` · ${v.covered} of ${n}`;  // a total over only some products says so
+  if (s && !(skipHeadline && !delivery())) out.push(['In store', money(s.total) + of(s)]);
   if (!o) { out.push(['', 'No online shop in the price files', true]); return out; }
-  out.push(['Groceries online', money(o.total)]);
-  if (o.fee == null) out.push(['', o.fee_note || 'Delivery fee not set', true]);
+  out.push(['Groceries online', money(o.total) + of(o)]);
+  if (!o.area_confirmed) out.push(['', 'Delivery area not confirmed', true]);
+  else if (o.fee == null) out.push(['', o.fee_note || 'Delivery fee not set', true]);
   else {
     out.push(['Delivery', o.fee === 0 ? 'Free' : money(o.fee)]);
     if (!(skipHeadline && delivery())) out.push(['Delivered total', money(o.delivered)]);
@@ -1095,7 +1121,7 @@ function lineRow(l) {
   const shelf = shelfLine(l);
   const chips = (l.promo ? ` <span class="chip promo" dir="auto">${esc(l.promo.description || 'Promotion')}</span>`
       + (l.promo.club ? ' <span class="chip">Club</span>' : '') : '')
-    + (l.deals_not_counted?.length ? ` <span class="chip muted" title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</span>` : '');
+    + (l.deals_more?.length ? ' ' + dealsMore(l) : '') + (l.deals_not_counted?.length ? ' ' + notCounted(l) : '');
   return `<tr><td class="l-name">${name}<small>${fmtQty(l.qty, kg)} × ${money(l.price)}${chips}</small>${shelf ? `<small class="shelf">${shelf}</small>` : ''}</td>
     <td class="l-cost${l.promo ? ' promo' : ''}">${l.promo ? `<s>${money(l.full)}</s>` : ''}${money(l.cost)}</td></tr>`;
 }
@@ -1184,7 +1210,18 @@ function staleHTML() {
   return `<details class="pricier stale"><summary>Prices over a day old (${st.length})</summary>
     <ul class="stale-list">${st.map(s => `<li><span class="row-chain">${esc(s.chain)}</span>
       <span class="row-store">${bdi(storeName(s))}${s.distance_km != null ? ` · ${kmText(s.distance_km)}` : ''}</span>
-      <span class="st-ts">${pricesFrom(s.last_price_ts)}</span></li>`).join('')}</ul></details>`;
+      <span class="st-ts">${s.online ? 'Online · ' : ''}${pricesFrom(s.last_price_ts) || 'No current prices'}</span></li>`).join('')}</ul></details>`;
+}
+// delivery: chains whose online shop may not deliver to this address (the user hasn't confirmed it): never ranked
+function noAreaHTML() {
+  const na = delivery() ? S.result?.no_area || [] : [];
+  if (!na.length) return '';
+  const n = nCompared();
+  return `<details class="pricier stale"><summary>Delivery area not confirmed (${na.length})</summary>
+    <ul class="stale-list">${na.map(a => `<li><span class="row-chain">${esc(a.chain)}</span>
+      <span class="row-store">${bdi(storeName(a))}</span>
+      <span class="st-ts">${money(a.total)}${a.complete || !n ? '' : ` · ${a.covered} of ${n}`}</span></li>`).join('')}</ul>
+    <p class="note"><button class="linkish" type="button" data-open-fees>Delivery fees</button></p></details>`;
 }
 // up to 4 rows open; the rest (always including the dearest) collapsed under `label`
 function groupHTML(list, hero, open, label) {
@@ -1218,7 +1255,7 @@ function renderResults(loading) {
   if (!chains.length) {
     const r = radius();
     el.innerHTML = (delivery()
-      ? emptyState('No online shop has these products', '')
+      ? emptyState(S.result.no_area?.length ? 'No confirmed delivery' : 'No online shop has these products', '') + noAreaHTML()
       : r ? emptyState(`No stores within ${r} km`, '',
           '<div class="actions"><button class="primary" type="button" data-open-loc>Change distance</button></div>')
       : emptyState('No store has these products', '')) + staleHTML();
@@ -1242,7 +1279,7 @@ function renderResults(loading) {
       ? (partial.length ? `<details class="pricier"><summary>Missing some products (${partial.length})</summary>
           <div class="ranked">${partial.map(c => row(c, hero)).join('')}</div></details>` : '')
       : groupHTML(partial.filter(c => c !== hero), hero, 'Missing some products', 'More'))
-    + staleHTML();
+    + noAreaHTML() + staleHTML();
   fillDrive();
 }
 
@@ -1277,31 +1314,51 @@ const hue = name => SLOT.includes(name) ? `var(--s${SLOT.indexOf(name) + 1})` : 
 
 const charts = new Map();
 let chartId = 0;
-// step lines over time (prices change in steps), one per series, carried to today; legend + direct end labels,
-// crosshair readout on hover, and a hidden table for screen readers
+// change-only points + the days a series stopped having a confirmed price -> points where null starts a gap
+const withGaps = (pts, ends = []) => [...pts, ...(ends || []).map(d => [d, null])].sort((a, b) => a[0] - b[0]);
+// step lines over time (prices change in steps), one per series, carried to today unless it stopped (a null point
+// starts a gap: no confirmed price until the next point); legend + direct end labels, crosshair readout on hover,
+// and a hidden table for screen readers
 function lineChart(series, title) {
   const W = 760, H = 230, L = 50, R = 118, T = 12, B = 26, today = todayNum();
-  const all = series.flatMap(x => x.points), t0 = dayDate(Math.min(...all.map(p => p[0]))).getTime(), t1 = dayDate(today).getTime();
-  let lo = Math.min(...all.map(p => p[1])), hi = Math.max(...all.map(p => p[1]));
+  const all = series.flatMap(x => x.points), vals = all.filter(p => p[1] != null);
+  const t0 = dayDate(Math.min(...vals.map(p => p[0]))).getTime(), t1 = dayDate(today).getTime();
+  let lo = Math.min(...vals.map(p => p[1])), hi = Math.max(...vals.map(p => p[1]));
   const pad = (hi - lo) * 0.2 || hi * 0.04 || 1;
   lo = Math.max(0, lo - pad); hi += pad;
   const x = d => L + (t1 === t0 ? 1 : (dayDate(d).getTime() - t0) / (t1 - t0)) * (W - L - R);
   const y = v => T + (hi - v) * (H - T - B) / (hi - lo);
-  const path = pts => pts.map(([d, v], i) => (i ? `H${x(d).toFixed(1)}V${y(v).toFixed(1)}` : `M${x(d).toFixed(1)} ${y(v).toFixed(1)}`)).join('') + `H${x(today).toFixed(1)}`;
+  // one path per series, broken at gaps; a stretch too short to see as a line (e.g. back since today) gets a dot
+  const segs = pts => {
+    const out = [];
+    for (const [day, v] of pts) {
+      if (day < dayNum(t0)) continue;
+      const cur = out.at(-1);
+      if (v == null) { if (cur && cur.open) { cur.d += `H${x(day).toFixed(1)}`; cur.x1 = x(day); cur.open = false; } continue; }
+      if (cur?.open) { cur.d += `H${x(day).toFixed(1)}V${y(v).toFixed(1)}`; continue; }
+      out.push({ d: `M${x(day).toFixed(1)} ${y(v).toFixed(1)}`, x0: x(day), y0: y(v), open: true });
+    }
+    const last = out.at(-1);
+    if (last?.open) { last.d += `H${x(today).toFixed(1)}`; last.x1 = x(today); }
+    return out;
+  };
+  const path = pts => segs(pts).map(sg => sg.d).join('');
+  const dots = (pts, col) => segs(pts).filter(sg => sg.x1 - sg.x0 < 6)
+    .map(sg => `<circle class="pt" cx="${sg.x0.toFixed(1)}" cy="${sg.y0.toFixed(1)}" r="3" style="fill:${col}"/>`).join('');
   const ticks = [0, 1, 2].map(k => lo + (k + 0.5) * (hi - lo) / 3);
-  const days = [...new Set(all.map(p => p[0]))].sort();
+  const days = [...new Set(all.map(p => p[0]).filter(d => d >= dayNum(t0)))].sort();
   const xt = [days[0], ...days.filter((_, i) => i && i % Math.ceil(days.length / 4) === 0), today].filter((d, i, a) => a.indexOf(d) === i);
-  // end labels, nudged apart to stay legible, each tied to its line with a short leader
-  const ends = series.map(sr => ({ sr, y: y(sr.points.at(-1)[1]) })).sort((a, b) => a.y - b.y);
+  // end labels for the lines that reach today, nudged apart to stay legible, each tied to its line with a short leader
+  const ends = series.filter(sr => sr.points.at(-1)[1] != null).map(sr => ({ sr, y: y(sr.points.at(-1)[1]) })).sort((a, b) => a.y - b.y);
   ends.forEach((e, i) => { e.ly = i ? Math.max(e.y, ends[i - 1].ly + 15) : e.y; });
   const id = ++chartId;
   charts.set(id, { series, x, y, days, t0, t1, L, R, W, today });
   return `<div class="lchart" data-chart="${id}">
-    ${series.length > 1 ? `<div class="lc-legend">${series.map(sr => `<span><i style="background:${hue(sr.name)}"></i>${esc(sr.name)}</span>`).join('')}</div>` : ''}
+    ${series.length > 1 || ends.length < series.length ? `<div class="lc-legend">${series.map(sr => `<span><i style="background:${hue(sr.name)}"></i>${esc(sr.name)}</span>`).join('')}</div>` : ''}
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">
       ${ticks.map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="axis" x="${L - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">₪${v.toFixed(v < 20 ? 2 : 0)}</text>`).join('')}
       ${xt.map(d => `<text class="axis" x="${x(d).toFixed(1)}" y="${H - 6}" text-anchor="middle">${fmtDay(d)}</text>`).join('')}
-      ${series.map(sr => `<path class="ln" d="${path(sr.points)}" style="stroke:${hue(sr.name)}"/>`).join('')}
+      ${series.map(sr => `<path class="ln" d="${path(sr.points)}" style="stroke:${hue(sr.name)}"/>${dots(sr.points, hue(sr.name))}`).join('')}
       ${ends.map(e => `<path class="lead" d="M${x(today) + 3} ${e.y.toFixed(1)}L${x(today) + 9} ${e.ly.toFixed(1)}"/><text class="end" x="${x(today) + 12}" y="${(e.ly + 4).toFixed(1)}">${esc(e.sr.name)}</text>`).join('')}
       <line class="xhair" y1="${T}" y2="${H - B}" hidden/>
     </svg>
@@ -1310,7 +1367,9 @@ function lineChart(series, title) {
       ${days.map(d => `<tr><td>${fmtDay(d)}</td>${series.map(sr => `<td>${money(atDay(sr.points, d))}</td>`).join('')}</tr>`).join('')}</table>
   </div>`;
 }
-const atDay = (pts, d) => { let v = pts[0][1]; for (const [pd, pv] of pts) { if (pd > d) break; v = pv; } return v; };
+// the price on a day: the last point on or before it; none before the first point or in a gap (never a later price)
+const atDay = (pts, d) => { let v = null; for (const [pd, pv] of pts) { if (pd > d) break; v = pv; } return v; };
+const dayNum = t => { const d = new Date(t); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
 document.addEventListener('pointermove', e => {
   const box = e.target.closest?.('.lchart'); if (!box) return;
   const c = charts.get(+box.dataset.chart), svg = box.querySelector('svg'); if (!c) return;
@@ -1320,7 +1379,7 @@ document.addEventListener('pointermove', e => {
   const t = c.t0 + (px - c.L) / (c.W - c.L - c.R) * (c.t1 - c.t0), dt = new Date(t);
   const d = Math.min(c.today, dt.getFullYear() * 10000 + (dt.getMonth() + 1) * 100 + dt.getDate());
   hair.removeAttribute('hidden'); hair.setAttribute('x1', px); hair.setAttribute('x2', px);
-  const rows = c.series.map(sr => [sr.name, atDay(sr.points, d)]).sort((a, b) => a[1] - b[1]);
+  const rows = c.series.map(sr => [sr.name, atDay(sr.points, d)]).sort((a, b) => (a[1] ?? 1e9) - (b[1] ?? 1e9));
   tip.innerHTML = `<b>${fmtDay(d)}</b>${rows.map(([n, v]) => `<span><i style="background:${hue(n)}"></i>${esc(n)}<em>${money(v)}</em></span>`).join('')}`;
   tip.hidden = false;
   tip.style.left = `${Math.min(e.clientX - box.getBoundingClientRect().left + 14, box.clientWidth - tip.offsetWidth - 4)}px`;
@@ -1335,8 +1394,9 @@ function renderTrend() {
   const el = $('#trend'), t = S.trend, ch = fullChains();
   if (!el || !S.cart.items.length || !t || !ch.length || delivery()) { if (el) el.hidden = true; return; }
   const series = ch.map(c => {
-    const pts = t.series[String(c.chain_id)] || [], last = pts.at(-1)?.[1];
-    return { name: c.name, points: last ? pts.map(([d, v]) => [d, v * paid(c) / last]) : [] };
+    const id = String(c.chain_id), pts = withGaps(t.series[id] || [], t.ends?.[id]), last = pts.at(-1)?.[1];
+    // a chain whose history stopped (a product without a confirmed price) isn't drawn as if it ran to today
+    return { name: c.name, points: last ? pts.map(([d, v]) => [d, v == null ? null : v * paid(c) / last]) : [] };
   }).filter(sr => sr.points.length);
   if (!series.length) { el.hidden = true; return; }
   el.hidden = false;
@@ -1391,7 +1451,7 @@ function renderSbs() {
       if (l.status === 'unconfirmed') return `<td class="n unc">${money(l.full ?? l.price * it.qty)}<small>${unconfText(l)} · Not counted</small></td>`;
       const best = differ && l.cost - lo < 0.005;
       if (best) wins[j]++;
-      return `<td class="n${best ? ' best' : ''}">${money(l.cost)}${moveTag(cols[j], l)}${l.promo ? `<small class="promo" dir="auto">${esc(l.promo.description || 'deal')}</small>` : ''}${l.deals_not_counted?.length ? `<small title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</small>` : ''}</td>`;
+      return `<td class="n${best ? ' best' : ''}">${money(l.cost)}${moveTag(cols[j], l)}${l.promo ? `<small class="promo" dir="auto">${esc(l.promo.description || 'deal')}</small>` : ''}${l.deals_more?.length ? `<small class="more">${l.deals_more.map(dealMoreText).join(' · ')}</small>` : ''}${l.deals_not_counted?.length ? `<small title="${esc(l.deals_not_counted.join(' · '))}">Deal not counted</small>` : ''}</td>`;
     }).join('')}</tr>`;
   }).join('');
   const doneCols = cols.filter(full), low = doneCols.length ? Math.min(...doneCols.map(paid)) : null;
@@ -1531,11 +1591,11 @@ const FEES = [['fee', 'Delivery fee'], ['reduced_fee', 'Lower fee'], ['reduced_a
 const RESET = '<button class="ghost small reset" type="button" data-reset>Reset</button>';
 const feeVal = v => v == null ? '' : Number.isInteger(v) ? v : Number(v).toFixed(2);
 function renderFees(rows) {
-  $('#fee-table').innerHTML = `<thead><tr><th>Chain</th>${FEES.map(f => `<th>${f[1]}</th>`).join('')}<th>Delivers</th><th></th></tr></thead><tbody>`
+  $('#fee-table').innerHTML = `<thead><tr><th>Chain</th>${FEES.map(f => `<th>${f[1]}</th>`).join('')}<th>Delivers to me</th><th></th></tr></thead><tbody>`
     + rows.map(r => `<tr data-cid="${esc(r.chain_id)}">
         <td>${esc(r.name)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</td>
         ${FEES.map(([k, label]) => `<td><input type="number" min="0" step="0.01" data-f="${k}" value="${feeVal(r[k])}" aria-label="${esc(r.name)} ${label}"></td>`).join('')}
-        <td><input type="checkbox" data-f="delivers" ${r.delivers === false ? '' : 'checked'} aria-label="${esc(r.name)} delivers"></td>
+        <td><input type="checkbox" data-f="delivers_here" ${r.delivers_here === true ? 'checked' : ''} aria-label="${esc(r.name)} delivers to me"></td>
         <td>${r.custom ? RESET : ''}</td></tr>`).join('') + '</tbody>';
 }
 async function saveFees(delivery) {
@@ -1546,6 +1606,7 @@ async function saveFees(delivery) {
     return d;
   } catch { toast("Couldn't save delivery fees"); }
 }
+document.addEventListener('click', e => { if (e.target.closest('[data-open-fees]')) $('#open-settings').click(); });
 $('#open-settings').onclick = async () => {
   const d = await api('/api/settings').catch(() => null);
   if (!d) return toast("Couldn't load delivery fees");
@@ -1556,7 +1617,7 @@ $('#fee-table').addEventListener('change', e => {
   const tr = e.target.closest('tr[data-cid]'); if (!tr) return;
   const rule = {};
   for (const [k] of FEES) { const v = tr.querySelector(`[data-f="${k}"]`).value; rule[k] = v === '' ? null : +v; }
-  rule.delivers = tr.querySelector('[data-f="delivers"]').checked ? null : false;
+  rule.delivers_here = tr.querySelector('[data-f="delivers_here"]').checked ? true : null;
   tr.lastElementChild.innerHTML = RESET;  // don't re-render: keeps focus while tabbing through fields
   saveFees({ [tr.dataset.cid]: rule });
 });

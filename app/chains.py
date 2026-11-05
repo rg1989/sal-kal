@@ -40,7 +40,12 @@ CHAIN_NAMES = {
     "7290058134977": "Shefa Birkat Hashem",
     "7290455000004": "H. Cohen",
     "7290000000003": "City Market",
+    "0000000000000": "City Market",            # City Market Shops also publishes under an all-zero id
+    "7290058266241": "City Market Kiryat Gat",
+    "7290058288090": "City Market Kiryat Gat",  # same store ids as 7290058266241
     "5144744100002": "Mishnat Yosef",
+    "7290058289400": "Mishnat Yosef",           # its KT Market branches (קי טי יבוא ושיווק)
+    "7290639000004": "Stop Market",
 }
 
 # fee: standard delivery fee (ILS)
@@ -73,7 +78,8 @@ BRAND_HE = {
     "Yellow": "יילו", "Wolt Market": "וולט", "Fresh Market": "פרש מרקט", "Good Pharm": "גוד פארם", "Dor Alon": "אלונית",
     "Bareket": "ברקת", "Polizer": "פוליצר", "Super Yuda": "סופר יודה", "Super Sapir": "ספיר", "Shuk HaIr": "שוק העיר",
     "Netiv HaHesed": "נתיב החסד", "Maayan 2000": "מעיין 2000", "Shefa Birkat Hashem": "שפע ברכת השם",
-    "Zol Ubegadol": "זול ובגדול", "Salach Dabach": "דבאח",
+    "Zol Ubegadol": "זול ובגדול", "Salach Dabach": "דבאח", "City Market": "סיטי מרקט",
+    "City Market Kiryat Gat": "סיטי מרקט", "Stop Market": "סטופ מרקט",
 }
 
 

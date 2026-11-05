@@ -52,6 +52,10 @@ Rules live in `app/trust.py` (tests: tests/test_trust.py). A cart line counts on
    price (`promo_terms`; ~82% of deal lines); coupons/vouchers/club sign-up/spend thresholds never; MaxQty respected.
 The indexer's `confirm()` rebuilds flags, then stats (store/chain counts, min/max) and price history from confirmed
 prices only. Stores missing items are listed as "N of M" with no estimate; complete stores rank first.
+Delivery areas are not in the price files (Super Sapir's terms: "defined delivery areas", checked per address on its
+site, min ₪200 varying by area). So "Delivered home" ranks a chain only when the user ticked "Delivers to me" for it in
+the Delivery fees dialog (`delivers_here` in the `delivery` setting); other chains are listed apart as "Delivery area
+not confirmed" (`no_area` in the compare response) and in-store mode says so instead of a delivered total.
 
 ## Product matching
 Packaged goods use the manufacturer EAN barcode as ItemCode → identical across chains → exact match.

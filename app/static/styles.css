@@ -99,6 +99,11 @@ button { cursor: pointer; }
 .chip.promo { background: var(--promo-soft); color: var(--promo); border-color: transparent; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .chip.muted { background: transparent; color: var(--muted); border: 1px dashed var(--line-strong); font-weight: 500; }
+/* a confirmed deal the quantity doesn't reach ("2 for ₪55"); in the cart it's a button that buys that many */
+.chip.more { background: transparent; color: var(--promo); border-color: color-mix(in srgb, var(--promo) 45%, transparent); }
+button.chip { font-family: inherit; cursor: pointer; }
+button.chip.more:hover { background: var(--promo-soft); }
+.sbs-table small.more { color: var(--promo); }
 
 .items { list-style: none; margin: 0; padding: 4px 8px 8px; overflow: auto; flex: 1; }
 .item {
@@ -996,6 +1001,7 @@ body[data-view="basket"] #lc-cta { display: none; }
 .lchart .grid { stroke: var(--line); stroke-width: 1; }
 .lchart .axis { fill: var(--muted); font: 500 11px var(--ui); }
 .lchart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.lchart .pt { stroke: var(--surface); stroke-width: 1.5; }
 .lchart .lead { stroke: var(--line-strong); stroke-width: 1; fill: none; }
 .lchart .end { fill: var(--ink-2); font: 600 12px var(--ui); }
 .lchart .xhair { stroke: var(--line-strong); stroke-width: 1; }
