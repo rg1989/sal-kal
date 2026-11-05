@@ -373,7 +373,10 @@ def compare(con, items, prefs=None, now_int=None):
         chain, store = sk
         deals_ok = (stores[sk]["promo_full_ts"] or 0) >= cutoff
         lines, total, covered, missing = [], 0.0, 0, []
-        trusted = lambda key: (key, chain, store) not in price_flags and (sk, key) not in new
+        def trusted(key):
+            if (sk, key) in new:  # priced after the last full check: within range of its typical price, or not yet
+                return _within(prices[sk][key], (products.get(key) or {}).get("median"))
+            return (key, chain, store) not in price_flags
         for k in keys:
             q = qty[k]
             if k not in cset:
@@ -403,9 +406,9 @@ def compare(con, items, prefs=None, now_int=None):
                 line.update(status="unconfirmed", reason="name")
             elif (k, chain) not in shelf:
                 line.update(status="unconfirmed", reason="noname")
-            elif (sk, k) in new:
+            elif (sk, k) in new and not _within(p, (products.get(k) or {}).get("median")):
                 line.update(status="unconfirmed", reason="new")
-            elif (k, chain, store) in price_flags:
+            elif (sk, k) not in new and (k, chain, store) in price_flags:
                 line.update(status="unconfirmed", reason="price", median=price_flags[(k, chain, store)])
             else:
                 cost, promo, not_counted, more = price_line(p, q, promos[sk].get(k, []), club, memo, deals_ok)
@@ -561,7 +564,7 @@ def compare(con, items, prefs=None, now_int=None):
                           "compared": k in cset, "min": mn, "max": mx, "stores": cnt})
     data_ts = max((stores[sk]["last_price_ts"] or 0 for sk in fresh), default=0)
     # every branch you'd walk into, each priced for the whole cart, in the same order as the chains
-    every = sorted((e for g in by_chain.values() for e in g["store"]), key=order)
+    every = sorted((e for g in by_chain.values() for e in g["store"] if not n or e["covered"]), key=order)
     branches = [{"chain_id": e["chain_id"], "chain": chain_name(e["chain_id"], names.get(e["chain_id"])),
                  "store_id": e["store_id"], "name": e["name"], "city": e["city"], "distance_km": e["distance_km"],
                  "lat": e["lat"], "lon": e["lon"], "total": e["total"], "covered": e["covered"],
@@ -575,6 +578,13 @@ def compare(con, items, prefs=None, now_int=None):
     return {"chains": ranked, "branches": branches, "stale": stale, "n": n, "items": item_info, "prefs": prefs,
             "no_area": no_area_kept,
             "data_ts": data_ts, "generated": int(time.time())}
+
+
+def _within(price, median):
+    """A new shelf price counts before the next full check when it is in line with the product's typical price from
+    the last one (the same test as price_flags). No typical price yet (a new product, or chains that disagree): it waits."""
+    lo, hi = trust.OUTLIER
+    return bool(median) and median > 0 and median * lo <= price <= median * hi
 
 
 def _slim(e):

@@ -142,8 +142,11 @@ OpenStreetMap (GET .../hours; one Overpass query for the whole area, cached in ~
 10-min retry when Overpass is busy; only shops of the same chain within 300 m count). OSM has hours for ~17 of 250
 nearby branches; otherwise the card links to Google Maps. Tests: tests/test_store.py.
 Map as backdrop (2026-11-05): no frame, no zoom buttons, the cooperative-gesture hint hidden (plain scroll scrolls the
-page; pinch / ⌘+scroll zoom); the canvas is masked to fade into the page at every edge (markers stay sharp); it opens
-fitted to the selected store's route (fitRoute; edge() padding keeps it out of the faded margins), else the radius.
+page; pinch / ⌘+scroll zoom); the canvas is masked to fade into the page at every edge (markers stay sharp); at checkout
+it opens fitted to the selected store's route (fitRoute; edge() padding keeps it out of the faded margins), else the radius.
+Home map (2026-11-05, per user): flush under the header's yellow line with no top fade (sides + bottom fade stay); always
+fitted to the distance circle with small padding (fitMap/circlePad; a new radius zooms in/out; tapping a store doesn't
+zoom to its route there); the Recent pills sit under the map.
 Price history (2026-11-05, replaces the saved-prices/snapshot mechanic, which is removed — the old u.snapshots table
 is left unused): indexer.record_history() runs after every index run and writes price_history(key, chain_id, day, mn, mx, n)
 = each product's cheapest/dearest current shelf price per chain, one row per day it changes (today's row rewritten until

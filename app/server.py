@@ -236,6 +236,8 @@ def _enrich(c, items):
         named = {(r[0], r[1]) for r in c.execute(f"SELECT DISTINCT key, chain_id FROM item_names WHERE key IN ({ph})"
                                                  f" AND ts >= {int(trust.names_cutoff())}", keys)}
         check_names = bool(_named_sql(c))  # an old database without names: nothing to check against
+        # prices newer than the last full check count when in line with the typical price from that check
+        typical = dict(c.execute(f"SELECT key, median FROM products WHERE key IN ({ph})", keys))
         for k, chain, store, price, ts in c.execute(
                 f"""SELECT p.key, p.chain_id, p.store_id, p.price, p.ts FROM prices p
                     JOIN stores s ON s.chain_id=p.chain_id AND s.store_id=p.store_id
@@ -243,7 +245,8 @@ def _enrich(c, items):
                       AND NOT EXISTS (SELECT 1 FROM price_flags f WHERE f.key=p.key AND f.chain_id=p.chain_id AND f.store_id=p.store_id)
                       AND NOT EXISTS (SELECT 1 FROM name_flags nf WHERE nf.key=p.key AND nf.chain_id=p.chain_id)""",
                 [*keys, trust.fresh_cutoff()]):
-            if (checked and ts > checked) or (":" in k and chain != k.split(":", 1)[0]) \
+            if (checked and ts > checked and not engine._within(price, typical.get(k))) \
+                    or (":" in k and chain != k.split(":", 1)[0]) \
                     or (check_names and ":" not in k and (k, chain) not in named):
                 continue
             lo, hi = span.get(k, (price, price))

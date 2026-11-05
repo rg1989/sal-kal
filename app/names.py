@@ -295,8 +295,6 @@ def _words_match(a, b):
         return True
     for x in va:
         for y in vb:
-            if abs(len(x) - len(y)) > 1 and not (x.startswith(y) or y.startswith(x)):
-                continue
             if frozenset((x, y)) in _DISTINCT:
                 continue
             if min(len(x), len(y)) >= 4 and (x.startswith(y) or y.startswith(x)):
@@ -562,11 +560,7 @@ def odd_names(names, card_name="", generic=frozenset(), voter=None):
     card = _Name(card_name or "", generic)
     has_card = bool(card.words or card.codes)
     top = votes(groups[0])
-    if len(groups) == 1:  # every name agrees: only the card may be off
-        if has_card and not any(_link(nodes[i][0], card, generic) >= WEAK for i in range(n)):
-            return set(), _best(nodes, range(n))
-        return set(), None
-    if top < 2 or (len(groups) > 1 and votes(groups[1]) == top):  # no consensus: the card's name decides
+    if len(groups) > 1 and (top < 2 or votes(groups[1]) == top):  # no consensus: the card's name decides
         if not has_card:
             return set(), None
         return _chains(nodes, {i for i in range(n) if _link(nodes[i][0], card, generic) >= WEAK}), None

@@ -214,6 +214,15 @@ r = engine.compare(c, cart, {})
 l = line("Carrefour", MILK, r)
 assert l["status"] == "unconfirmed" and l["reason"] == "new" and "cost" not in l
 assert {i["key"]: i for i in r["items"]}[MILK]["stores"] == 3
+# ...unless it is in line with the product's typical price from that check: then it counts right away
+mprice = c.execute("SELECT price FROM prices WHERE key=? AND chain_id=?", (MILK, C)).fetchone()[0]
+c.execute("UPDATE products SET median=? WHERE key=?", (mprice * 1.2, MILK))
+c.commit()
+assert line("Carrefour", MILK, engine.compare(c, cart, {}))["status"] == "ok"
+c.execute("UPDATE products SET median=? WHERE key=?", (mprice * 4, MILK))   # far from typical: waits for the check
+c.commit()
+assert line("Carrefour", MILK, engine.compare(c, cart, {}))["reason"] == "new"
+c.execute("UPDATE products SET median=NULL WHERE key=?", (MILK,))
 c.execute("DELETE FROM settings WHERE key='confirmed_through'")
 c.commit()
 assert line("Carrefour", MILK, engine.compare(c, cart, {}))["status"] == "ok"

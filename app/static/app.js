@@ -104,7 +104,9 @@ function metaHTML(it) {
 
 // The live cart is always on screen (a column on desktop, a sheet + total bar on phones): every product, its price
 // at the store the cart is priced at (the cheapest, or the one you tap), and where the whole cart costs least.
-const pinned = () => { const ch = S.result?.chains || []; return ch.find(c => String(c.chain_id) === S.pin) || ch[0] || null; };
+// a chain where nothing in the cart counts (all missing or not yet confirmed) has no total to compare
+const counted = c => !nCompared() || (view(c)?.covered || 0) > 0;
+const pinned = () => { const ch = S.result?.chains || []; return ch.find(c => String(c.chain_id) === S.pin) || ch.find(counted) || ch[0] || null; };
 const lineAt = (c, key) => c ? view(c)?.lines.find(l => l.key === key) : null;
 const wide = () => matchMedia('(min-width: 1100px)').matches;
 
@@ -210,7 +212,7 @@ function renderStores() {
     }).join('') + '</div>';
     return;
   }
-  const list = ch.slice(0, 4);
+  const list = ch.filter(counted).slice(0, 4);
   if (p && !list.includes(p)) list.push(p);
   // the map counts branches; this ranks chains, each at its cheapest branch near you — say so, with the totals
   $('#lc-label').innerHTML = `Cheapest stores${ch.length > list.length ? ` <span>· top ${list.length} of ${ch.length}</span>` : ''}`;
@@ -687,7 +689,7 @@ function drawPins() {
   pins.forEach(m => m.remove());
   pins = [];
   if (delivery() || !S.cart.items.length || !nCompared()) return;
-  const ch = (S.result?.chains || []).slice(0, 4), p = pinned(), n = nCompared();
+  const ch = (S.result?.chains || []).filter(counted).slice(0, 4), p = pinned(), n = nCompared();
   [...ch].reverse().forEach(c => {  // the cheapest last, so it's drawn on top
     const v = c.in_store;
     if (v?.lat == null) return;
@@ -1199,7 +1201,7 @@ function row(c, hero) {
   const d = n && full(c) && hero && full(hero) ? paid(c) - paid(hero) : null;
   const promos = v.lines.filter(l => l.promo).length;
   const flags = [
-    n && !full(c) && `<span class="chip warn">${v.covered} of ${n}</span>`,
+    n && !full(c) && `<span class="chip warn">${v.covered ? `${v.covered} of ${n}` : 'Not counted'}</span>`,
     promos && `<span class="chip promo">${promos} on promotion</span>`,
     delivery() && c.online.fee_note && `<span class="chip warn">${esc(c.online.fee_note)}</span>`,
   ].filter(Boolean).join('');
@@ -1212,7 +1214,7 @@ function row(c, hero) {
       <span class="row-chain">${esc(c.name)}</span>
       <span class="row-store">${place(v)}</span>
       ${flags ? `<span class="flags">${flags}</span>` : ''}
-      <span class="row-total">${n ? money(paid(c)) : ''}</span>
+      <span class="row-total">${n && v.covered ? money(paid(c)) : n ? '—' : ''}</span>
       <span class="row-delta">${d == null ? '' : d < 0.005 ? 'same' : '+' + money(d)}</span>
       ${SVG.chev}
     </summary>
@@ -1287,16 +1289,19 @@ function renderResults(loading) {
     fillDrive();
     return;
   }
-  const done = chains.filter(full), partial = chains.filter(c => !full(c));
+  const done = chains.filter(full), partial = chains.filter(c => !full(c) && counted(c));
+  const none = chains.filter(c => !counted(c));  // nothing counts here (missing, or not confirmed yet): no total
   const sum = `<p class="co-sum">${where} · ${done.length} with all ${n} ${n === 1 ? 'product' : 'products'}</p>`;
-  const hero = done[0] || chains[0];
-  el.innerHTML = sum + winner(hero)
+  const hero = done[0] || partial[0];
+  const noneHTML = none.length ? `<details class="pricier"${hero ? '' : ' open'}><summary>Not counted (${none.length})</summary>
+      <div class="ranked">${none.map(c => row(c, null)).join('')}</div></details>` : '';
+  el.innerHTML = sum + (hero ? winner(hero) : '')
     + groupHTML(done.filter(c => c !== hero), hero, 'Next cheapest', 'More expensive stores')
     + (done.length
       ? (partial.length ? `<details class="pricier"><summary>Missing some products (${partial.length})</summary>
           <div class="ranked">${partial.map(c => row(c, hero)).join('')}</div></details>` : '')
       : groupHTML(partial.filter(c => c !== hero), hero, 'Missing some products', 'More'))
-    + noAreaHTML() + staleHTML();
+    + noneHTML + noAreaHTML() + staleHTML();
   fillDrive();
 }
 
