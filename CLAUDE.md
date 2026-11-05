@@ -221,7 +221,9 @@ they always need sign-in, so with no provider set up they get only the sign-in p
 /data-deletion; the LAN and Tailscale (no such header) stay in local mode. Signing in works on sal-kal.com only (the
 redirect URIs and Secure cookies are https://sal-kal.com).
 Landing (2026-11-05, per user): signed-out visitors get app/static/landing.html at "/" (signed-in: the app; /app always
-the app and its sign-in; /about always the landing). Bilingual by `<span lang>` pairs, flags in every language picker,
+the app and its sign-in; /about always the landing). A landing page at "/" moves into /app when it finds you signed in (on load, Back
+(pageshow) and when it comes back into view: a phone resuming the installed app), and its inline head script sends the
+installed app (display-mode standalone / navigator.standalone) to /app before anything is drawn. Bilingual by `<span lang>` pairs, flags in every language picker,
 autoplaying walkthrough video + phone/laptop mockups in app/static/landing/ (recorded with Playwright from a test server
 and a demo account at Tel Aviv City Hall, never a real home), live counts from /api/status, the law (section 30,
 price-transparency regulations) linked. Credit: "Built by Roman Grinevich" (LinkedIn) + GitHub (rg1989/sal-kal) in the
@@ -240,6 +242,7 @@ unit-less quantity (names carry other numbers: "PRO 20 גרם" = protein). The i
 from a later chain when the stored one is missing or "לא ידוע", so unit prices fill in as daily PriceFull files arrive.
 Test: .venv/bin/python tests/test_cards.py.
 Installable app (2026-11-05, PWA, no app stores): `manifest-he.webmanifest` / `manifest-en.webmanifest` (id "/",
+start_url "/app" since 2026-11-06: the installed app never shows the landing page, signed out it opens the sign-in;
 standalone; pwa.js switches the <link id="manifest"> and the iOS home-screen title with the page language; icons
 pwa-192/512 rounded, icon-512 + pwa-maskable-192 full-bleed for Android's mask). `sw.js` is served at /sw.js (server
 route, no-cache): it stores /static only (?v= URLs as is, other files refreshed in the background; never /api, /auth,

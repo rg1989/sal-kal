@@ -4,7 +4,7 @@
   "short_name": "סל קל",
   "lang": "he",
   "dir": "rtl",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "background_color": "#EEF0EC",

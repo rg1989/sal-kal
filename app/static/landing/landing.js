@@ -52,4 +52,16 @@
   fetch('/api/status', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
     if (d && d.products) { status = d; renderLive(); }
   }).catch(() => {});
+
+  // Signed in already: "/" is the app, not this page. The server sends the app to a signed-in visitor, but a landing
+  // page from before signing in can come back without a reload (Back, or a phone resuming the installed app).
+  // /about stays: it's opened on purpose.
+  async function signedIn() {
+    if (location.pathname !== '/') return;
+    const me = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (me && me.user) location.replace('/app' + location.hash);
+  }
+  signedIn();
+  addEventListener('pageshow', e => { if (e.persisted) signedIn(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') signedIn(); });
 })();
