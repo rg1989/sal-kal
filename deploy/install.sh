@@ -38,7 +38,7 @@ install -m 0644 "$REPO"/deploy/systemd/*.service "$REPO"/deploy/systemd/*.socket
 install -d /etc/systemd/system/sal-.service.d
 install -m 0644 "$REPO"/deploy/systemd/sal-.service.d/sandbox.conf /etc/systemd/system/sal-.service.d/
 install -d $S/code
-install -m 0644 "$REPO"/deploy/sandbox-check.py $S/code/
+install -m 0644 "$REPO"/deploy/sandbox-check.py "$REPO"/deploy/trim-status.py $S/code/
 ip -o addr show | awk '{print $4}' | cut -d/ -f1 > $S/code/check-targets.txt  # every address this machine has
 systemctl daemon-reload
 

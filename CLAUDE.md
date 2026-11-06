@@ -26,7 +26,12 @@ Python must be <3.13 (setup.py says `>=3.8,<3.13`), and it needs Playwright Chro
 ### Step 1 — downloader install
 `install-downloader.sh` in this folder (sudo). It installs to `/srv/sal/downloader` (src/, venv/), dumps go to
 `/srv/sal/data/dumps/<ChainFolder>/`, the system timer `sal-download.timer` runs every 3h at :17 as user `sal`,
-files older than 2 days are pruned (ExecStartPre; the old run.sh's prune never worked). Check with
+files older than 2 days are pruned (ExecStartPre; the old run.sh's prune never worked). The downloader rewrites its whole
+status JSON (dumps/status/<chain>.json) for every file it saves and never prunes it: by 2026-11-06 (189 MB after 28 h)
+every run hit the 3 h limit, back to back, with 4 cores busy. `deploy/trim-status.py` (ExecStartPre, installed to
+/srv/sal/code) keeps only `verified_downloads` (the one part read back: files already fetched are skipped) for 3 days,
+drops the write-only `events`/`global_status`, salvages verified rows from files cut off by a killed run, and rotates
+logging.log over 50 MB. Check with
 `systemctl status sal-download` and `journalctl -u sal-download -f`.
 
 ## File formats learned (from real samples in OpenIsraeliSupermarkets/israeli-supermarket-parsers/resources/xml)

@@ -15,6 +15,8 @@ Environment=SINGLE_PASS=true NUMBER_OF_PROCESSES=4 PLAYWRIGHT_BROWSERS_PATH=/srv
 # "-" so a failed cleanup never blocks downloading. (The old run.sh used -prune with -delete,
 # which find refuses, and hid the error: nothing was ever pruned.)
 ExecStartPre=-/usr/bin/find /srv/sal/data/dumps -type f -mtime +2 -not -path /srv/sal/data/dumps/status/* -delete
+# the downloader rewrites its whole status JSON for every file it saves: keep it small (deploy/trim-status.py)
+ExecStartPre=-/srv/sal/downloader/venv/bin/python /srv/sal/code/trim-status.py /srv/sal/data
 ExecStart=/srv/sal/downloader/venv/bin/python /srv/sal/downloader/src/main.py
 TimeoutStartSec=3h
 # a good neighbour on a shared machine (it runs for hours)
