@@ -55,17 +55,17 @@ html[lang="he"] span[lang="en"], html[lang="en"] span[lang="he"] { display: none
    tag is its inner span, clipped to the shape. Icon only on the narrowest phones (the name stays for screen readers). */
 .pw-tag { display: inline-flex; align-items: center; flex: none; min-height: 44px; text-decoration: none; color: var(--tag-ink);
   border-radius: 10px; -webkit-tap-highlight-color: transparent; }
-.pw-in { --pt: 14px; display: inline-flex; align-items: center; gap: 7px; height: 40px; padding-inline: calc(var(--pt) + 13px) 15px;
-  background: var(--tag); color: var(--tag-ink); font: 700 15px/1 var(--ui); letter-spacing: -.005em; white-space: nowrap;
-  border-radius: 8px; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .16);
+.pw-in { --pt: 12px; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding-inline: calc(var(--pt) + 10px) 12px;
+  background: var(--tag); color: var(--tag-ink); font: 700 14px/1 var(--ui); letter-spacing: -.005em; white-space: nowrap;
+  border-radius: 7px; box-shadow: inset 0 -1.5px 0 rgba(0, 0, 0, .16);
   clip-path: polygon(var(--pt) 0, 100% 0, 100% 100%, var(--pt) 100%, 0 50%);
-  -webkit-mask: radial-gradient(circle at calc(var(--pt) + 1px) 50%, transparent 3.3px, #000 3.9px);
-  mask: radial-gradient(circle at calc(var(--pt) + 1px) 50%, transparent 3.3px, #000 3.9px);
+  -webkit-mask: radial-gradient(circle at calc(var(--pt) + 1px) 50%, transparent 2.8px, #000 3.4px);
+  mask: radial-gradient(circle at calc(var(--pt) + 1px) 50%, transparent 2.8px, #000 3.4px);
   transition: transform .15s ease, filter .15s ease; }
 [dir="rtl"] .pw-in { clip-path: polygon(0 0, calc(100% - var(--pt)) 0, 100% 50%, calc(100% - var(--pt)) 100%, 0 100%);
-  -webkit-mask: radial-gradient(circle at calc(100% - var(--pt) - 1px) 50%, transparent 3.3px, #000 3.9px);
-  mask: radial-gradient(circle at calc(100% - var(--pt) - 1px) 50%, transparent 3.3px, #000 3.9px); }
-.pw-in svg { width: 18px; height: 18px; flex: none; }
+  -webkit-mask: radial-gradient(circle at calc(100% - var(--pt) - 1px) 50%, transparent 2.8px, #000 3.4px);
+  mask: radial-gradient(circle at calc(100% - var(--pt) - 1px) 50%, transparent 2.8px, #000 3.4px); }
+.pw-in svg { width: 16px; height: 16px; flex: none; }
 .pw-tag:hover .pw-in { filter: brightness(1.04) saturate(1.08); transform: translateY(-1px); }
 .pw-tag:active .pw-in { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) { .pw-in { transition: none; } .pw-tag:hover .pw-in { transform: none; } }
@@ -113,8 +113,8 @@ html[lang="he"] span[lang="en"], html[lang="en"] span[lang="he"] { display: none
 }
 @media (max-width: 560px) {
   .bar-end { gap: 8px; }
-  .pw-in { height: 40px; font-size: 13.5px; gap: 6px; padding-inline: calc(var(--pt) + 11px) 11px; }
-  .pw-in svg { width: 17px; height: 17px; }
+  .pw-in { --pt: 11px; font-size: 13px; gap: 5px; padding-inline: calc(var(--pt) + 9px) 10px; }
+  .pw-in svg { width: 15px; height: 15px; }
 }
 @media (max-width: 430px) {
   .langs button { font-size: 0; gap: 0; padding: 7px 9px; }  /* flags only on phones, beside the Price Watch tag */

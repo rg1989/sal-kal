@@ -1903,7 +1903,19 @@ function moveTag(c, l) {
   return ` <small class="mv ${d > 0 ? 'up' : 'down'}" title="${t('30 days ago {price}', { price: money(m[0]) })}">${d > 0 ? '▲' : '▼'}${money(Math.abs(d))}</small>`;
 }
 const dayDate = d => new Date(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100);
-const fmtDay = d => dayDate(d).toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
+// a day from another year says its year (history now reaches back a year: "30 Oct" alone reads as this October)
+const fmtDay = d => dayDate(d).toLocaleDateString(locale(), { day: 'numeric', month: 'short',
+  ...(Math.floor(d / 10000) !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+const fmtMonth = d => dayDate(d).toLocaleDateString(locale(), { month: 'short', year: 'numeric' });
+// round price steps for a chart's axis (₪5, ₪5.50, ₪6 rather than ₪5.03)
+const priceTicks = (lo, hi) => {
+  const raw = (hi - lo) / 4, p = 10 ** Math.floor(Math.log10(raw || 1));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= raw) || raw;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 && out.length < 6; v += step) out.push(Math.round(v * 100) / 100);
+  return out;
+};
+const tickMoney = v => `₪${Number.isInteger(v) ? v : v.toFixed(2)}`;
 const todayNum = () => { const t = new Date(); return t.getFullYear() * 10000 + (t.getMonth() + 1) * 100 + t.getDate(); };
 // fixed colour per chain (validated categorical palette, light + dark): a chain keeps its colour whatever else is shown
 const SLOT = ['Rami Levy', 'Yohananof', 'Victory', 'Bareket', 'Osher Ad', 'Shufersal', 'Carrefour', 'Tiv Taam'];
@@ -1942,9 +1954,18 @@ function lineChart(series, title) {
   const path = pts => segs(pts).map(sg => sg.d).join('');
   const dots = (pts, col) => segs(pts).filter(sg => sg.x1 - sg.x0 < 6)
     .map(sg => `<circle class="pt" cx="${sg.x0.toFixed(1)}" cy="${sg.y0.toFixed(1)}" r="3" style="fill:${col}"/>`).join('');
-  const ticks = [0, 1, 2].map(k => lo + (k + 0.5) * (hi - lo) / 3);
+  const ticks = priceTicks(lo, hi);
   const days = [...new Set(all.map(p => p[0]).filter(d => d >= dayNum(t0)))].sort();
-  const xt = [days[0], ...days.filter((_, i) => i && i % Math.ceil(days.length / 4) === 0), today].filter((d, i, a) => a.indexOf(d) === i);
+  // over months: evenly spaced month starts with their year; over weeks: the days prices changed
+  const months = (t1 - t0) / 864e5 > 150;
+  let xt;
+  if (months) {
+    const s = new Date(t0), every = Math.ceil((t1 - t0) / 864e5 / 30 / 5);
+    xt = [];
+    for (let m = new Date(s.getFullYear(), s.getMonth() + 1, 1); m.getTime() <= t1; m = new Date(m.getFullYear(), m.getMonth() + every, 1)) xt.push(dayNum(m.getTime()));
+  } else {
+    xt = [days[0], ...days.filter((_, i) => i && i % Math.ceil(days.length / 4) === 0), today].filter((d, i, a) => a.indexOf(d) === i);
+  }
   // end labels for the lines that reach today, nudged apart to stay legible, each tied to its line with a short leader
   const ends = series.filter(sr => sr.points.at(-1)[1] != null).map(sr => ({ sr, y: y(sr.points.at(-1)[1]) })).sort((a, b) => a.y - b.y);
   ends.forEach((e, i) => { e.ly = i ? Math.max(e.y, ends[i - 1].ly + 15) : e.y; });
@@ -1953,8 +1974,8 @@ function lineChart(series, title) {
   return `<div class="lchart" data-chart="${id}">
     ${series.length > 1 || ends.length < series.length ? `<div class="lc-legend">${series.map(sr => `<span><i style="background:${hue(sr.name)}"></i>${esc(cn(sr.name))}</span>`).join('')}</div>` : ''}
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">
-      ${ticks.map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="axis" x="${L - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">₪${v.toFixed(v < 20 ? 2 : 0)}</text>`).join('')}
-      ${xt.map(d => `<text class="axis" x="${x(d).toFixed(1)}" y="${H - 6}" text-anchor="middle">${fmtDay(d)}</text>`).join('')}
+      ${ticks.map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="axis" x="${L - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${tickMoney(v)}</text>`).join('')}
+      ${xt.map(d => `<text class="axis" x="${x(d).toFixed(1)}" y="${H - 6}" text-anchor="middle">${months ? fmtMonth(d) : fmtDay(d)}</text>`).join('')}
       ${series.map(sr => `<path class="ln" d="${path(sr.points)}" style="stroke:${hue(sr.name)}"/>${dots(sr.points, hue(sr.name))}`).join('')}
       ${ends.map(e => `<path class="lead" d="M${x(today) + 3} ${e.y.toFixed(1)}L${x(today) + 9} ${e.ly.toFixed(1)}"/><text class="end" x="${x(today) + 12}" y="${(e.ly + 4).toFixed(1)}">${esc(cn(e.sr.name))}</text>`).join('')}
       <line class="xhair" y1="${T}" y2="${H - B}" hidden/>
