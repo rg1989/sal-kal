@@ -13,8 +13,11 @@ MemoryDenyWriteExecute=yes
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 # the last in line on a shared machine: nice 19 (the site and the indexer always come first), idle disk time,
-# two processes at most (a day's build + the next day's download beside it), never near the site's memory
+# two processes at most (a day's build + the next day's download beside it). Memory: the build maps its stage and
+# reads its days in memory; at 3G (page cache counts) it re-read ~100 GB from disk and took 25 min a day, so 5G (the
+# server has 12 GB; sal-web is capped at 3G)
 Nice=19
 IOSchedulingClass=idle
 CPUQuota=200%
-MemoryMax=3G
+MemoryHigh=4500M
+MemoryMax=5G
