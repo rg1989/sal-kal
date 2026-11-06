@@ -9,6 +9,7 @@ import contextvars
 import hashlib
 import hmac
 import html
+import io
 import json
 import os
 import queue
@@ -379,6 +380,57 @@ def app_page():
 @app.get("/about")
 def about():
     return _page("landing.html")
+
+
+# ---------------------------------------------------------------- Sal-Kal on your own computer (app/install, app/local.py)
+INSTALL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "install")
+
+
+def _site():
+    return (auth.config().get("base_url") or "https://sal-kal.com").rstrip("/")
+
+
+@app.get("/download")
+def download_page():
+    return _page("download.html")
+
+
+@app.get("/install.sh")
+def install_sh():
+    """macOS and Linux: curl -fsSL https://sal-kal.com/install.sh | bash"""
+    return FileResponse(os.path.join(INSTALL, "install.sh"), media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/install.ps1")
+def install_ps1():
+    """Windows: irm https://sal-kal.com/install.ps1 | iex (what Sal-Kal-Setup.cmd runs)"""
+    return FileResponse(os.path.join(INSTALL, "install.ps1"), media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/download/Sal-Kal-Setup.cmd")
+def setup_cmd():
+    text = open(os.path.join(INSTALL, "Sal-Kal-Setup.cmd"), encoding="utf-8").read()
+    text = text.replace("https://sal-kal.com", _site()).replace("\r\n", "\n").replace("\n", "\r\n")
+    return Response(text.encode(), media_type="application/octet-stream",
+                    headers={"Content-Disposition": 'attachment; filename="Sal-Kal-Setup.cmd"', "Cache-Control": "no-cache"})
+
+
+@app.get("/download/Sal-Kal-Mac.zip")
+def setup_mac():
+    """A double-clickable installer for macOS: 'Install Sal-Kal.command' (executable inside a zip, which keeps the
+    permission), running the same one-line install. macOS asks once to allow it (it isn't signed)."""
+    import zipfile
+    script = (f'#!/bin/bash\ncurl -fsSL {_site()}/install.sh | bash\necho\nread -n 1 -s -r -p "Press any key to close."\n')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        info = zipfile.ZipInfo("Install Sal-Kal.command", date_time=time.localtime()[:6])
+        info.external_attr = (0o100755 << 16)
+        info.create_system = 3   # Unix, so the permission bits count
+        z.writestr(info, script)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="Sal-Kal-Mac.zip"', "Cache-Control": "no-cache"})
 
 
 @app.get("/sw.js")
@@ -1935,6 +1987,9 @@ def get_me():
     if u:
         u["providers"] = [r[0] for r in c.execute("SELECT provider FROM identities WHERE user_id=? ORDER BY created", (u["id"],))]
         out.update(user=auth.public(u), prefs=prefs())
+    if os.environ.get("SAL_LOCAL"):  # Sal-Kal on your own computer (app/local.py): where its setup is
+        from . import local
+        out["local"] = local.public_state()
     return out
 
 

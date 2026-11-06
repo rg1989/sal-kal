@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>סל קל על המחשב שלכם · Sal-Kal</title>
+<meta name="description" content="התקנת סל קל על המחשב שלכם: Mac, Windows או Linux. חינם וקוד פתוח.">
+<meta name="theme-color" content="#EEF0EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121715" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD23F'/%3E%3Cg fill='none' stroke='%231C2321' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.3 13 14 8.2M20.7 13 18 8.2'/%3E%3Cpath d='M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z'/%3E%3Cpath d='M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/setup.css">
+<script>try{if(localStorage.getItem("lang")==="en"){document.documentElement.lang="en";document.documentElement.dir="ltr"}}catch(e){}</script>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="/about" aria-label="Sal-Kal">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" class="tile"/><g class="ink" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
+    <span lang="he">סל קל</span><span lang="en">Sal-Kal</span>
+  </a>
+  <div class="langs" role="radiogroup" aria-label="Language / שפה">
+    <button type="button" role="radio" data-lang="he" lang="he">עברית</button>
+    <button type="button" role="radio" data-lang="en" lang="en">English</button>
+  </div>
+</header>
+
+<main class="dl">
+  <h1><span lang="he">סל קל על המחשב שלכם</span><span lang="en">Sal-Kal on your own computer</span></h1>
+  <p class="lede"><span lang="he">אותה אפליקציה, רצה אצלכם: העגלות והכתובת נשארות במחשב.</span><span lang="en">The same app, running at home: your carts and address stay on your computer.</span></p>
+
+  <div class="oses" role="radiogroup" aria-label="Computer / מחשב">
+    <button type="button" role="radio" data-os="windows">Windows</button>
+    <button type="button" role="radio" data-os="mac">Mac</button>
+    <button type="button" role="radio" data-os="linux">Linux</button>
+  </div>
+
+  <section class="card panel" data-panel="windows" hidden>
+    <ol class="how">
+      <li><div><a class="btn primary big" href="/download/Sal-Kal-Setup.cmd" download><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M10 3v9M6 8.5 10 12.5 14 8.5M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span lang="he">הורדת ההתקנה</span><span lang="en">Download setup</span></a></div></li>
+      <li><div><b><span lang="he">פותחים את הקובץ שירד</span><span lang="en">Open the downloaded file</span></b>
+        <p class="note"><span lang="he">אם מופיע ״Windows הגן על המחשב״: ״מידע נוסף״ › ״הפעל בכל זאת״.</span><span lang="en">If “Windows protected your PC” appears: More info › Run anyway.</span></p></div></li>
+      <li><div><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
+        <p class="note"><span lang="he">כמה דקות. אחר כך: הסמל Sal-Kal בשולחן העבודה.</span><span lang="en">A few minutes. Afterwards: the Sal-Kal icon on your desktop.</span></p></div></li>
+    </ol>
+    <p class="alt"><span lang="he">או ב־PowerShell:</span><span lang="en">Or in PowerShell:</span></p>
+    <div class="cmd"><code data-cmd="ps"></code><button class="btn copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div>
+  </section>
+
+  <section class="card panel" data-panel="mac" hidden>
+    <ol class="how">
+      <li><div><b><span lang="he">פותחים את Terminal</span><span lang="en">Open Terminal</span></b>
+        <p class="note"><kbd>⌘</kbd> <kbd><span lang="he">רווח</span><span lang="en">Space</span></kbd> › Terminal › <kbd>Return</kbd></p></div></li>
+      <li><div><b><span lang="he">מדביקים את השורה ולוחצים Return</span><span lang="en">Paste this line and press Return</span></b>
+        <div class="cmd"><code data-cmd="sh"></code><button class="btn copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></div></li>
+      <li><div><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
+        <p class="note"><span lang="he">כמה דקות. אחר כך: Sal-Kal ב־Launchpad.</span><span lang="en">A few minutes. Afterwards: Sal-Kal in Launchpad.</span></p></div></li>
+    </ol>
+    <p class="alt"><span lang="he">או <a href="/download/Sal-Kal-Mac.zip" download>קובץ התקנה</a>: פותחים, לוחצים פעמיים על ״Install Sal-Kal״. בפעם הראשונה macOS חוסם אותו: הגדרות המערכת › פרטיות ואבטחה › ״פתח בכל זאת״.</span>
+      <span lang="en">Or the <a href="/download/Sal-Kal-Mac.zip" download>installer file</a>: open it, double-click “Install Sal-Kal”. macOS blocks it the first time: System Settings › Privacy &amp; Security › Open Anyway.</span></p>
+  </section>
+
+  <section class="card panel" data-panel="linux" hidden>
+    <ol class="how">
+      <li><div><b><span lang="he">פותחים טרמינל</span><span lang="en">Open a terminal</span></b></div></li>
+      <li><div><b><span lang="he">מדביקים את השורה ולוחצים Enter</span><span lang="en">Paste this line and press Enter</span></b>
+        <div class="cmd"><code data-cmd="sh"></code><button class="btn copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></div></li>
+      <li><div><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
+        <p class="note"><span lang="he">אחר כך: Sal-Kal בתפריט היישומים.</span><span lang="en">Afterwards: Sal-Kal in the apps menu.</span></p></div></li>
+    </ol>
+  </section>
+
+  <div class="need">
+    <div><b><span lang="he">חיבור אינטרנט בישראל</span><span lang="en">An internet connection in Israel</span></b><span><span lang="he">חלק מהרשתות עונות רק לחיבור מישראל</span><span lang="en">Some chains only answer Israeli connections</span></span></div>
+    <div><b><span lang="he">5 GB פנויים</span><span lang="en">5 GB free</span></b><span><span lang="he">רק הסניפים באזור שלכם</span><span lang="en">Only the stores in your area</span></span></div>
+    <div><b><span lang="he">מחשב דולק</span><span lang="en">The computer on</span></b><span><span lang="he">המחירים מתעדכנים כל 6 שעות</span><span lang="en">Prices update every 6 hours</span></span></div>
+    <div><b dir="ltr">Windows 10+ · macOS 11+ · Linux</b><span><span lang="he">בלי הרשאות מנהל</span><span lang="en">No admin rights</span></span></div>
+  </div>
+  <p class="alt"><a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener"><span lang="he">הקוד ב־GitHub</span><span lang="en">The code on GitHub</span></a></p>
+</main>
+<script src="/static/download.js"></script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+# Sal-Kal on your own computer: the price-file downloader (the same version the sal-kal.com server runs)
+il-supermarket-scraper==1.0.19

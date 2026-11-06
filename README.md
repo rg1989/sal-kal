@@ -52,7 +52,33 @@ Python 3.12, FastAPI and SQLite (FTS5) on the server. The frontend is vanilla JS
 OpenFreeMap tiles, Nominatim and OSRM. It runs on a home server in a systemd sandbox behind a Cloudflare Tunnel;
 see `deploy/`.
 
-### Run it locally
+### Install it on your own computer (Mac, Windows, Linux)
+No programming needed and no admin rights. The installer sets everything up in one folder. It then opens a setup page
+in your browser, which downloads the store lists, asks for your address and fetches prices for the stores near it
+only. After that, Sal-Kal runs at **http://localhost:8080** and refreshes prices every 6 hours while the computer is
+on.
+
+- **Windows:** download [Sal-Kal-Setup.cmd](https://sal-kal.com/download/Sal-Kal-Setup.cmd) and open it. If
+  "Windows protected your PC" appears, click More info › Run anyway. You can also paste this into PowerShell:
+  ```powershell
+  irm https://sal-kal.com/install.ps1 | iex
+  ```
+- **Mac:** open Terminal (⌘ Space, type Terminal), paste this and press Return:
+  ```bash
+  curl -fsSL https://sal-kal.com/install.sh | bash
+  ```
+- **Linux:** the same line in a terminal.
+
+The download page [sal-kal.com/download](https://sal-kal.com/download) shows the same steps for your computer.
+
+You need an internet connection in Israel (some chains only answer Israeli addresses) and about 5 GB of free space.
+To open it later: Sal-Kal in Launchpad (Mac), on the desktop or in the Start menu (Windows), or in the apps menu
+(Linux). The setup page at http://localhost:8080/setup has the settings: start at sign-in, use from your phone on
+the same Wi-Fi, update now, and remove Sal-Kal. Running the installer again updates it and keeps your carts.
+Files: `~/Library/Application Support/Sal-Kal`, `%LOCALAPPDATA%\Sal-Kal` or `~/.local/share/sal-kal`. The code is in
+[app/install](app/install) (the installers) and [app/local.py](app/local.py) (setup, updates, shortcuts).
+
+### Run it locally (development)
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python tests/make_fixtures.py /tmp/fx/dumps          # synthetic price files in the real formats

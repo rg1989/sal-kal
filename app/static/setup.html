@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>סל קל · Sal-Kal</title>
+<meta name="theme-color" content="#EEF0EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121715" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD23F'/%3E%3Cg fill='none' stroke='%231C2321' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.3 13 14 8.2M20.7 13 18 8.2'/%3E%3Cpath d='M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z'/%3E%3Cpath d='M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/setup.css">
+<script>try{if(localStorage.getItem("lang")==="en"){document.documentElement.lang="en";document.documentElement.dir="ltr"}}catch(e){}</script>
+</head>
+<body>
+<header class="top">
+  <span class="logo">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" class="tile"/><g class="ink" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
+    <span lang="he">סל קל</span><span lang="en">Sal-Kal</span>
+  </span>
+  <div class="langs" role="radiogroup" aria-label="Language / שפה">
+    <button type="button" role="radio" data-lang="he" lang="he">עברית</button>
+    <button type="button" role="radio" data-lang="en" lang="en">English</button>
+  </div>
+</header>
+
+<main class="wizard">
+  <ol class="dots" aria-hidden="true"><li data-for="welcome"></li><li data-for="installing"></li><li data-for="area"></li><li data-for="prices"></li><li data-for="ready"></li></ol>
+
+  <!-- 1. what it needs -->
+  <section class="card" data-phase="welcome" hidden>
+    <h1><span lang="he">התקנת סל קל על המחשב הזה</span><span lang="en">Set up Sal-Kal on this computer</span></h1>
+    <ul class="checks">
+      <li id="ck-net" data-state="wait"><i aria-hidden="true"></i>
+        <span><b><span lang="he">חיבור לאתרי המחירים של הרשתות</span><span lang="en">Connection to the chains' price sites</span></b>
+        <small class="ok-t"><span lang="he">תקין</span><span lang="en">OK</span></small>
+        <small class="bad-t"><span lang="he">חלק מהרשתות עונות רק לחיבור מישראל. אפשר להמשיך, עם פחות רשתות.</span><span lang="en">Some chains only answer connections from Israel. You can go on, with fewer chains.</span></small></span></li>
+      <li id="ck-disk" data-state="wait"><i aria-hidden="true"></i>
+        <span><b><span lang="he">מקום פנוי בדיסק</span><span lang="en">Free disk space</span></b> <small class="num" id="disk-free"></small>
+        <small class="bad-t"><span lang="he">כדאי לפנות לפחות 5 GB.</span><span lang="en">Free up at least 5 GB.</span></small></span></li>
+      <li data-state="info"><i aria-hidden="true"></i>
+        <span><b><span lang="he">המחירים מתעדכנים כשהמחשב דולק ומחובר</span><span lang="en">Prices update while the computer is on and online</span></b></span></li>
+    </ul>
+    <button class="btn primary big" id="go"><span lang="he">התחלה</span><span lang="en">Start</span></button>
+  </section>
+
+  <!-- 2. the downloader and the store lists -->
+  <section class="card" data-phase="installing" hidden>
+    <h1><span lang="he">מתקינים</span><span lang="en">Installing</span></h1>
+    <ol class="steps">
+      <li data-step="browser"><i aria-hidden="true"></i><span><span lang="he">רכיב הורדה (כ־150 MB)</span><span lang="en">Download component (about 150 MB)</span></span><small class="count"></small></li>
+      <li data-step="stores"><i aria-hidden="true"></i><span><span lang="he">רשימות הסניפים מכל הרשתות</span><span lang="en">Store lists from every chain</span></span><small class="count"></small></li>
+      <li data-step="map"><i aria-hidden="true"></i><span><span lang="he">מיקום הסניפים על המפה</span><span lang="en">Placing stores on the map</span></span><small class="count"></small></li>
+    </ol>
+    <p class="hint"><span lang="he">אפשר לסגור את הדף; ההתקנה ממשיכה.</span><span lang="en">You can close this page; setup carries on.</span></p>
+    <div class="err" hidden><p></p><button class="btn ghost retry"><span lang="he">לנסות שוב</span><span lang="en">Try again</span></button></div>
+  </section>
+
+  <!-- 3. your address: the app's own first-run setup -->
+  <section class="card" data-phase="area" hidden>
+    <h1><span lang="he">איפה אתם קונים?</span><span lang="en">Where do you shop?</span></h1>
+    <p><span lang="he">המחירים יורדו רק לסניפים באזור שתבחרו.</span><span lang="en">Prices are downloaded only for stores in the area you choose.</span></p>
+    <a class="btn primary big" href="/app"><span lang="he">בחירת כתובת</span><span lang="en">Choose your address</span></a>
+  </section>
+
+  <!-- 4. prices for the stores near you -->
+  <section class="card" data-phase="prices" hidden>
+    <h1><span lang="he">מורידים מחירים</span><span lang="en">Getting prices</span></h1>
+    <ol class="steps">
+      <li data-step="stores"><i aria-hidden="true"></i><span><span lang="he">רשימות הסניפים</span><span lang="en">Store lists</span></span><small class="count"></small></li>
+      <li data-step="prices"><i aria-hidden="true"></i><span><span lang="he">מחירים ומבצעים בסניפים לידך</span><span lang="en">Prices and deals at stores near you</span></span><small class="count"></small></li>
+      <li data-step="index"><i aria-hidden="true"></i><span><span lang="he">בניית הקטלוג</span><span lang="en">Building the catalogue</span></span><small class="count"></small></li>
+      <li data-step="deals"><i aria-hidden="true"></i><span><span lang="he">מבצעים</span><span lang="en">Deals</span></span><small class="count"></small></li>
+    </ol>
+    <p class="hint"><span lang="he">בדרך כלל 10–30 דקות. אפשר לסגור את הדף.</span><span lang="en">Usually 10–30 minutes. You can close this page.</span></p>
+    <div class="err" hidden><p></p><button class="btn ghost retry"><span lang="he">לנסות שוב</span><span lang="en">Try again</span></button></div>
+  </section>
+
+  <!-- 5. done: how to get back here, and settings -->
+  <section class="card" data-phase="ready" hidden>
+    <h1><span lang="he">סל קל מוכן</span><span lang="en">Sal-Kal is ready</span></h1>
+    <a class="btn primary big" href="/"><span lang="he">פתיחת סל קל</span><span lang="en">Open Sal-Kal</span></a>
+    <dl class="facts">
+      <div><dt><span lang="he">כתובת</span><span lang="en">Address</span></dt>
+        <dd><code id="addr" dir="ltr"></code> <button class="btn tiny" id="copy-addr"><span lang="he">העתקה</span><span lang="en">Copy</span></button></dd></div>
+      <div><dt><span lang="he">לפתוח בפעם הבאה</span><span lang="en">Next time, open</span></dt><dd id="where-icon"></dd></div>
+      <div><dt><span lang="he">עודכן</span><span lang="en">Updated</span></dt><dd><span id="last-run"></span> · <span id="cover"></span>
+        <button class="btn tiny" id="update-now"><span lang="he">לעדכן עכשיו</span><span lang="en">Update now</span></button></dd></div>
+    </dl>
+    <div class="settings">
+      <label class="row"><input type="checkbox" switch id="autostart">
+        <span><span lang="he">להפעיל עם הדלקת המחשב</span><span lang="en">Start when I sign in to this computer</span></span></label>
+      <label class="row"><input type="checkbox" switch id="lan">
+        <span><span lang="he">גישה מהטלפון ברשת הביתית</span><span lang="en">Use it from my phone on this Wi-Fi</span></span></label>
+      <p class="lan-url" hidden><span lang="he">בטלפון, באותה רשת Wi-Fi:</span><span lang="en">On your phone, on the same Wi-Fi:</span> <code dir="ltr" id="lan-url"></code></p>
+    </div>
+    <details class="more">
+      <summary><span lang="he">מתקדם</span><span lang="en">Advanced</span></summary>
+      <dl class="facts">
+        <div><dt><span lang="he">תיקייה</span><span lang="en">Folder</span></dt><dd><code dir="ltr" id="folder"></code></dd></div>
+        <div><dt><span lang="he">בשימוש</span><span lang="en">Disk used</span></dt><dd class="num" id="used"></dd></div>
+      </dl>
+      <div class="remove">
+        <label class="row"><input type="checkbox" id="keep-data"><span><span lang="he">לשמור את העגלות והמחירים</span><span lang="en">Keep my carts and prices</span></span></label>
+        <button class="btn danger" id="uninstall"><span lang="he">הסרת סל קל מהמחשב</span><span lang="en">Remove Sal-Kal from this computer</span></button>
+      </div>
+    </details>
+    <div class="err" hidden><p></p></div>
+  </section>
+
+  <section class="card" data-phase="removed" hidden>
+    <h1><span lang="he">סל קל הוסר</span><span lang="en">Sal-Kal was removed</span></h1>
+    <p><span lang="he">אפשר לסגור את הדף.</span><span lang="en">You can close this page.</span></p>
+  </section>
+</main>
+<script src="/static/setup.js"></script>
+</body>
+</html>

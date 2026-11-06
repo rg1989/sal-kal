@@ -10,7 +10,11 @@ One-offs (each also runs confirm()): --rekey, --names, --promos-again, --rebuild
 """
 import argparse
 import contextlib
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows (Sal-Kal on your own computer, app/local.py)
+    fcntl = None
+    import msvcrt
 import gzip
 import io
 import json
@@ -505,14 +509,22 @@ def run_lock(db_path=None):
     path = os.path.abspath(db_path or dbmod.DB_PATH) + ".indexer.lock"
     with open(path, "a") as fh:
         try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if fcntl:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
             yield False
             return
         try:
             yield True
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            if fcntl:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            else:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def run(dumps, db_path=None, only=None, confirm_always=False, rekey_keys=False, names=False, promos_again=False,

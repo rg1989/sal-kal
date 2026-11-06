@@ -386,3 +386,21 @@ takeShare() asks (confirmSheet, safe) and POSTs it as the opener's own cart (a c
 _write_items names unnamed lines from products. Limits: 24k-char link, 40 KB inflated, 400 lines, keys checked.
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.
+Self-install on your own computer (2026-11-06, per user: for non-developers; NOT linked from the landing page or the
+app yet, only README "Install it on your own computer" and the unlinked page /download). One line or one file:
+`curl -fsSL https://sal-kal.com/install.sh | bash` (Mac/Linux), Sal-Kal-Setup.cmd / `irm …/install.ps1 | iex` (Windows),
+served by server.py from app/install/ (also /download/Sal-Kal-Mac.zip with an executable .command). The installer
+fetches uv 0.13.0 (sha256-checked), Python 3.12, this repo's main branch from GitHub (so changes reach users only
+once pushed) and il-supermarket-scraper==1.0.19 into one user folder (no admin), then `python -m app.local install`:
+icon (Mac ~/Applications/Sal-Kal.app, Windows Start menu + Desktop + Settings > Apps entry, Linux .desktop), start at
+sign-in (launchd agent / systemd --user / Startup folder), runs and opens http://localhost:8080 (8080-8099).
+`app/local.py` = the runner: same app in local mode + /setup wizard (setup.html/js/css): welcome checks (portals
+reachable, disk) → Chromium headless shell + every chain's Stores files + store locations (seeded from
+app/data/store-points.json = the server's geocache for store queries only, OSM/ODbL; refresh with
+deploy/export-store-points.py) → the app's own first-run setup (local-app.js is injected into the app page in phase
+"area" and returns to /setup) → PriceFull/PromoFull only for stores within max_km+2 km (capped 40) of the household's
+places or along its way (FILE_NAME_REGEX) → indexer, deals; then every 6 h and whenever places add stores. Price files
+are deleted once indexed. Guards: Host must be localhost (or LAN when "use from my phone" is on: binds 0.0.0.0,
+everyone on the Wi-Fi is the household), cross-site writes 403 as on the server. Indexer lock uses msvcrt on Windows.
+Tested end to end on Linux in a scratch folder (Tel Aviv demo address, 2 km: 202 stores, ~3.4 GB of XML before
+deleting); macOS and Windows paths are written but untested on real machines. Tests: tests/test_local.py.
