@@ -481,7 +481,7 @@ function radiusPicker(el, value, onChange, withAny = true) {
 // Named places (home, work, a parent's, the gym): the stores around one of them, or along the way between two.
 const MAX_PLACES = 12;
 const LOC = { edit: null, draft: null };  // edit: a place's id, 'new' or null; draft: the address picked in the editor
-const ADDR = ['label', 'lat', 'lon', 'town', 'street', 'number', 'town_name', 'street_name', 'precision', 'near'];
+const ADDR = ['label', 'lat', 'lon', 'town', 'street', 'number', 'town_name', 'street_name', 'precision', 'near', 'source'];
 const addrOnly = h => Object.fromEntries(ADDR.filter(k => h[k] != null).map(k => [k, h[k]]));
 const newPlaceId = () => 'p' + Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1296).toString(36);
 const PLUS = '<span class="plus" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>';
@@ -660,8 +660,9 @@ function openAccount() {
       <form class="loc-search" id="key-form"><input id="maps-key" type="password" autocomplete="off" spellcheck="false" placeholder="${esc(t('Google Maps API key (Routes API)'))}" aria-label="${esc(t('Google Maps API key'))}">
         <button class="ghost" type="submit">${t('Save key')}</button></form></div>` : ''}
     ${acc ? `<div class="acc-actions">
-      <button type="button" class="ghost wide" data-acc="out">${t('Sign out')}</button>
-      <button type="button" class="ghost wide danger" data-acc="delete">${t('Delete my account')}</button></div>` : ''}
+      <button type="button" class="ghost wide" data-acc="out">${t('Sign out')}</button></div>
+    <details class="acc-danger"><summary>${t('Danger zone')}${SVG.chev}</summary>
+      <button type="button" class="ghost wide danger" data-acc="delete">${t('Delete my account')}</button></details>` : ''}
     <p class="acc-legal"><a href="/about">${t('About')}</a> · <a href="/privacy">${t('Privacy')}</a>${acc ? ` · <a href="/data-deletion">${t('Deleting your data')}</a>` : ''}</p>
     <p class="acc-credit">${t('Built by')} <a href="https://www.linkedin.com/in/roman-grinevich/" target="_blank" rel="noopener">Roman Grinevich</a> · <a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener">GitHub</a></p>`;
   openSheet($('#account'));

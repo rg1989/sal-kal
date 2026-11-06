@@ -188,7 +188,7 @@ const HE = {
   'Drive times: live traffic (Google Maps). Save an empty key for typical times.': 'זמני נסיעה: תנועה בזמן אמת (Google Maps). שמירת מפתח ריק חוזרת לזמנים רגילים.',
   'Drive times: typical, without traffic. A Google Maps key (Routes API) adds live traffic.': 'זמני נסיעה: רגילים, בלי תנועה. מפתח Routes API של Google Maps מוסיף תנועה בזמן אמת.',
   'Google Maps API key (Routes API)': 'מפתח Routes API של Google Maps', 'Google Maps API key': 'מפתח Google Maps API',
-  'Save key': 'שמירת מפתח', 'Sign out': 'יציאה מהחשבון', 'Delete my account': 'מחיקת החשבון שלי',
+  'Save key': 'שמירת מפתח', 'Sign out': 'יציאה מהחשבון', 'Delete my account': 'מחיקת החשבון שלי', 'Danger zone': 'אזור מסוכן',
   'Delete your account? Your carts, address and settings are erased for good.': 'למחוק את החשבון? הסלים, הכתובת וההגדרות שלך יימחקו לצמיתות.',
   'Couldn’t delete the account — try again': 'לא הצלחנו למחוק את החשבון — נסו שוב', 'Live traffic is on': 'תנועה בזמן אמת פועלת',
   'Using typical drive times': 'משתמשים בזמני נסיעה רגילים', "Couldn't save the key": 'לא הצלחנו לשמור את המפתח',
