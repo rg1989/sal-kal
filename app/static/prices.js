@@ -142,9 +142,7 @@
     if (member) store.set('pw_member', '1'); else store.del('pw_member');
     root.classList.remove('pw-check');
     root.classList.toggle('member', member);
-    if (member) {  // the bar's button opens the app (site.js does the same when this browser used the app)
-      $$('.bar [data-open-app]').forEach(a => { a.innerHTML = both('לסל קל', 'Open Sal-Kal'); });
-    }
+    if (member) window.Site?.memberBar(m);  // the app's own header: search, where you shop, your picture, your cart
     if (member) await becomeMember();
     else guestSearch();
   }
