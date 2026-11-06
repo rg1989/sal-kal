@@ -77,8 +77,8 @@ html[lang="he"] span[lang="en"], html[lang="en"] span[lang="he"] { display: none
 .langs button[lang="en"] { font-family: "IBM Plex Sans", sans-serif; }
 .langs button[aria-checked="true"] { background: var(--tag); color: var(--tag-ink); }
 
-/* signed in (site.js memberBar): the app's header — brand + Price Watch | search | where you shop, language,
-   your picture, your cart; each part opens the app there (styles.css draws the app's own) */
+/* signed in (site.js memberBar): the app's header — brand + Price Watch (on Price Watch: Back to shopping) | search |
+   where you shop, language, your picture; each part opens the app there (styles.css draws the app's own) */
 .bar-start { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .mb-search { position: relative; flex: 1; max-width: 620px; margin: 0 auto; }
 .mb-search svg { position: absolute; inset-inline-start: 13px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%);
@@ -98,11 +98,6 @@ html[lang="he"] span[lang="en"], html[lang="en"] span[lang="he"] { display: none
   background: color-mix(in srgb, var(--accent) 70%, var(--surface)); color: var(--tag-ink); font: 700 13px var(--ui); border: 1px solid var(--line); }
 .mb-avatar .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .mb-avatar:hover .avatar { border-color: var(--accent-edge); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
-.mb-cart { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; box-sizing: border-box; background: var(--ink); color: var(--paper);
-  border-radius: 999px; padding-block: 8px; padding-inline: 11px 14px; font: 600 14px var(--ui); text-decoration: none; white-space: nowrap; flex: none; }
-.mb-cart svg { width: 18px; height: 18px; }
-.mb-cart .n:not(:empty) { font-family: var(--num); background: var(--accent); color: var(--tag-ink); border-radius: 999px; min-width: 20px;
-  padding: 0 6px; text-align: center; line-height: 20px; font-size: 14px; }
 .member-bar .bar-end { gap: 8px; }
 @media (max-width: 1100px) { .member-bar .mb-near { display: none; } }
 @media (max-width: 760px) {  /* as the app on phones: no language switch in the bar (the account sheet has it) */
@@ -111,13 +106,10 @@ html[lang="he"] span[lang="en"], html[lang="en"] span[lang="he"] { display: none
   .member-bar .bar-end { margin-inline-start: auto; }
   .member-bar .mb-search { order: 3; flex-basis: 100%; max-width: none; }
   .member-bar .mb-search input { min-height: 44px; }
-  .member-bar .mb-avatar, .member-bar .mb-cart { min-height: 44px; }
+  .member-bar .mb-avatar { min-height: 44px; }
 }
-@media (max-width: 430px) {
-  .member-bar .logo span, .member-bar .mb-cart .label { display: none; }
-}
-@media (max-width: 359px) {  /* the tag's name stays for screen readers */
-  .member-bar .pw-t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 400px) {
+  .member-bar .logo span { display: none; }
 }
 
 /* ---------------------------------------------------------------- buttons */

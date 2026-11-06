@@ -43,7 +43,7 @@
   addEventListener('pageshow', e => { const s = stored(); if (e.persisted && (s === 'he' || s === 'en') && s !== lang()) show(s); });
   show(lang());
 
-  // signed in: the app's own header (search, where you shop, your picture, your cart), each part opening the app there
+  // signed in: the app's own header (search, where you shop, language, your picture), each part opening the app there
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const both = (he, en) => `<span lang="he">${he}</span><span lang="en">${en}</span>`;
   const ICON = {
@@ -75,6 +75,11 @@
     logo.replaceWith(start);
     start.append(logo);
     if (tag) start.append(tag);
+    if (tag?.getAttribute('aria-current') === 'page') {  // on Price Watch itself, the tag takes you back to the shop
+      tag.href = '/app';
+      tag.removeAttribute('aria-current');
+      tag.querySelector('.pw-in').innerHTML = `${ICON.cart}<span class="pw-t">${both('חזרה לקניות', 'Back to shopping')}</span>`;
+    }
     const form = document.createElement('form');
     form.className = 'mb-search';
     form.setAttribute('role', 'search');
@@ -99,23 +104,12 @@
     av.setAttribute('aria-label', u.name || 'Account');
     av.innerHTML = `<span class="avatar" aria-hidden="true">${u.avatar ? `<img src="${esc(u.avatar)}" alt="" referrerpolicy="no-referrer">` : ''}<span>${esc(initials(u.name || u.email))}</span></span>`;
     av.querySelector('img')?.addEventListener('error', e => e.target.remove());
-    const cart = document.createElement('a');
-    cart.className = 'mb-cart';
-    cart.href = '/app';
-    cart.innerHTML = `${ICON.cart}<span class="label">${both('סל', 'Cart')}</span><span class="n"></span>`;
-    $$('.bar [data-open-app]').forEach(a => a.remove());
+    $$('.bar [data-open-app]').forEach(a => a.remove());  // the visitor's "Sign in"
     const langs = end.querySelector('.langs');
     end.prepend(near);
     if (langs) end.append(langs);
-    end.append(av, cart);
+    end.append(av);
     bar.classList.add('member-bar');
-    // the open cart's count, as the app shows it (the app keeps the open cart's id in this browser)
-    let open = null;
-    try { open = localStorage.getItem('cart'); } catch { /* private mode */ }
-    fetch('/api/carts', { credentials: 'same-origin' }).then(r => (r.ok ? r.json() : [])).then(cs => {
-      const c = cs.find(x => String(x.id) === open) || cs[0];
-      if (c?.n) cart.querySelector('.n').textContent = c.n;
-    }).catch(() => {});
     measure();
   }
   if (usedApp()) me().then(memberBar);
