@@ -1137,6 +1137,9 @@ def _auto_block(live, path, run, A, B, start):
             s.commit()
     if s.execute("SELECT max(day) FROM done").fetchone()[0] != B:
         raise RuntimeError(f"auto: the build stopped before {B}")
+    for table in ("state_a", "state_b"):  # looked up by (key, chain_id) in the apply, under the lock: indexed first
+        s.execute(f"CREATE INDEX IF NOT EXISTS {table}_k ON {table}(key, chain_id)")
+    s.commit()
     s.close()
     _prepare_block(live, A, B)  # reads only days the indexer never writes again: outside its lock
     for _ in range(60):
@@ -1166,6 +1169,10 @@ def _prepare_block(c, A, B):
     c.execute(last_row.format(t="bef", op="<"), (A,))
     c.execute(last_row.format(t="aft", op="<="), (B,))
     c.execute("CREATE TEMP TABLE atb AS SELECT key, chain_id FROM price_history WHERE day = ?", (B,))
+    # the apply looks rows up by (key, chain_id) in NOT EXISTS subqueries, which SQLite won't index on its own: without
+    # these a real day (~1M rows against ~635k) scanned for hours while holding the indexer's lock (2026-11-07)
+    for t in ("bef", "aft", "atb"):
+        c.execute(f"CREATE INDEX temp.{t}_k ON {t}(key, chain_id)")
     c.commit()
 
 
