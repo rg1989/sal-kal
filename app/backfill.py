@@ -757,7 +757,7 @@ def _drop(c, h_since, m_since):
     return a, b
 
 
-def apply(work, db_path=None, wait=1800):
+def apply(work, db_path=None, wait=1800, moves=True):
     path = os.path.abspath(db_path or dbmod.DB_PATH)
     c = dbmod.connect(path)  # settings are in user.db, which connect() attaches as u
     c.row_factory = None
@@ -766,14 +766,14 @@ def apply(work, db_path=None, wait=1800):
     while True:
         with indexer.run_lock(path) as ok:
             if ok:
-                return _apply(c, work)
+                return _apply(c, work, moves)
         if time.time() > deadline:
             raise SystemExit("the indexer kept its lock: try again later")
         log.info("waiting for the indexer to finish")
         time.sleep(30)
 
 
-def _apply(c, work):
+def _apply(c, work, moves=True):
     t0 = time.time()
     h_since, m_since = live_bounds(c)
     c.execute("ATTACH DATABASE ? AS bf", (os.path.join(work, "stage.db"),))
@@ -787,11 +787,13 @@ def _apply(c, work):
                          WHERE o.mn IS NOT NULL AND o.day = (SELECT max(x.day) FROM bf.out_h x
                                WHERE x.key=o.key AND x.chain_id=o.chain_id AND x.day < ?)""",
                       (h_since, h_since)).rowcount
+        # branch price changes only once the Price Board credits the source (moves=False keeps them out)
         m = c.execute("""INSERT OR IGNORE INTO price_moves(key, chain_id, day, was, now, stores, ts)
                          SELECT key, chain_id, day, was, now, stores, ts FROM bf.out_m WHERE day < ?""",
-                      (m_since,)).rowcount
+                      (m_since,)).rowcount if moves else 0
         hf, ht = c.execute("SELECT min(day), max(day) FROM bf.out_h WHERE day < ?", (h_since,)).fetchone()
-        mf, mt = c.execute("SELECT min(day), max(day) FROM bf.out_m WHERE day < ?", (m_since,)).fetchone()
+        mf, mt = c.execute("SELECT min(day), max(day) FROM bf.out_m WHERE day < ?", (m_since,)).fetchone() \
+            if moves else (None, None)
         put_setting(c, "history_live_since", str(h_since))
         put_setting(c, "moves_live_since", str(m_since))
         if hf:
@@ -863,6 +865,7 @@ def main():
     ap.add_argument("--to", dest="last", type=int, default=None, help="last Kaggle version (default the newest)")
     ap.add_argument("--jobs", type=int, default=2, help="versions downloaded at once (one process each)")
     ap.add_argument("--until", type=int, default=None, help="build: last day (YYYYMMDD)")
+    ap.add_argument("--no-moves", action="store_true", help="apply: history only, no branch price changes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
     work = work_dir(a.work)
@@ -872,7 +875,7 @@ def main():
     elif a.step == "build":
         build(work, a.db, a.until)
     elif a.step == "apply":
-        print(json.dumps(apply(work, a.db)))
+        print(json.dumps(apply(work, a.db, moves=not a.no_moves)))
     elif a.step == "remove":
         print(remove(a.db))
     else:

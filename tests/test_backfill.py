@@ -194,4 +194,11 @@ assert [tuple(r) for r in live.execute("SELECT * FROM price_history ORDER BY key
     [tuple(r) for r in before], "remove leaves exactly the indexer's rows"
 assert live.execute("SELECT count(*) FROM price_moves").fetchone()[0] == 0
 assert setting("history_since") == str(L) and setting("backfill") is None and backfill.source(live) is None
+# history only (the Price Board's older changes wait until the board names the source)
+backfill.apply(WORK, os.environ["BASKET_DB"], moves=False)
+live = dbmod.connect()
+assert live.execute("SELECT count(*) FROM price_moves").fetchone()[0] == 0
+assert setting("moves_since") == str(D[9]) and setting("history_since") == str(D[1])
+assert [tuple(r) for r in ph(MILK, A)][:2] == [(D[1], 5.0, 5.5), (D[2], 5.4, 5.5)]
+backfill.remove(os.environ["BASKET_DB"])
 print("backfill ok")
