@@ -1,14 +1,13 @@
 #!/bin/bash
-# Root half of install-app.sh and install-downloader.sh. Idempotent.
-#   sudo PY_SRC=<dir of a Python 3.12 install> deploy/install.sh app|downloader
+# Root half of install-app.sh, install-downloader.sh and install-relay.sh. Idempotent.
+#   sudo PY_SRC=<dir of a Python 3.12 install> deploy/install.sh app|downloader|relay
 # Puts Sal under its own system user in /srv/sal and installs the sandboxed systemd units:
 #   /srv/sal/python      Python 3.12 (the downloader needs < 3.13), root-owned
 #   /srv/sal/code, venv  the app (copied from this repo), root-owned, read-only to Sal
-#   /srv/sal/downloader  the price-file downloader (src + venv), root-owned
-#   /srv/sal/ms-playwright  Chromium for the chains that need a browser
+#   /srv/sal/downloader  the price-file downloader (venv, from PyPI with hashes), root-owned; run by app/download.py
 #   /srv/sal/data        the only writable place: databases, photos, price files (sal:sal 0750)
 set -euo pipefail
-MODE=${1:?usage: install.sh app|downloader}
+MODE=${1:?usage: install.sh app|downloader|relay}
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 S=/srv/sal
 [ "$EUID" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
@@ -54,14 +53,44 @@ app)
   systemctl enable -q sal-web.service
   systemctl restart sal-web.service  # re-running this deploys code changes
   ;;
-downloader)
+downloader|relay)
+  # never swap the venv under a running download (a oneshot is "activating" while it runs, which is-active calls inactive)
+  for u in sal-download.service sal-relay.service; do
+    case "$(systemctl show -p ActiveState --value $u)" in
+      activating|active|deactivating|reloading) echo "$u is running: run this again when it ends" >&2; exit 1 ;;
+    esac
+  done
+  # its runner (python -m app.download) and Sal's two fixes to it; the app's deploy copies all of app/ anyway
+  install -d $S/code/app
+  install -m 0644 "$REPO"/app/__init__.py "$REPO"/app/download.py "$REPO"/app/scraper_fixes.py $S/code/app/
+  install -m 0644 "$REPO"/deploy/downloader-requirements.txt $S/code/
+  # il-supermarket-scraper from PyPI, every package at an exact version with its sha256 (deploy/lock-downloader.py),
+  # built beside the old venv and swapped in only once it installed (venv/bin/python is only ever run with -m)
   install -d $S/downloader
-  [ -d $S/downloader/src ] || git clone -q --depth 1 https://github.com/OpenIsraeliSupermarkets/israeli-supermarket-scarpers $S/downloader/src
-  [ -x $S/downloader/venv/bin/python ] || $S/python/bin/python3.12 -m venv $S/downloader/venv
-  $S/downloader/venv/bin/pip install -q --disable-pip-version-check $S/downloader/src
-  PLAYWRIGHT_BROWSERS_PATH=$S/ms-playwright $S/downloader/venv/bin/python -m playwright install chromium
-  chown -R root:root $S/downloader $S/ms-playwright
-  systemctl enable -q --now sal-download.timer
+  rm -rf $S/downloader/venv.new
+  $S/python/bin/python3.12 -m venv $S/downloader/venv.new
+  $S/downloader/venv.new/bin/python -m pip install -q --disable-pip-version-check --require-hashes \
+    -r "$REPO"/deploy/downloader-requirements.txt
+  rm -rf $S/downloader/venv.old
+  [ ! -d $S/downloader/venv ] || mv $S/downloader/venv $S/downloader/venv.old
+  mv $S/downloader/venv.new $S/downloader/venv
+  # before 2026-11-06: a git clone that never updated, and Chromium (no chain uses a browser: only upstream's tests)
+  rm -rf $S/downloader/venv.old $S/downloader/src $S/ms-playwright
+  $S/downloader/venv/bin/python -m compileall -q $S/code/app/download.py $S/code/app/scraper_fixes.py
+  chown -R root:root $S/downloader $S/code
+  if [ "$MODE" = downloader ]; then
+    systemctl enable -q --now sal-download.timer
+  else
+    # relay (home, while the site runs elsewhere): only Super-Pharm, sent on to the server (install-relay.sh does the rest)
+    install -m 0644 "$REPO"/deploy/relay-push.sh $S/code/
+    install -d -o sal -g sal -m 0750 $S/data/relay $S/data/relay/dumps $S/data/relay/dumps/status
+    # start from what this machine already fetched for it: all of that was indexed before the site moved
+    if [ ! -e $S/data/relay/dumps/status/superpharm.json ] && [ -f $S/data/dumps/status/superpharm.json ]; then
+      install -o sal -g sal -m 0640 $S/data/dumps/status/superpharm.json $S/data/relay/dumps/status/
+    fi
+    [ -f $S/data/relay/key ] || runuser -u sal -- ssh-keygen -q -t ed25519 -N '' -C "sal-relay@$(hostname)" -f $S/data/relay/key
+    systemctl enable -q --now sal-relay.timer  # its runs wait for install-relay.sh's target (ConditionPathExists)
+  fi
   ;;
-*) echo "usage: install.sh app|downloader" >&2; exit 1 ;;
+*) echo "usage: install.sh app|downloader|relay" >&2; exit 1 ;;
 esac

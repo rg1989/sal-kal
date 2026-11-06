@@ -1,0 +1,28 @@
+[Unit]
+Description=Download Super-Pharm's price files from this machine's address and send them to the live server
+# Super-Pharm's portal (behind Link11) refuses the server's datacenter address but answers a home connection.
+# Set up by install-relay.sh (the target and keys live in /srv/sal/data/relay, never in the repo).
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/srv/sal/data/relay/target
+
+[Service]
+Type=oneshot
+User=sal
+Group=sal
+WorkingDirectory=/srv/sal/code
+Environment=HOME=/srv/sal/data SAL_DATA=/srv/sal/data/relay STORAGE_PATH=/srv/sal/data/relay/dumps STATUS_DATABASE_PATH=/srv/sal/data/relay/dumps/status
+Environment=SAL_CHAINS=SUPER_PHARM NUMBER_OF_PROCESSES=1 RELAY_DIR=/srv/sal/data/relay RELAY_FOLDER=SuperPharm PYTHONDONTWRITEBYTECODE=1
+# not while this machine serves Sal-Kal itself (after a rollback its own sal-download fetches every chain)
+ExecCondition=+/bin/sh -c '! /usr/bin/systemctl is-active -q sal-tunnel.service'
+# files never sent are given up after 2 days (newer full files replace them)
+ExecStartPre=-/usr/bin/find /srv/sal/data/relay/dumps -type f -mtime +2 -not -path */status/* -delete
+ExecStartPre=-/srv/sal/downloader/venv/bin/python /srv/sal/code/trim-status.py /srv/sal/data/relay
+# "-": whatever downloaded is sent even when some files failed (Super-Pharm answers 491 to some, every run)
+ExecStart=-/srv/sal/downloader/venv/bin/python -m app.download
+ExecStart=/bin/sh /srv/sal/code/relay-push.sh
+TimeoutStartSec=2h
+Nice=10
+CPUWeight=20
+IOWeight=20
+MemoryMax=2G

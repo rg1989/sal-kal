@@ -88,8 +88,13 @@ BASKET_DB=/tmp/fx/basket.db .venv/bin/uvicorn app.server:app --port 8080
 Tests: `.venv/bin/python tests/test_<name>.py` for each file in `tests/`.
 
 ### Run your own copy (Linux, systemd)
-- `sudo ./install-downloader.sh`: installs the downloader in `/srv/sal`; it fetches the price files every 3 hours.
-  Some chains' portals answer only Israeli IP addresses.
+- `sudo ./install-downloader.sh`: installs the downloader in `/srv/sal` (from PyPI, every package pinned with its
+  hash); it fetches the price files every 3 hours. Sal-Kal runs it with two changes of its own
+  (`app/scraper_fixes.py`): a Shufersal file is recognised once fetched, and the status files are kept lean and are
+  never left cut off. Some chains' portals answer only Israeli IP addresses.
+- `./install-relay.sh <user@server>`: optional, on a home machine when the app runs on a cloud server: Super-Pharm's
+  portal refuses datacenter addresses, so the home machine downloads Super-Pharm's files and sends them to the server
+  (through an account there that can only upload into that one folder).
 - `sudo ./install-app.sh`: installs the app and its timers (indexer every 30 min) as the sandboxed user `sal`.
 - `./set-login.sh`: optional Google / Facebook sign-in and a Cloudflare Turnstile check. With no sign-in provider,
   it runs as one household with no accounts.

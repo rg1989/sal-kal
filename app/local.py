@@ -985,6 +985,11 @@ def uninstall(keep_data=False):
 
 # ---------------------------------------------------------------- the downloader (run as its own process)
 def fetch(types, regex=None):
+    from app import scraper_fixes  # the server's two fixes: Shufersal skipped once fetched, lean status files
+    DUMPS.mkdir(parents=True, exist_ok=True)
+    os.chdir(DATA)  # it opens its log (and keeps cookies) in the working folder, at import
+    scraper_fixes.apply()
+    scraper_fixes.quiet()
     from il_supermarket_scarper import ScarpingTask
     kw = {"files_types": types.split(","), "multiprocessing": max(1, min(4, (os.cpu_count() or 2) // 2)),
           "output_configuration": {"output_mode": "disk", "base_storage_path": str(DUMPS)},
@@ -992,8 +997,6 @@ def fetch(types, regex=None):
           "timeout_in_seconds": 40 * 60}
     if regex:
         kw["file_name_regex"] = regex
-    DUMPS.mkdir(parents=True, exist_ok=True)
-    os.chdir(DATA)  # it writes its log and cookies to the working folder
     task = ScarpingTask(**kw)
     task.start(single_pass=True)
     task.join()

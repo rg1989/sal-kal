@@ -7,17 +7,19 @@ After=network-online.target
 Type=oneshot
 User=sal
 Group=sal
-# the downloader writes its log and cookie files to its working directory
-WorkingDirectory=/srv/sal/data
-Environment=HOME=/srv/sal/data STORAGE_PATH=/srv/sal/data/dumps STATUS_DATABASE_PATH=/srv/sal/data/dumps/status
-Environment=SINGLE_PASS=true NUMBER_OF_PROCESSES=4 PLAYWRIGHT_BROWSERS_PATH=/srv/sal/ms-playwright PYTHONDONTWRITEBYTECODE=1
+# app.download (from the read-only code) moves into /srv/sal/data: the downloader keeps its log and cookies there
+WorkingDirectory=/srv/sal/code
+Environment=HOME=/srv/sal/data SAL_DATA=/srv/sal/data STORAGE_PATH=/srv/sal/data/dumps STATUS_DATABASE_PATH=/srv/sal/data/dumps/status
+Environment=NUMBER_OF_PROCESSES=4 PYTHONDONTWRITEBYTECODE=1
 # files older than 2 days are superseded by newer full files (the downloader's status/ stays);
 # "-" so a failed cleanup never blocks downloading. (The old run.sh used -prune with -delete,
 # which find refuses, and hid the error: nothing was ever pruned.)
 ExecStartPre=-/usr/bin/find /srv/sal/data/dumps -type f -mtime +2 -not -path /srv/sal/data/dumps/status/* -delete
 # the downloader rewrites its whole status JSON for every file it saves: keep it small (deploy/trim-status.py)
 ExecStartPre=-/srv/sal/downloader/venv/bin/python /srv/sal/code/trim-status.py /srv/sal/data
-ExecStart=/srv/sal/downloader/venv/bin/python /srv/sal/downloader/src/main.py
+# il-supermarket-scraper with Sal's two fixes (app/scraper_fixes.py: Shufersal's files skipped once fetched,
+# lean atomic status files, a quieter log)
+ExecStart=/srv/sal/downloader/venv/bin/python -m app.download
 TimeoutStartSec=3h
 # a good neighbour on a shared machine (it runs for hours)
 Nice=10

@@ -8,7 +8,9 @@ Of what it keeps, only `verified_downloads` is ever read back (once per run: fil
 `events` and `global_status` are only written. So: drop those two, keep `verified_downloads` for KEEP_DAYS (price files
 are deleted after 2 days, so older rows can't be needed), and rotate the downloader's own debug log.
 Each file is replaced atomically. A file cut off by a run killed mid-write (the downloader would reset it to empty and
-fetch that chain from scratch) keeps every complete verified row found in it."""
+fetch that chain from scratch) keeps every complete verified row found in it.
+Since 2026-11-06 the downloader runs with app/scraper_fixes.py (no events/global_status, atomic compact writes), so
+this is the safety net; it also removes the temp files a killed run can leave (<chain>.json.<pid>-<thread>.tmp)."""
 import glob
 import json
 import os
@@ -44,6 +46,12 @@ def salvage(text):
             rows.append(doc)
     return {"verified_downloads": rows}
 
+
+for tmp in glob.glob(os.path.join(DATA, "dumps", "status", "*.json.*.tmp")):
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
 
 before = after = 0
 for path in glob.glob(os.path.join(DATA, "dumps", "status", "*.json")):

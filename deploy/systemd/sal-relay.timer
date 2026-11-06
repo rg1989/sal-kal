@@ -1,0 +1,9 @@
+[Unit]
+Description=Relay Super-Pharm's price files to the live server every 3 hours
+
+[Timer]
+OnCalendar=*-*-* 00/3:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -21,18 +21,60 @@ Some portals block non-Israeli IPs — that's why everything runs on the home se
 
 Downloader: OpenIsraeliSupermarkets/israeli-supermarket-scarpers (maintained; the old erlichsefi repo just points there).
 33 active chains (see `il_supermarket_scarper/scrappers_factory.py`). Deprecated: Mega, Quik, Cofix (folded into Rami Levy), Victory old source, etc.
-Python must be <3.13 (setup.py says `>=3.8,<3.13`), and it needs Playwright Chromium for some chains.
+Python must be <3.13 (setup.py says `>=3.8,<3.13`). Playwright is imported, but at 1.0.19 no chain launches a browser
+(only upstream's tests render the gov.il page), so Chromium isn't installed (since 2026-11-06; re-check with
+`grep -rn playwright` in the package on each upgrade). Licence: custom, non-commercial (use/modify/distribute free for
+non-commercial use; credit must name Sefi Erlich, link the repo and note changes; contributions give him commercial
+rights, so report problems as issues).
 
 ### Step 1 — downloader install
-`install-downloader.sh` in this folder (sudo). It installs to `/srv/sal/downloader` (src/, venv/), dumps go to
+`install-downloader.sh` in this folder (sudo). It installs to `/srv/sal/downloader/venv` from PyPI with
+`--require-hashes` (`deploy/downloader-requirements.txt`: il-supermarket-scraper 1.0.19 + every dependency, exact
+versions; built in venv.new, swapped in only once installed, refused while a download runs), dumps go to
 `/srv/sal/data/dumps/<ChainFolder>/`, the system timer `sal-download.timer` runs every 3h at :17 as user `sal`,
-files older than 2 days are pruned (ExecStartPre; the old run.sh's prune never worked). The downloader rewrites its whole
-status JSON (dumps/status/<chain>.json) for every file it saves and never prunes it: by 2026-11-06 (189 MB after 28 h)
-every run hit the 3 h limit, back to back, with 4 cores busy. `deploy/trim-status.py` (ExecStartPre, installed to
-/srv/sal/code) keeps only `verified_downloads` (the one part read back: files already fetched are skipped) for 3 days,
-drops the write-only `events`/`global_status`, salvages verified rows from files cut off by a killed run, and rotates
-logging.log over 50 MB. Check with
-`systemctl status sal-download` and `journalctl -u sal-download -f`.
+files older than 2 days are pruned (ExecStartPre; the old run.sh's prune never worked). Upgrade on purpose:
+`/srv/sal/downloader/venv/bin/python deploy/lock-downloader.py <version>`, re-check app/scraper_fixes.py (TESTED),
+reinstall; take 1.0.20 once upstream PR #216 (FTP 550 "file gone" no longer retried ~8.5 min per file, #215) ships.
+The unit runs `python -m app.download` (our runner; the PyPI package has no main.py) with `app/scraper_fixes.py`
+(2026-11-06), also used by the self-install's fetch():
+- the skip key: a file is skipped when its listing hash (name, URL, size) is in the status file, but Shufersal's Azure
+  links carry a signature + expiry that change every listing, so none of its files was ever skipped (~1,500 downloads
+  again a run; its minutes per run grew 28, 38, 43, 48, 52 with its status file). The hash now leaves out the query of
+  *.blob.core.windows.net links only; every other chain hashes exactly as before. Shufersal's older rows (signed
+  hashes) never match again: the first run with the fixes (Oracle, 2026-11-06 16:14) fetched its 1,710 listed files
+  once more, and the whole run took 13 min (5.6 min CPU; was ~61 min, 1h51 CPU). trim-status drops the old rows in 3 days.
+  The next run (18:17) took 7 min (2.6 min CPU). Shufersal fetched only its 217 files published since then.
+- status writes: each row read the chain's whole JSON and wrote it back twice (indent=4); `events`/`global_status`/
+  last-modified (never read) are no longer written, and the file is written compact via temp file + os.replace.
+- the log: INFO, without the per-file folder listing (76% of a run's lines).
+`deploy/trim-status.py` (ExecStartPre, installed to /srv/sal/code) stays as the safety net: keeps `verified_downloads`
+for 3 days, drops `events`/`global_status`, salvages rows from cut-off files, removes temp files a killed run left,
+rotates logging.log over 50 MB. Never drop Shufersal's `rewrote_same` rows: they now carry the hashes the skip needs.
+Tests: /srv/sal/downloader/venv/bin/python tests/test_scraper_fixes.py. Check with
+`systemctl status sal-download` and `journalctl -u sal-download -f` (a oneshot shows "activating" while it runs:
+`systemctl is-active` calls that inactive).
+Super-Pharm relay (2026-11-06, per user, after the move to the Oracle server): Super-Pharm's portal sits behind Link11,
+which answers the server's datacenter address with "Link11 access denied" (474/492) but a home line normally (it also
+answers 491 to ~40% of downloads from home, as before: retried next run). So omarchy (home) runs `sal-relay.timer`
+(every 3 h at :17, sandboxed like every sal-* unit): `python -m app.download` with SAL_CHAINS=SUPER_PHARM into
+/srv/sal/data/relay/dumps (own status, seeded from home's), then deploy/relay-push.sh rsyncs the new files to the
+server's /srv/sal/data/dumps/SuperPharm and deletes them here once all arrived. The server's indexer takes them like
+any chain's. Server side (deploy/relay-target.sh): account `salrelay`, its one key forced to
+`rrsync -wo -no-del <that folder>` (upload only: no reading back, no deletes, no shell; -no-del also refuses
+--remove-source-files, hence the push's own delete), reaching the folder by ACL (search-only on data/ and dumps/),
+files readable by sal through the folder's default ACL. Set up both ends from home: `./install-relay.sh <user@server>
+[ssh options]` (`deploy/install.sh relay` here: also the downloader venv; the target, key and the server's host key stay
+in /srv/sal/data/relay, never in the repo). The relay skips its runs while home's own sal-tunnel is active (after
+rollback.sh home fetches every chain itself). Undo: `sudo systemctl disable --now sal-relay.timer`; on the server
+`sudo userdel -r salrelay`. First run 16:48: 77 listed, 45 fetched and sent in 38 s. Tests: tests/test_relay.py (the push
+through a real rrsync with a stand-in ssh). `app.download`'s SAL_CHAINS drops chains the downloader has switched off for
+the hour (its stability rules), so asking for one can't fail the run.
+Files on the server are deleted once indexed: its sal-index ends with
+`find dumps -not -newer .index-start -delete` (/etc/systemd/system/sal-index.service.d/delete-indexed.conf, server
+only). That compares modification times, so a file copied in during a run with its old time is deleted before any run
+reads it. This happened on 2026-11-06 at 17:10 to 1,024 files that `rsync -a` copied from home. Hence the push has no
+-t. Any copy by hand: no -a/-t/-p (`rsync -r --chmod=F0640 --chown=sal:sal`). -p also resets a folder's mode, which
+narrows its ACL mask, so salrelay lost write access to SuperPharm; fix it with `setfacl -m u:salrelay:rwx`.
 
 ## File formats learned (from real samples in OpenIsraeliSupermarkets/israeli-supermarket-parsers/resources/xml)
 - Names: `PriceFull<chainid13>-<store>-<YYYYMMDDHHMM>.gz|.xml`, also `Stores…`, `PromoFull…`, `Price…`, `Promo…`;
@@ -104,8 +146,7 @@ Canonical copy: `omarchy:~/Projects/il-prices-app` (Tailscale host `omarchy`). U
 Git repo since 2026-11-05 (branch main), pushed to the PUBLIC GitHub repo rg1989/sal-kal (history scrubbed 2026-11-05: no home address, owner email, tailnet name or other home services; keep it that way, and never commit auth.json, keys or user data). Sessions run on omarchy itself: edit here, `./install-app.sh`
 (sudo, idempotent) copies app/ to /srv/sal/code and restarts `sal-web`; services run that copy, never this folder.
 Sandboxed (2026-11-05, per user: omarchy also runs other private home services, and Sal will face the internet): everything
-runs as system user `sal` from `/srv/sal` (own btrfs subvolume: python/, code/, venv/, downloader/, ms-playwright/
-root-owned; data/ = basket.db, user.db, photos/, hours.json, dumps/, the only writable place). System units in
+runs as system user `sal` from `/srv/sal` (own btrfs subvolume: python/, code/, venv/, downloader/ root-owned; data/ = basket.db, user.db, photos/, hours.json, dumps/, the only writable place). System units in
 deploy/systemd: `sal-web` (uvicorn on /run/sal/web.sock, socket-activated), `sal-lan` (port 8080 → the socket, for the
 LAN and `tailscale serve`), `sal-index.timer` (every 30 min: indexer, geo, deals), `sal-photos.timer`, `sal-download.timer`,
 `sal-tunnel` (Cloudflare, off until /etc/cloudflared/sal.yml exists: deploy/cloudflared-sal.yml.example).
