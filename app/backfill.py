@@ -1089,8 +1089,10 @@ def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=
         if os.path.exists(os.path.join(early, f"v{v}.json")) and not os.path.exists(os.path.join(parts, f"v{v}.json")):
             os.replace(os.path.join(early, f"v{v}.gz"), os.path.join(parts, f"v{v}.gz"))
             os.replace(os.path.join(early, f"v{v}.json"), os.path.join(parts, f"v{v}.json"))
-    if os.path.isdir(early):
-        shutil.rmtree(early)
+    for f in os.listdir(early) if os.path.isdir(early) else []:  # older ones wait for the next runs; newer are done with
+        base = f.split(".")[0]
+        if f.startswith(".") or not (base[1:].isdigit() and int(base[1:]) < min(vs or [0])):
+            os.remove(os.path.join(early, f))
     for v in vs:
         (fetcher or (lambda v_, p_: fetch_version(v_, p_)))(v, parts)
     ahead = None
