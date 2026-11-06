@@ -50,7 +50,7 @@ app)
   $S/venv/bin/pip install -q --disable-pip-version-check -r $S/code/requirements.txt
   $S/venv/bin/python -m compileall -q $S/code/app
   chown -R root:root $S/code $S/venv
-  systemctl enable -q --now sal-web.socket sal-lan.socket sal-index.timer sal-photos.timer
+  systemctl enable -q --now sal-web.socket sal-lan.socket sal-index.timer sal-photos.timer sal-backfill.timer
   systemctl enable -q sal-web.service
   systemctl restart sal-web.service  # re-running this deploys code changes
   ;;

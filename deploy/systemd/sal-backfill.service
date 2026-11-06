@@ -1,0 +1,19 @@
+[Unit]
+Description=Fill Sal's price history from the OpenIsraeliSupermarkets archive, a few days a run (app.backfill auto)
+
+[Service]
+Type=oneshot
+User=sal
+Group=sal
+WorkingDirectory=/srv/sal/code
+Environment=HOME=/srv/sal/data BASKET_DB=/srv/sal/data/basket.db BACKFILL_CACHE_MB=700 PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/sal/venv/bin/python -u -m app.backfill auto
+TimeoutStartSec=2h
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# the last in line on a shared machine: one core at most, idle disk time, never near the site's memory
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=100%
+MemoryMax=3G
