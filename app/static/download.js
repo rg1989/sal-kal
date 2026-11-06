@@ -19,7 +19,7 @@
 
   function setOs(os) {
     $$('.oses [data-os]').forEach(b => b.setAttribute('aria-checked', b.dataset.os === os));
-    $$('[data-panel]').forEach(p => { p.hidden = p.dataset.panel !== os; });
+    document.body.dataset.os = os;  // setup.css shows this computer's version in every slot
   }
   $$('.oses [data-os]').forEach(b => b.addEventListener('click', () => setOs(b.dataset.os)));
   const ua = navigator.userAgent, plat = navigator.userAgentData?.platform || navigator.platform || '';
