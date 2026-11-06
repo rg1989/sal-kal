@@ -122,17 +122,28 @@ live = dbmod.connect()
 src = backfill.source(live)
 assert src["weekly"] == [E[1], E[8]] and src["daily_from"] == E[9], src
 
-# ---------------------------------------------------------------- the gap filler, two blocks of 4 days
+# ---------------------------------------------------------------- the gap filler: a block of 4 days, then day by day
 AUTO = os.path.join(TMP, "auto-work")
 versions = lambda lo, hi: [1000 + d % 100 for d in E[1:12] if lo <= d <= hi]
-fetcher = lambda v, parts: fetch(20241200 + v - 1000, parts)
-run = lambda: backfill.auto(os.environ["BASKET_DB"], AUTO, days=4, start=E[1], versions=versions, fetcher=fetcher)
-assert run() == 4                      # E5..E8
+fetched = []
+fetcher = lambda v, parts: (os.path.exists(os.path.join(parts, f"v{v}.json")) or fetched.append(v)) and None or \
+    fetch(20241200 + v - 1000, parts, v=v)
+run = lambda days: backfill.auto(os.environ["BASKET_DB"], AUTO, days=days, start=E[1], versions=versions,
+                                 fetcher=fetcher)
+assert run(4) == 4                     # E5..E8
 live = dbmod.connect()
 src = backfill.source(live)
 assert src["daily_from"] == E[5] and src["weekly"] == [E[1], E[1]], src
-assert run() == 4                      # E1..E4
-assert run() == 0                      # every day is in
+parts = os.path.join(AUTO, "auto", "parts")
+assert os.listdir(parts) and not os.path.exists(os.path.join(AUTO, "auto", "stage.db"))  # downloads kept, stage gone
+for want in (E[4], E[3], E[2], E[1]):  # then one day a run, each live when its run ends
+    assert run(1) == 1
+    live = dbmod.connect()
+    assert backfill.source(live)["daily_from"] == want
+    kept = sorted(int(f[1:-5]) for f in os.listdir(parts) if f.endswith(".json")) if want > E[1] else []
+    assert all(1000 + want % 100 - 1 <= v <= 1000 + want % 100 + 2 for v in kept), (want, kept)  # only what's near
+assert run(1) == 0                     # every day is in
+assert len(fetched) == len(set(fetched)), fetched  # a version is downloaded once, however many runs use it
 live = dbmod.connect()
 src = backfill.source(live)
 assert src["daily_from"] == E[1] and src["weekly"] is None and src["history"][0] == E[1], src

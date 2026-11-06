@@ -1,9 +1,11 @@
 [Unit]
-Description=Add a few more archive days to Sal's price history every hour, until the archive's first day
+Description=Add the next older archive day to Sal's price history, one run after another, until the archive's first day
 
 [Timer]
-OnCalendar=*:40
-Persistent=true
+# a run adds one day (~15-20 min); the next starts a minute after it ends (and 2 min after boot)
+OnBootSec=2min
+OnActiveSec=1min
+OnUnitInactiveSec=1min
 
 [Install]
 WantedBy=timers.target

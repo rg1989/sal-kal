@@ -43,6 +43,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -1017,16 +1018,20 @@ def source(c):
 
 
 # ---------------------------------------------------------------- 5. auto: fill the skipped days, newest first
-# The sal-backfill timer runs `auto` every hour: each run takes the AUTO_DAYS days right before the first daily
-# archive day (settings backfill.daily_from), so daily coverage grows back from today in one unbroken stretch,
-# replacing the weekly samples there. Each run builds its days in a stage of its own (work/auto), starting one day
-# early so the first day's price changes can be dated, and stitches them into price_history so that every series
-# reads the same on each side: the day before the block keeps its value, the block's first day carries the full
-# state, and the day after it gets a row wherever the new chain ends on another value than the old one showed.
-# Price changes (price_moves) are added for the block and for the day after it (which now has a day before it).
-# Resumable (a stopped run finds its files in work/auto and goes on), and done once ARCHIVE_START is reached.
+# The sal-backfill timer runs `auto` again a minute after each run ends: each run takes the AUTO_DAYS day(s) right
+# before the first daily archive day (settings backfill.daily_from), so daily coverage grows back from today one day
+# at a time in one unbroken stretch, replacing the weekly samples there, and each day is live (history, and the Price
+# Watch's changes at its next build) as soon as its run ends. Each run builds its days in a stage of its own
+# (work/auto), starting one day early so the first day's price changes can be dated, and stitches them into
+# price_history so that every series reads the same on each side: the day before the block keeps its value, the
+# block's first day carries the full state, and the day after it gets a row wherever the new chain ends on another
+# value than the old one showed. Price changes (price_moves) are added for the block and for the day after it (which
+# now has a day before it). The downloaded versions the next run needs stay in work/auto/parts, and while a run
+# builds, the next run's versions are downloaded beside it (PREFETCH, a process of its own): a run then costs about
+# its build. Resumable (a stopped run finds its files in work/auto and goes on); done once ARCHIVE_START is reached.
 ARCHIVE_START = 20241022   # the archive's first version with every chain (FIRST_VERSION)
-AUTO_DAYS = 4              # days a run adds (about 50 minutes on one core of the server)
+AUTO_DAYS = 1              # days a run adds (~15-20 minutes each on one core of the server)
+PREFETCH = 2               # older versions downloaded during a run, for the next one
 
 
 def versions_for(lo, hi, cache):
@@ -1065,20 +1070,62 @@ def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=
         return 0
     B, A = hi_day, max(start, next_day(hi_day, -days))
     run = os.path.join(work, "auto")
+    parts = os.path.join(run, "parts")
     target = os.path.join(run, "target.json")
-    if os.path.exists(target) and json.load(open(target)) != [A, B]:
-        shutil.rmtree(run)
-    os.makedirs(os.path.join(run, "parts"), exist_ok=True)
-    with open(target, "w") as f:
-        json.dump([A, B], f)
     cache_path = os.path.join(work, "versions.json")
     cache = json.load(open(cache_path)) if os.path.exists(cache_path) else {}
     vs = versions(next_day(A, -1), next_day(B, 1)) if versions else versions_for(next_day(A, -1), next_day(B, 1), cache)
+    os.makedirs(work, exist_ok=True)
     with open(cache_path, "w") as f:
         json.dump(cache, f)
+    if not os.path.exists(target) or json.load(open(target)) != [A, B]:
+        _clear_run(run, keep=set(vs))  # another block's stage: gone; of its downloads, the ones this block needs stay
+    os.makedirs(parts, exist_ok=True)
+    with open(target, "w") as f:
+        json.dump([A, B], f)
     log.info("auto: %d..%d from %d versions", A, B, len(vs))
+    early = os.path.join(work, "auto-ahead")  # downloaded during the last run, kept apart so its build never saw them
     for v in vs:
-        (fetcher or (lambda v_, p_: fetch_version(v_, p_)))(v, os.path.join(run, "parts"))
+        if os.path.exists(os.path.join(early, f"v{v}.json")) and not os.path.exists(os.path.join(parts, f"v{v}.json")):
+            os.replace(os.path.join(early, f"v{v}.gz"), os.path.join(parts, f"v{v}.gz"))
+            os.replace(os.path.join(early, f"v{v}.json"), os.path.join(parts, f"v{v}.json"))
+    if os.path.isdir(early):
+        shutil.rmtree(early)
+    for v in vs:
+        (fetcher or (lambda v_, p_: fetch_version(v_, p_)))(v, parts)
+    ahead = None
+    if fetcher is None and vs and A > start:  # the next run's older versions, downloaded while this one builds
+        nxt = [v for v in range(min(vs) - 1, min(vs) - 1 - PREFETCH, -1) if v >= FIRST_VERSION]
+        if nxt:
+            ahead = subprocess.Popen([sys.executable, "-m", "app.backfill", "prefetch", "--work", early,
+                                      "--versions", ",".join(map(str, nxt))],
+                                     cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        return _auto_block(live, path, run, A, B, start)
+    finally:
+        if ahead:
+            try:
+                ahead.wait(timeout=1800)
+            except subprocess.TimeoutExpired:
+                ahead.kill()
+
+
+def _clear_run(run, keep):
+    """A finished or abandoned block's stage goes; of its downloads only the versions in `keep` stay."""
+    if not os.path.isdir(run):
+        return
+    parts = os.path.join(run, "parts")
+    for f in os.listdir(run):
+        p = os.path.join(run, f)
+        if p != parts:
+            shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+    for f in os.listdir(parts) if os.path.isdir(parts) else []:
+        base = f.split(".")[0] if not f.startswith(".") else ""
+        if not (base.startswith("v") and base[1:].isdigit() and int(base[1:]) in keep):
+            os.remove(os.path.join(parts, f))
+
+
+def _auto_block(live, path, run, A, B, start):
     s = stage(run)
     snap = """CREATE TABLE IF NOT EXISTS {t} AS SELECT h.key, h.chain_id, h.mn, h.mx,
                 (SELECT o.n FROM out_h o WHERE o.key=h.key AND o.chain_id=h.chain_id AND o.day <= ? AND o.mn IS NOT NULL
@@ -1101,7 +1148,10 @@ def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=
     else:
         log.info("auto: the indexer kept its lock; applying next time (the built days are kept)")
         return 0
-    shutil.rmtree(run)
+    if A <= start:
+        shutil.rmtree(run)
+    else:  # the stage goes; the downloads stay for the next block (one day older), which keeps the ones it needs
+        _clear_run(run, keep={m["version"] for m in metas(run)})
     return (_date(B) - _date(A)).days
 
 
@@ -1189,7 +1239,7 @@ def status(work):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("step", choices=("fetch", "build", "apply", "remove", "status", "auto"))
+    ap.add_argument("step", choices=("fetch", "build", "apply", "remove", "status", "auto", "prefetch"))
     ap.add_argument("--work", default=None, help="folder for downloads and stage.db (default <data>/backfill)")
     ap.add_argument("--db", default=None, help="the live DB (default $BASKET_DB)")
     ap.add_argument("--from", dest="first", type=int, default=FIRST_VERSION, help="first Kaggle version")
@@ -1201,6 +1251,7 @@ def main():
     ap.add_argument("--weeks", type=int, default=52, help="fetch --weekly-from: how many")
     ap.add_argument("--newest-first", action="store_true", help="fetch --weekly-from: from the newest end")
     ap.add_argument("--no-moves", action="store_true", help="apply: history only, no branch price changes")
+    ap.add_argument("--versions", default="", help="prefetch: versions to download into --work (comma-separated)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
     work = work_dir(a.work)
@@ -1215,6 +1266,9 @@ def main():
         print(json.dumps(apply(work, a.db, moves=not a.no_moves)))
     elif a.step == "auto":
         auto(a.db, a.work)
+    elif a.step == "prefetch":  # auto's next versions, downloaded beside its build (straight into --work)
+        for v in (int(x) for x in a.versions.split(",") if x):
+            fetch_version(v, work)
     elif a.step == "remove":
         print(remove(a.db))
     else:

@@ -32,10 +32,11 @@ Price history and price changes from before Sal-Kal recorded them (weekly from O
 CC BY-NC-SA 3.0 IGO), loaded with `python -m app.backfill` under the same rules; the charts and the Price Board
 that show them name the source.
 
-On the server, `sal-backfill.timer` runs `python -m app.backfill auto` every hour (as `sal`, nice 19, one core,
-3 GB at most): each run adds the 4 days right before the first daily archive day, so daily coverage grows back
-from today until the archive's first day (22 Oct 2024), replacing the weekly samples, and the price changes of
-those days reach the Price Board. Check it with `systemctl list-timers sal-backfill.timer` and
+On the server, `sal-backfill.timer` runs `python -m app.backfill auto` again a minute after each run ends (as
+`sal`, nice 19, two processes at most, 3 GB at most): each run adds the one day right before the first daily archive
+day, and downloads the next older days while it builds, so daily coverage grows back from today one day at a time
+until the archive's first day (22 Oct 2024), replacing the weekly samples; each day's price changes reach the Price
+Watch at its next build. Check it with `systemctl list-timers sal-backfill.timer` and
 `journalctl -u sal-backfill` (each run logs the days it added); how far it is: `sudo -u sal sqlite3
 /srv/sal/data/user.db "select value from settings where key='backfill'"` (`daily_from`). Stop it with
 `sudo systemctl disable --now sal-backfill.timer`; take every archive row out again with

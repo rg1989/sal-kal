@@ -1,5 +1,5 @@
 [Unit]
-Description=Fill Sal's price history from the OpenIsraeliSupermarkets archive, a few days a run (app.backfill auto)
+Description=Fill Sal's price history from the OpenIsraeliSupermarkets archive, one day a run (app.backfill auto)
 
 [Service]
 Type=oneshot
@@ -12,8 +12,9 @@ TimeoutStartSec=2h
 MemoryDenyWriteExecute=yes
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-# the last in line on a shared machine: one core at most, idle disk time, never near the site's memory
+# the last in line on a shared machine: nice 19 (the site and the indexer always come first), idle disk time,
+# two processes at most (a day's build + the next day's download beside it), never near the site's memory
 Nice=19
 IOSchedulingClass=idle
-CPUQuota=100%
+CPUQuota=200%
 MemoryMax=3G

@@ -534,10 +534,13 @@ on Kaggle (erlichsefi/israeli-supermarkets-2024, a version per day from 2024-10-
 3.0 IGO: credit + not for profit + share alike) under the live rules (fetch → build in its own stage.db → apply under
 the indexer's lock; never a row the indexer wrote). Live: weekly samples from 2025-10-30 (history-chart points only:
 a week apart can't date a change) and daily from 2026-10-29 (history + the Price Watch's store-level changes).
-`sal-backfill.timer` (Oracle, :40 hourly, as sal, Nice 19, idle IO, one core, MemoryMax 3G) runs `app.backfill auto`:
-each run adds the AUTO_DAYS (4) days right before settings backfill.daily_from, newest first, so daily coverage
-grows back from today without a gap, replacing weekly samples, until ARCHIVE_START (2024-10-22): about 8 days from
-2026-11-06. Pages credit the archive's range from backfill.source() (charts, Price Watch, README). Check:
+`sal-backfill.timer` (Oracle, the next run a minute after each ends, as sal, Nice 19, idle IO, CPUQuota 200%,
+MemoryMax 3G) runs `app.backfill auto`: each run adds AUTO_DAYS (1, per user 2026-11-06: one day at a time, each live
+as its run ends) right before settings backfill.daily_from, newest first, so daily coverage grows back from today
+without a gap, replacing weekly samples, until ARCHIVE_START (2024-10-22). A run builds 3 days (the warm-up day, the
+new day, the day after it, ~6 min each) and meanwhile a `prefetch` process downloads the next PREFETCH (2) older
+versions into work/auto-ahead; work/auto/parts keeps the versions the next run needs, so each version is downloaded
+once. ~20 min a day: about 70 days of daily history a day. Pages credit the archive's range from backfill.source() (charts, Price Watch, README). Check:
 `systemctl list-timers sal-backfill.timer`, `journalctl -u sal-backfill`, progress `sudo -u sal sqlite3
 /srv/sal/data/user.db "select value from settings where key='backfill'"`. Stop: `sudo systemctl disable --now
 sal-backfill.timer`; take every archive row out: `... -m app.backfill remove`. Tests: tests/test_backfill.py,
