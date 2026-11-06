@@ -456,7 +456,6 @@ a.brand { color: inherit; text-decoration: none; }
 .add .plus { width: 20px; height: 20px; flex: none; }             /* a big, crisp + ... */
 .add[data-qty] .plus { width: 14px; height: 14px; margin-inline-end: 1px; }
 .add .n { font-size: 17px; }                                       /* ... and the number at its usual size */
-.add:hover { opacity: .88; }
 .qty-ctl { display: inline-flex; align-items: center; background: var(--accent); color: var(--tag-ink); border-radius: 999px; }
 .qty-ctl button { width: 30px; height: 30px; border: 0; background: none; color: inherit; font-size: 17px; border-radius: 50%; }
 .qty-ctl .num { min-width: 28px; text-align: center; font-size: 16px; font-weight: 700; }
@@ -1144,6 +1143,22 @@ body[data-view="basket"] .map-go { display: none; }
 /* ================================================================ feel: press, motion, loaders */
 button, a, .pill, .cat, .card, .sso, .lc-store { -webkit-tap-highlight-color: transparent; }
 button, .pill, .cat, .lc-store, .sso, .add, .acc-row { transition: transform .12s ease, background-color .15s, border-color .15s, box-shadow .15s, opacity .15s; }
+/* Add (a card's round +): under the pointer it turns yellow, grows a little with a spring, the + makes a quarter turn
+   and a soft yellow glow breathes around it; a press squeezes it. Keyboard focus gets the same. */
+.add { transition: transform .28s cubic-bezier(.34, 1.56, .64, 1), background-color .18s, color .18s, box-shadow .25s; }
+.add .plus { transition: transform .4s cubic-bezier(.34, 1.56, .64, 1); }
+@media (hover: hover) {
+  .add:hover, .add:focus-visible {
+    background: var(--tag); color: var(--tag-ink); transform: scale(1.12);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tag) 35%, transparent), 0 4px 16px -2px color-mix(in srgb, var(--tag) 70%, transparent);
+    animation: add-glow 1.6s ease-in-out .3s infinite;
+  }
+  .add:hover .plus, .add:focus-visible .plus { transform: rotate(90deg); }
+  .add:active:not(:disabled) { transform: scale(.94); transition-duration: .08s; }
+}
+@keyframes add-glow {
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--tag) 22%, transparent), 0 4px 22px 2px color-mix(in srgb, var(--tag) 60%, transparent); }
+}
 @media (hover: none) {
   button:active:not(:disabled), .pill:active, .cat:active, .lc-store:active, .sso:active, .acc-row:active { transform: scale(.965); }
   .card:active { transform: scale(.985); transition: transform .12s; }
