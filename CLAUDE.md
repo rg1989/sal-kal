@@ -509,7 +509,7 @@ online/app listings by chains.walk_in) in every count, price and change; a chang
 store-level price_moves (trigger `prices_moved` -> price_moves_raw -> collect(), confirmed as before) and, exact per
 branch from branch_moves_since on, branch_moves (+ ledger branch_moves_st); older days count stores minus the chain's
 online/Eilat stores and say "at least X"; "of Y" = branches that listed it from that day on; a chain's level = its
-median branch price vs the middle chain's, products at 3+ chains, in words ("11% cheaper than the middle chain");
+median branch price vs the median of the chains' prices (called "the typical price", per user 2026-11-06: "middle chain" meant nothing to readers), products at 3+ chains, in words ("11% below the typical price" / "זולה ב־11% מהמחיר המקובל"); long lists (a chain's biggest changes, every chain, a product at every chain) open in prices.js openModal, never unfold into the page;
 no price lines from price_history (it moves when branches' files go stale). /prices/2..N and /prices/changes 301 to
 /prices; the sitemap is / and /prices.
 Light for visitors, in depth signed in (per user: "cool visuals but not in-depth" without an account, hints so
