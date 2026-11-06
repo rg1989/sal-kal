@@ -113,8 +113,9 @@ def read_csv(text):
         return
     ix = {h: i for i, h in enumerate(head)}
     need = ("file_name", "itemcode", "itemprice")
-    if any(n not in ix for n in need):
-        raise ValueError(f"not a price CSV: {head[:12]}")
+    if any(n not in ix for n in need):  # e.g. a chain with no files that day: only a header, and not this one
+        log.warning("skipped a CSV without %s: %s", "/".join(n for n in need if n not in ix), head[:8])
+        return
     i_fn, i_code, i_price = ix["file_name"], ix["itemcode"], ix["itemprice"]
     i_name = ix.get("itemname", ix.get("itemnm"))
     i_w = ix.get("bisweighted", ix.get("blsweighted"))

@@ -60,6 +60,7 @@ assert rows[1] == (SOAP, "5.00", NAMES[SOAP], False), rows   # the price came fr
 assert rows[2] == (ODDP, "7.90", "", False), rows            # '' = really no name, not the row above's
 assert rows[3][3] is True                                    # weighed
 assert got[1][1] == [(MILK, "5.00", NAMES[MILK], False)]     # each file starts whole again
+assert list(backfill.read_csv(io.StringIO("itemcode,found_folder,file_name,chainid\n", newline=""))) == []  # header only
 red = backfill.reduce_file(*got[0])
 assert red[:3] == (A, 1, 202501010010) and set(red[3]) == {MILK, SOAP, ODDP}, red  # the chain's own code is dropped
 assert backfill.reduce_file("Promo7290058140886-001-202501010010.xml", rows) is None
