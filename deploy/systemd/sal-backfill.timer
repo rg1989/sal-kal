@@ -1,0 +1,9 @@
+[Unit]
+Description=Add a few more archive days to Sal's price history every hour, until the archive's first day
+
+[Timer]
+OnCalendar=*:40
+Persistent=true
+
+[Install]
+WantedBy=timers.target

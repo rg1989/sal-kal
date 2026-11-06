@@ -41,6 +41,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -785,15 +786,15 @@ def build_day(s, rules, day, blocks, names, at=None, moves_on=True, bridge_from=
     return len(fresh), len(hist), len(ended), len(moves)
 
 
-def build(work, live_path=None, until=None):
+def build(work, live_path=None, until=None, force=False):
     """Replay every fetched day not built yet, in order (a day with nothing fetched still ends or holds series)."""
     s = stage(work)
     live = sqlite3.connect(f"file:{os.path.abspath(live_path or dbmod.DB_PATH)}?mode=ro", uri=True, timeout=60)
     rules = Rules(live)
     ms = metas(work)
     stop = ready_until(ms)
-    if until:
-        stop = min(stop, until) if stop else until
+    if until:  # force: build to `until` even though no later version exists (the archive has none for that day)
+        stop = until if force or not stop else min(stop, until)
     if not stop:
         log.info("build: nothing fetched yet")
         return 0
@@ -931,6 +932,9 @@ def apply(work, db_path=None, wait=1800, moves=True):
 
 def _apply(c, work, moves=True):
     t0 = time.time()
+    if json.loads(get_setting(c, "backfill") or "{}").get("auto"):
+        raise SystemExit("the gap filler (auto) has added days since: applying this stage would take them out. "
+                         "Run remove first to start over.")
     h_since, m_since = live_bounds(c)
     c.execute("ATTACH DATABASE ? AS bf", (os.path.join(work, "stage.db"),))
     with c:
@@ -962,6 +966,8 @@ def _apply(c, work, moves=True):
             if wf else hf
         put_setting(c, "backfill", json.dumps({**SOURCE, "history": [hf, ht], "moves": [mf, mt],
                                                "weekly": [wf, wl] if wf else None, "daily_from": daily_from,
+                                               "samples": [r[0] for r in c.execute("SELECT day FROM bf.samples ORDER BY day")]
+                                               if wf else None,
                                                "until": h_since, "applied": int(time.time()),
                                                "rows": h + e, "moves_rows": m}))
     c.execute("DETACH DATABASE bf")
@@ -1010,6 +1016,164 @@ def source(c):
     return out
 
 
+# ---------------------------------------------------------------- 5. auto: fill the skipped days, newest first
+# The sal-backfill timer runs `auto` every hour: each run takes the AUTO_DAYS days right before the first daily
+# archive day (settings backfill.daily_from), so daily coverage grows back from today in one unbroken stretch,
+# replacing the weekly samples there. Each run builds its days in a stage of its own (work/auto), starting one day
+# early so the first day's price changes can be dated, and stitches them into price_history so that every series
+# reads the same on each side: the day before the block keeps its value, the block's first day carries the full
+# state, and the day after it gets a row wherever the new chain ends on another value than the old one showed.
+# Price changes (price_moves) are added for the block and for the day after it (which now has a day before it).
+# Resumable (a stopped run finds its files in work/auto and goes on), and done once ARCHIVE_START is reached.
+ARCHIVE_START = 20241022   # the archive's first version with every chain (FIRST_VERSION)
+AUTO_DAYS = 4              # days a run adds (about 50 minutes on one core of the server)
+
+
+def versions_for(lo, hi, cache):
+    """The versions published from day lo to day hi."""
+    v_ref = current_version()
+    d_ref = version_day(v_ref, cache)
+    v = min(v_ref, v_ref - (_date(d_ref) - _date(hi)).days + 10)
+    out, misses = [], 0
+    while v > 0 and misses < 40:
+        d = version_day(v, cache)
+        v -= 1
+        if d is None:
+            misses += 1
+        elif d < lo:
+            break
+        elif d <= hi:
+            out.append(v + 1)
+    return sorted(out)
+
+
+def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=None, fetcher=None):
+    """One run of the gap filler. versions(lo, hi) and fetcher(v, parts) are for tests (default: Kaggle).
+    Returns the days added (0 when there is nothing to do)."""
+    path = os.path.abspath(db_path or dbmod.DB_PATH)
+    work = work_dir(work)
+    live = dbmod.connect(path)
+    live.row_factory = None
+    b = get_setting(live, "backfill")
+    if not b:
+        log.info("auto: nothing backfilled yet (run fetch/build/apply first)")
+        return 0
+    b = json.loads(b)
+    hi_day = b.get("daily_from") or (b.get("history") or [None])[0]
+    if not hi_day or hi_day <= start:
+        log.info("auto: every day back to %d is in", start)
+        return 0
+    B, A = hi_day, max(start, next_day(hi_day, -days))
+    run = os.path.join(work, "auto")
+    target = os.path.join(run, "target.json")
+    if os.path.exists(target) and json.load(open(target)) != [A, B]:
+        shutil.rmtree(run)
+    os.makedirs(os.path.join(run, "parts"), exist_ok=True)
+    with open(target, "w") as f:
+        json.dump([A, B], f)
+    cache_path = os.path.join(work, "versions.json")
+    cache = json.load(open(cache_path)) if os.path.exists(cache_path) else {}
+    vs = versions(next_day(A, -1), next_day(B, 1)) if versions else versions_for(next_day(A, -1), next_day(B, 1), cache)
+    with open(cache_path, "w") as f:
+        json.dump(cache, f)
+    log.info("auto: %d..%d from %d versions", A, B, len(vs))
+    for v in vs:
+        (fetcher or (lambda v_, p_: fetch_version(v_, p_)))(v, os.path.join(run, "parts"))
+    s = stage(run)
+    snap = """CREATE TABLE IF NOT EXISTS {t} AS SELECT h.key, h.chain_id, h.mn, h.mx,
+                (SELECT o.n FROM out_h o WHERE o.key=h.key AND o.chain_id=h.chain_id AND o.day <= ? AND o.mn IS NOT NULL
+                 ORDER BY o.day DESC LIMIT 1) n FROM hl h"""
+    for until, table in ((A, "state_a"), (next_day(B, -1), "state_b"), (B, None)):
+        build(run, path, until=until, force=True)
+        if table:
+            s.execute(snap.format(t=table), (until,))
+            s.commit()
+    if s.execute("SELECT max(day) FROM done").fetchone()[0] != B:
+        raise RuntimeError(f"auto: the build stopped before {B}")
+    s.close()
+    _prepare_block(live, A, B)  # reads only days the indexer never writes again: outside its lock
+    for _ in range(60):
+        with indexer.run_lock(path) as ok:
+            if ok:
+                _apply_block(live, run, A, B)
+                break
+        time.sleep(30)
+    else:
+        log.info("auto: the indexer kept its lock; applying next time (the built days are kept)")
+        return 0
+    shutil.rmtree(run)
+    return (_date(B) - _date(A)).days
+
+
+def _prepare_block(c, A, B):
+    """What each series showed entering the block (bef) and on the day after it (aft, atb: the pairs with a row
+    that day), into temp tables of this connection."""
+    last_row = """CREATE TEMP TABLE {t} AS SELECT key, chain_id, mn, mx, n FROM (SELECT key, chain_id, mn, mx, n,
+                  row_number() OVER (PARTITION BY key, chain_id ORDER BY day DESC) r FROM price_history WHERE day {op} ?)
+                  WHERE r = 1"""
+    for t in ("bef", "aft", "atb"):
+        c.execute(f"DROP TABLE IF EXISTS temp.{t}")
+    c.execute(last_row.format(t="bef", op="<"), (A,))
+    c.execute(last_row.format(t="aft", op="<="), (B,))
+    c.execute("CREATE TEMP TABLE atb AS SELECT key, chain_id FROM price_history WHERE day = ?", (B,))
+    c.commit()
+
+
+def _apply_block(c, run, A, B):
+    t0 = time.time()
+    h_since, m_since = live_bounds(c)
+    c.executescript(PRICE_MOVES)
+    c.execute("ATTACH DATABASE ? AS bf", (os.path.join(run, "stage.db"),))
+    with c:
+        gone = c.execute("DELETE FROM price_history WHERE day >= ? AND day < ?", (A, B)).rowcount
+        n = c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
+                         SELECT a.key, a.chain_id, ?, a.mn, a.mx, coalesce(a.n, 0) FROM bf.state_a a
+                         LEFT JOIN bef b ON b.key=a.key AND b.chain_id=a.chain_id
+                         WHERE b.mn IS NULL OR abs(b.mn - a.mn) >= 0.005 OR abs(b.mx - a.mx) >= 0.005""", (A,)).rowcount
+        n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
+                          SELECT b.key, b.chain_id, ?, NULL, NULL, 0 FROM bef b WHERE b.mn IS NOT NULL AND NOT EXISTS
+                          (SELECT 1 FROM bf.state_a a WHERE a.key=b.key AND a.chain_id=b.chain_id)""", (A,)).rowcount
+        n += c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
+                          SELECT key, chain_id, day, mn, mx, n FROM bf.out_h WHERE day > ? AND day < ?""",
+                       (A, B)).rowcount
+        # the day after the block: a row wherever the old chain showed another value there than the new one ends on
+        n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
+                          SELECT f.key, f.chain_id, ?, f.mn, f.mx, f.n FROM aft f
+                          LEFT JOIN bf.state_b s ON s.key=f.key AND s.chain_id=f.chain_id
+                          WHERE f.mn IS NOT NULL AND NOT EXISTS (SELECT 1 FROM atb t WHERE t.key=f.key AND t.chain_id=f.chain_id)
+                            AND (s.key IS NULL OR abs(s.mn - f.mn) >= 0.005 OR abs(s.mx - f.mx) >= 0.005)""",
+                       (B,)).rowcount
+        n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
+                          SELECT s.key, s.chain_id, ?, NULL, NULL, 0 FROM bf.state_b s
+                          LEFT JOIN aft f ON f.key=s.key AND f.chain_id=s.chain_id
+                          WHERE f.mn IS NULL AND NOT EXISTS (SELECT 1 FROM atb t WHERE t.key=s.key AND t.chain_id=s.chain_id)""",
+                       (B,)).rowcount
+        m = c.execute("""INSERT OR IGNORE INTO price_moves(key, chain_id, day, was, now, stores, ts)
+                         SELECT key, chain_id, day, was, now, stores, ts FROM bf.out_m
+                         WHERE day >= ? AND day <= ? AND day < ?""", (A, B, m_since)).rowcount
+        mf, mt = c.execute("SELECT min(day), max(day) FROM bf.out_m WHERE day >= ? AND day <= ? AND day < ?",
+                           (A, B, m_since)).fetchone()
+        d = json.loads(get_setting(c, "backfill"))
+        d["daily_from"] = A
+        d["history"] = [min(x for x in ((d.get("history") or [A])[0], A) if x), (d.get("history") or [None, B])[1]]
+        if mf:
+            old = d.get("moves") or [None, None]
+            d["moves"] = [min(x for x in (old[0], mf) if x), max(x for x in (old[1], mt) if x)]
+            put_setting(c, "moves_since", str(min(int(get_setting(c, "moves_since") or mf), mf)))
+        w = d.get("weekly")
+        if w:  # the weekly part now ends at its last sample before the block
+            samples = [x for x in (d.get("samples") or w) if x < A]
+            d["weekly"] = [w[0], max(samples)] if samples and w[0] < A else None
+            if d.get("samples"):
+                d["samples"] = samples
+        d["auto"] = {"runs": (d.get("auto") or {}).get("runs", 0) + 1, "last": int(time.time())}
+        put_setting(c, "backfill", json.dumps(d))
+        put_setting(c, "history_since", str(min(int(get_setting(c, "history_since") or A), A)))
+    c.execute("DETACH DATABASE bf")
+    log.info("auto: %d..%d in: %d weekly rows replaced by %d, %d price changes (%.0fs)", A, B, gone, n, m,
+             time.time() - t0)
+
+
 def status(work):
     ms = metas(work)
     out = {"versions": len(ms), "first": ms[0]["version"] if ms else None, "last": ms[-1]["version"] if ms else None,
@@ -1025,7 +1189,7 @@ def status(work):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("step", choices=("fetch", "build", "apply", "remove", "status"))
+    ap.add_argument("step", choices=("fetch", "build", "apply", "remove", "status", "auto"))
     ap.add_argument("--work", default=None, help="folder for downloads and stage.db (default <data>/backfill)")
     ap.add_argument("--db", default=None, help="the live DB (default $BASKET_DB)")
     ap.add_argument("--from", dest="first", type=int, default=FIRST_VERSION, help="first Kaggle version")
@@ -1049,6 +1213,8 @@ def main():
         build(work, a.db, a.until)
     elif a.step == "apply":
         print(json.dumps(apply(work, a.db, moves=not a.no_moves)))
+    elif a.step == "auto":
+        auto(a.db, a.work)
     elif a.step == "remove":
         print(remove(a.db))
     else:

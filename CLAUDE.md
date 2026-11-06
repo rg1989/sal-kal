@@ -528,3 +528,18 @@ row, the search box: typing shows the sign-in with the word over veiled rows) op
 min, once, before the first-run setup. Veils are shapes, never made-up numbers beside a chain's name. Built only
 from the public price layer, never user data. A deploy that changes prices.* shows after the next build (run one by
 hand). Tests: tests/test_board.py.
+Archive history (2026-11-06, per user: trends from before Sal-Kal started, weekly for a year now, every day later on
+its own): `app/backfill.py` loads the chains' own past price files from Sefi Erlich's OpenIsraeliSupermarkets archive
+on Kaggle (erlichsefi/israeli-supermarkets-2024, a version per day from 2024-10-22, public, no account; CC BY-NC-SA
+3.0 IGO: credit + not for profit + share alike) under the live rules (fetch → build in its own stage.db → apply under
+the indexer's lock; never a row the indexer wrote). Live: weekly samples from 2025-10-30 (history-chart points only:
+a week apart can't date a change) and daily from 2026-10-29 (history + the Price Watch's store-level changes).
+`sal-backfill.timer` (Oracle, :40 hourly, as sal, Nice 19, idle IO, one core, MemoryMax 3G) runs `app.backfill auto`:
+each run adds the AUTO_DAYS (4) days right before settings backfill.daily_from, newest first, so daily coverage
+grows back from today without a gap, replacing weekly samples, until ARCHIVE_START (2024-10-22): about 8 days from
+2026-11-06. Pages credit the archive's range from backfill.source() (charts, Price Watch, README). Check:
+`systemctl list-timers sal-backfill.timer`, `journalctl -u sal-backfill`, progress `sudo -u sal sqlite3
+/srv/sal/data/user.db "select value from settings where key='backfill'"`. Stop: `sudo systemctl disable --now
+sal-backfill.timer`; take every archive row out: `... -m app.backfill remove`. Tests: tests/test_backfill.py,
+tests/test_backfill_auto.py. Credit for the downloader too: README and landing name Sefi Erlich and say we run it
+with app/scraper_fixes.py.
