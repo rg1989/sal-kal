@@ -1091,13 +1091,32 @@ def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=
     if s.execute("SELECT max(day) FROM done").fetchone()[0] != B:
         raise RuntimeError(f"auto: the build stopped before {B}")
     s.close()
-    with indexer.run_lock(path) as ok:
-        if not ok:
-            log.info("auto: the indexer is running; applying next time (the built days are kept)")
-            return 0
-        _apply_block(live, run, A, B)
+    _prepare_block(live, A, B)  # reads only days the indexer never writes again: outside its lock
+    for _ in range(60):
+        with indexer.run_lock(path) as ok:
+            if ok:
+                _apply_block(live, run, A, B)
+                break
+        time.sleep(30)
+    else:
+        log.info("auto: the indexer kept its lock; applying next time (the built days are kept)")
+        return 0
     shutil.rmtree(run)
     return (_date(B) - _date(A)).days
+
+
+def _prepare_block(c, A, B):
+    """What each series showed entering the block (bef) and on the day after it (aft, atb: the pairs with a row
+    that day), into temp tables of this connection."""
+    last_row = """CREATE TEMP TABLE {t} AS SELECT key, chain_id, mn, mx, n FROM (SELECT key, chain_id, mn, mx, n,
+                  row_number() OVER (PARTITION BY key, chain_id ORDER BY day DESC) r FROM price_history WHERE day {op} ?)
+                  WHERE r = 1"""
+    for t in ("bef", "aft", "atb"):
+        c.execute(f"DROP TABLE IF EXISTS temp.{t}")
+    c.execute(last_row.format(t="bef", op="<"), (A,))
+    c.execute(last_row.format(t="aft", op="<="), (B,))
+    c.execute("CREATE TEMP TABLE atb AS SELECT key, chain_id FROM price_history WHERE day = ?", (B,))
+    c.commit()
 
 
 def _apply_block(c, run, A, B):
@@ -1105,15 +1124,7 @@ def _apply_block(c, run, A, B):
     h_since, m_since = live_bounds(c)
     c.executescript(PRICE_MOVES)
     c.execute("ATTACH DATABASE ? AS bf", (os.path.join(run, "stage.db"),))
-    last_row = """CREATE TEMP TABLE {t} AS SELECT key, chain_id, mn, mx, n FROM (SELECT key, chain_id, mn, mx, n,
-                  row_number() OVER (PARTITION BY key, chain_id ORDER BY day DESC) r FROM price_history WHERE day {op} ?)
-                  WHERE r = 1"""
     with c:
-        for t in ("bef", "aft", "atb"):
-            c.execute(f"DROP TABLE IF EXISTS temp.{t}")
-        c.execute(last_row.format(t="bef", op="<"), (A,))          # what each series showed entering the block
-        c.execute(last_row.format(t="aft", op="<="), (B,))         # ... and on the day after it
-        c.execute("CREATE TEMP TABLE atb AS SELECT key, chain_id FROM price_history WHERE day = ?", (B,))
         gone = c.execute("DELETE FROM price_history WHERE day >= ? AND day < ?", (A, B)).rowcount
         n = c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
                          SELECT a.key, a.chain_id, ?, a.mn, a.mx, coalesce(a.n, 0) FROM bf.state_a a
