@@ -15,8 +15,8 @@ repository under the [MIT license](LICENSE).
 Section 30 of Israel's [Promotion of Competition in the Food and Pharm Sectors Law, 5774–2014](https://he.wikisource.org/wiki/חוק_קידום_התחרות_בענפי_המזון_והפארם)
 requires every large food retailer to publish online the current price of every product, separately for each store,
 updated through the day (the Price Transparency Regulations, 5775–2014). Anyone may use that data. Sal-Kal downloads
-the files with the open-source [israeli-supermarket-scarpers](https://github.com/OpenIsraeliSupermarkets/israeli-supermarket-scarpers),
-indexes them, and counts a price only when it can be confirmed:
+the files with Sefi Erlich's [israeli-supermarket-scarpers](https://github.com/OpenIsraeliSupermarkets/israeli-supermarket-scarpers)
+(free for non-commercial use, with credit), indexes them, and counts a price only when it can be confirmed:
 - the store's file is current (under 26 hours old);
 - it's the same product: a valid manufacturer barcode, named consistently across chains;
 - the price is within a sane range of the same product elsewhere;
@@ -24,6 +24,10 @@ indexes them, and counts a price only when it can be confirmed:
 
 Anything else is shown greyed out, with the reason, and never counted. Stores missing items show "N of M" with no
 estimate. The price files don't bind the till price; the shelf tag does.
+
+Price history from before Sal-Kal recorded it (back to October 2024) can be loaded with `python -m app.backfill`
+from Sefi Erlich's daily archive of the same files ([OpenIsraeliSupermarkets on Kaggle](https://www.kaggle.com/datasets/erlichsefi/israeli-supermarkets-2024),
+CC BY-NC-SA 3.0 IGO), under the same rules; charts that show it name the source.
 
 ## Features
 - **Carts** you name and keep (weekly shop, Shabbat…), switchable from a cart that follows you on every page.

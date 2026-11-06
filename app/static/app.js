@@ -1454,7 +1454,16 @@ async function productHistory(key, names) {
   const days = new Set(series.flatMap(sr => sr.points.map(p => p[0])));
   el.innerHTML = !series.length ? '' : `<h2 class="p-h">${t('Price history')}</h2>` + (days.size < 2 && (hist.since || 0) >= todayNum()
     ? `<p class="trend-note">${t('Tracking since {day}.', { day: fmtDay(hist.since || todayNum()) })}</p>`
-    : lineChart(series, t('Cheapest shelf price over time at each chain')));
+    : lineChart(series, t('Cheapest shelf price over time at each chain')) + historySource(hist, series));
+}
+// history from before Sal-Kal recorded it comes from the OpenIsraeliSupermarkets archive (CC BY-NC-SA: credit it)
+function historySource(hist, series) {
+  const s = hist?.source;
+  if (!s?.until || !series.some(sr => sr.points.some(p => p[0] < s.until))) return '';
+  const a = (href, text) => `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+  const day = dayDate(s.until).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' });
+  return `<p class="trend-note">${t('Before {day}: from {source} ({license}), adapted.',
+    { day, source: a(s.url, s.by), license: a(s.license_url, s.license) })}</p>`;
 }
 
 $('#view-product').addEventListener('click', e => {
@@ -1921,7 +1930,8 @@ function renderTrend() {
   const days = new Set(series.flatMap(sr => sr.points.map(p => p[0])));
   el.innerHTML = `<h2 id="trend-title">${t('Price history')}</h2>` + (days.size < 2 && (hist.since || 0) >= todayNum()
     ? `<p class="trend-note">${t('Tracking since {day}.', { day: fmtDay(hist.since || todayNum()) })}</p>`
-    : lineChart(series, t('This cart over time at {chains}', { chains: series.map(x => cn(x.name)).join(', ') })));
+    : lineChart(series, t('This cart over time at {chains}', { chains: series.map(x => cn(x.name)).join(', ') })) +
+      historySource(hist, series));
 }
 
 // ---------------------------------------------------------------- stores side by side, product by product

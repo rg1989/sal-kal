@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import auth, botcheck, catalog, commute, engine, geo, guard, places, reports, stats, trust
+from . import auth, backfill, botcheck, catalog, commute, engine, geo, guard, places, reports, stats, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
@@ -1346,7 +1346,7 @@ def product_history(key: str):
     and `ends`, the days a chain stopped having a confirmed price (a gap until its next point; `ended` when it hasn't
     come back). Only for a product that is the same everywhere (a barcode) or one chain's own item."""
     c = con()
-    out = {"since": _since(c), "today": int(time.strftime("%Y%m%d")), "chains": []}
+    out = {"since": _since(c), "today": int(time.strftime("%Y%m%d")), "chains": [], "source": backfill.source(c)}
     if ":" not in key and not comparable(key):
         return out
     names = {r[0]: r[1] for r in c.execute("SELECT chain_id, name_he FROM chains")}
@@ -1399,7 +1399,7 @@ def cart_history(body: dict = Body(...)):
     qty = {i["key"]: i["qty"] for i in _items(body.get("items"), MAX_ITEMS)}
     chains = [str(x) for x in (body.get("chains") or [])][:8]
     if not qty or not chains:
-        return {"since": _since(c), "series": {}, "ends": {}, "changes": {}}
+        return {"since": _since(c), "series": {}, "ends": {}, "changes": {}, "source": backfill.source(c)}
     flagged = _flagged(c, list(qty), set(chains))
     pts = {}
     for k, cid, day, mn in c.execute(
@@ -1436,7 +1436,7 @@ def cart_history(body: dict = Body(...)):
             series[cid] = line
             if gaps:
                 ends[cid] = gaps
-    return {"since": _since(c), "series": series, "ends": ends, "changes": changes}
+    return {"since": _since(c), "series": series, "ends": ends, "changes": changes, "source": backfill.source(c)}
 
 
 # ---------------------------------------------------------------- one store: address, opening hours, route from home
