@@ -134,6 +134,8 @@ const HE = {
   'Address not listed': 'הכתובת לא רשומה', 'Finding the address…': 'מאתרים את הכתובת…', '{n} km by road': '{n} ק״מ בכביש',
   'Opening hours: OpenStreetMap': 'שעות פתיחה: OpenStreetMap', 'Open in Waze': 'פתיחה ב־Waze',
   'Open in Google Maps': 'פתיחה ב־Google Maps',
+  'The whole trip in Google Maps': 'כל הדרך ב־Google Maps', 'Navigate to stop {n} in Waze: {name}': 'ניווט לעצירה {n} ב־Waze: {name}',
+  'Navigate to {place} in Waze': 'ניווט אל {place} ב־Waze',
   // ---- settings and dialogs
   "Couldn't save your settings": 'לא הצלחנו לשמור את ההגדרות', 'updating {n}%': 'מתעדכן {n}%', 'updating…': 'מתעדכן…',
   'No prices yet': 'עדיין אין מחירים', 'Delivery fee': 'דמי משלוח', 'Lower fee': 'דמי משלוח מוזלים',

@@ -1126,12 +1126,53 @@ const planStores = p => p.stores;  // in the order you reach them from where the
 const planShown = () => document.body.dataset.view === 'basket' && !S.sel && nCompared() > 0 && !!curPlan();
 const tripKey = p => [S.prefs.from, S.prefs.to, S.prefs.travel, ...planStores(p).map(s => `${s.chain_id}:${s.store_id}`)].join('|');
 const itemName = k => S.cart.items.find(i => i.key === k)?.name || S.meta[k]?.name || k;
-// Google Maps directions through the stops, by the way you travel (Waze takes one destination only)
+// Google Maps directions through the stops, by the way you travel. On a phone the trip starts where you are: from a
+// set starting place the Google Maps app only previews the route, from your location it can start navigating.
+const coarse = () => matchMedia('(pointer: coarse)').matches;
 function gmapsTrip(stops) {
   const a = S.prefs.home, b = S.prefs.work;
   const wp = stops.filter(s => s.lat != null).map(s => `${s.lat},${s.lon}`).join('|');
-  return `https://www.google.com/maps/dir/?api=1&origin=${a.lat},${a.lon}&destination=${b.lat},${b.lon}`
+  return `https://www.google.com/maps/dir/?api=1${coarse() ? '' : `&origin=${a.lat},${a.lon}`}&destination=${b.lat},${b.lon}`
     + (wp ? `&waypoints=${encodeURIComponent(wp)}` : '') + `&travelmode=${G_TRAVEL[S.prefs.travel] || 'driving'}`;
+}
+// Waze takes one destination, so a plan goes to Waze a leg at a time: each stop in order, then where the trip ends.
+// The Waze button is the next leg; opening any leg moves it on to the one after, for the plan shown, for 12 hours.
+const wazeUrl = (lat, lon) => `https://waze.com/ul?ll=${lat},${lon}&navigate=yes`;
+const WAZE_KEEP = 12 * 3600e3;
+function wazeLegs(p) {
+  const end = placeById(S.prefs.to), w = S.prefs.work;
+  return [...planStores(p).map((st, i) => st.lat == null ? null : {
+    lat: st.lat, lon: st.lon, num: i + 1, label: t('Navigate to stop {n} in Waze: {name}', { n: i + 1, name: `${cn(st.chain)}, ${storeName(st)}` }) }),
+  { lat: w.lat, lon: w.lon, end: true, label: t('Navigate to {place} in Waze', { place: placeLabel(end) || t('Work') }) }];
+}
+function wazeNext(p, legs) {
+  let i = 0;
+  try {
+    const w = JSON.parse(local.get('waze-leg') || 'null');
+    if (w?.key === tripKey(p) && Date.now() - w.at < WAZE_KEEP) i = Math.min(+w.i || 0, legs.length - 1);
+  } catch { /* nothing kept */ }
+  while (!legs[i]) i++;  // a stop without a point has no Waze leg (the trip's end always has one)
+  return i;
+}
+function wazeBtnHTML(p, legs) {
+  const i = wazeNext(p, legs), l = legs[i], end = placeById(S.prefs.to);
+  const mark = l.end ? `<span class="wp-leg end" aria-hidden="true">${PIN_SVG[!end || end.id === 'home' ? 'home' : 'other']}</span>`
+    : `<span class="wp-leg num" aria-hidden="true">${l.num}</span>`;
+  return `<a class="sc-btn waze" id="wp-waze" href="${wazeUrl(l.lat, l.lon)}" data-leg="${i}" target="_blank" rel="noopener" aria-label="${esc(l.label)}" title="${esc(l.label)}">${ICO.go}Waze${mark}</a>`;
+}
+// a leg opened: the Waze button moves on to the next one (after the link has gone, so the tap still opens it)
+function wazeOpened(i) {
+  const p = curPlan();
+  if (!p) return;
+  const legs = wazeLegs(p);
+  local.set('waze-leg', JSON.stringify({ key: tripKey(p), i: Math.min(i + 1, legs.length - 1), at: Date.now() }));
+  setTimeout(() => {
+    const b = $('#wp-waze');
+    if (!b || curPlan() !== p) return;
+    b.outerHTML = wazeBtnHTML(p, legs);
+    const next = wazeNext(p, legs);
+    $$('#way-plan .wp-waze').forEach(a => a.classList.toggle('next', +a.dataset.leg === next));
+  }, 0);
 }
 const extraText = r => r.extra_minutes >= 1 ? t('+{n} min', { n: r.extra_minutes }) : t('no extra time');
 // the store card on my way: what stopping at this one branch adds to the trip
@@ -1154,21 +1195,35 @@ function renderWayPlan() {
       <span class="wp-n">${plural(x.stops, 'stop')}</span><b class="num">${money(x.total)}</b>
       <small>${!x.complete ? t('{a} of {n}', { a: x.covered, n }) : x.saving > 0 ? t('{price} less', { price: money(x.saving) }) : x === best ? t('Cheapest') : '&nbsp;'}</small></button>`).join('')}</div>`;
   const stores = planStores(p);
+  // Waze drives: a trip by bike or on foot goes to Google Maps only
+  const car = (S.prefs.travel || 'car') === 'car', legs = car ? wazeLegs(p) : [], next = car ? wazeNext(p, legs) : -1;
+  const wazeAt = i => legs[i] ? `<a class="wp-waze${i === next ? ' next' : ''}" href="${wazeUrl(legs[i].lat, legs[i].lon)}" data-leg="${i}" target="_blank" rel="noopener" aria-label="${esc(legs[i].label)}" title="${esc(legs[i].label)}">${ICO.go}Waze</a>` : '';
+  const end = placeById(S.prefs.to);
   const list = `<ol class="wp-stops">${stores.map((st, i) => `<li class="wp-stop">
       <span class="wp-num num" aria-hidden="true">${i + 1}</span>
       <div class="wp-main">
         <div class="wp-row"><p class="wp-chain">${esc(cn(st.chain))}</p><p class="wp-sub num">${money(st.subtotal)}</p></div>
-        <p class="wp-branch">${bdi(storeName(st))}${st.off_km != null ? ` · ${distText(st.off_km)}` : ''}</p>
+        <div class="wp-line"><p class="wp-branch">${bdi(storeName(st))}${st.off_km != null ? ` · ${distText(st.off_km)}` : ''}</p>${wazeAt(i)}</div>
         <ul class="wp-items">${st.lines.map(l => `<li><span dir="auto">${esc(itemName(l.key))}</span>${l.qty !== 1 ? `<small>× ${fmtQty(l.qty, S.meta[l.key]?.is_weighted)}</small>` : ''}${l.promo ? dealTip(l) : ''}<span class="num${l.promo ? ' deal' : ''}">${money(l.cost)}</span></li>`).join('')}</ul>
-      </div></li>`).join('')}</ol>`;
+      </div></li>`).join('')}</ol>
+    <div class="wp-stop wp-end">
+      <span class="wp-num end" aria-hidden="true">${PIN_SVG[!end || end.id === 'home' ? 'home' : 'other']}</span>
+      <div class="wp-main">
+        <div class="wp-row"><p class="wp-chain">${bdi(placeLabel(end) || t('Work'))}</p></div>
+        <div class="wp-line"><p class="wp-branch">${end?.label ? bdi(end.label) : ''}</p>${wazeAt(stores.length)}</div>
+      </div></div>`;
   const miss = p.missing.length ? `<p class="wp-miss">${t('Not on your way')}: ${p.missing.map(k => `<bdi>${esc(itemName(k))}</bdi>`).join(', ')}</p>` : '';
   const trip = S.trip?.key === tripKey(p) ? S.trip : null;
-  el.innerHTML = head + opts + list + miss + `<div class="wp-foot">
-      <p class="wp-total"><span>${p.complete ? t('All {n} products', { n }) : t('{a} of {n} products', { a: p.covered, n })}</span><b class="num">${money(p.total)}</b></p>
+  // right under the choice: the trip it makes, and the buttons that open it for driving (all stops in Google Maps)
+  const go = `<div class="wp-go">
       <p class="wp-trip" id="wp-trip">${TRAVEL[S.prefs.travel]?.[1] || ''}<span>${trip ? (trip.route === null ? t('Trip time unavailable right now')
         : `${t('{n} min in all', { n: trip.minutes })} · ${extraText(trip)}${trip.extra_km >= 0.1 ? ` · ${t('+{n} km', { n: trip.extra_km })}` : ''}`)
         : `<span class="spin" aria-hidden="true"></span>`}</span></p>
-      <a class="sc-btn" href="${gmapsTrip(stores)}" target="_blank" rel="noopener" aria-label="${esc(t('Open in Google Maps'))}">${ICO.go}Google Maps</a></div>`;
+      <div class="wp-nav${car ? '' : ' one'}">
+        <a class="sc-btn" href="${gmapsTrip(stores)}" target="_blank" rel="noopener" aria-label="${esc(t('The whole trip in Google Maps'))}" title="${esc(t('The whole trip in Google Maps'))}">${ICO.go}Google Maps</a>
+        ${car ? wazeBtnHTML(p, legs) : ''}</div></div>`;
+  el.innerHTML = head + opts + go + list + miss + `<div class="wp-foot">
+      <p class="wp-total"><span>${p.complete ? t('All {n} products', { n }) : t('{a} of {n} products', { a: p.covered, n })}</span><b class="num">${money(p.total)}</b></p></div>`;
   if (!trip) loadTrip(p);
 }
 let tripSeq = 0;
@@ -1182,6 +1237,8 @@ async function loadTrip(p) {
   drawPlan(true);
 }
 $('#way-plan').addEventListener('click', e => {
+  const leg = e.target.closest('[data-leg]');
+  if (leg) { wazeOpened(+leg.dataset.leg); return; }
   const o = e.target.closest('[data-stops]');
   if (o) { haptic('select'); S.stops = +o.dataset.stops; local.set('stops', S.stops); S.trip = null; S.sel = null; renderWayPlan(); drawPins(); renderStoreCard(true); return; }
 });

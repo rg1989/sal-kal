@@ -1716,7 +1716,7 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
 /* the cart bar's text gives way (ellipsis) instead of widening the bar past the screen */
 .cb-txt { flex: 1 1 0; width: 0; }
 /* the narrowest phones: the navigation buttons drop their arrow so the app names fit */
-@media (max-width: 380px) { .sc-btn svg { display: none; } .sc-btn { padding-inline: 8px; } }
+@media (max-width: 380px) { .sc-btn svg { display: none; } .sc-btn { padding-inline: 8px; } .sc-btn .wp-leg svg { display: block; } }
 /* the "narrow down" field takes the room that's left; its font's default width never widens the filter box */
 .filterbar { grid-template-columns: minmax(0, 1fr); }
 .terms input { width: 0; }
@@ -1805,6 +1805,28 @@ input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowe
 .wp-chain { margin: 0; font-weight: 700; font-size: 16px; }
 .wp-sub { margin: 0; font-size: 18px; font-weight: 700; }
 .wp-branch { margin: 1px 0 6px; color: var(--muted); font-size: 13px; }
+.wp-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 1px 0 6px; }
+.wp-line .wp-branch { margin: 0; flex: 1; min-width: 0; }
+/* a stop's own Waze leg; the next leg to open is filled */
+.wp-waze {
+  position: relative; flex: none; display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 11px; border-radius: 999px;
+  border: 1px solid var(--accent-edge); color: var(--ink); text-decoration: none; font-size: 12.5px; font-weight: 600; white-space: nowrap;
+}
+.wp-waze svg { width: 13px; height: 13px; }
+.wp-waze:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.wp-waze.next { background: var(--accent); border-color: var(--accent); color: var(--tag-ink); }
+.wp-num.end { background: var(--surface-2); color: var(--ink); }
+.wp-num.end svg { width: 15px; height: 15px; }
+.wp-end .wp-chain { font-weight: 600; }
+/* under the choice of stops: the trip, and Google Maps (every stop) + Waze (the next leg) */
+.wp-go { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }
+.wp-nav { display: flex; gap: 8px; flex: none; }
+.wp-leg { display: inline-grid; place-items: center; margin-inline-start: 2px; }
+.wp-leg.num {
+  min-width: 20px; height: 20px; padding: 0 4px; box-sizing: border-box; border-radius: 999px; background: var(--tag); color: var(--tag-ink);
+  border: 1.5px solid var(--tag-ink); font-size: 13px; font-weight: 700; line-height: 1;
+}
+.sc-btn .wp-leg.end svg { width: 17px; height: 17px; }
 .wp-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13.5px; color: var(--ink-2); }
 .wp-items li { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
 .wp-items li > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1819,7 +1841,6 @@ input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowe
 .wp-total b { font-size: 26px; font-weight: 700; line-height: 1; }
 .wp-trip { margin: 0; flex: 1; min-width: 160px; display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 14px; }
 .wp-trip svg { width: 20px; height: 20px; flex: none; color: var(--accent-edge); }
-.wp-foot .sc-btn { flex: none; }
 
 /* the cart column: the cheapest split on your way, one line */
 .lc-way {
@@ -1839,7 +1860,11 @@ input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowe
   .area-seg button, .travel-seg button { min-height: 44px; }
   .wp-opt { flex: 1 1 0; min-width: 88px; min-height: 64px; padding: 8px 10px; }
   .wp-opt b { font-size: 19px; }
-  .wp-foot .sc-btn { width: 100%; justify-content: center; min-height: 44px; }
+  .wp-nav { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .wp-nav.one { grid-template-columns: 1fr; }
+  .wp-nav .sc-btn { justify-content: center; min-height: 44px; padding-inline: 10px; }
+  .wp-waze { min-height: 32px; }
+  .wp-waze::after { content: ""; position: absolute; inset: -6px -4px; }  /* a 44px target without a taller pill */
   .lc-way { min-height: 44px; }
 }
 

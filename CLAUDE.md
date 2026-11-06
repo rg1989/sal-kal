@@ -333,8 +333,13 @@ engine.compare(way=...) prices those instead of the radius (distance_km = off th
 commute.plans() = the cheapest split of the cart over 1..5 stops, each product at its cheapest stop, confirmed lines
 only, each extra stop must save >= ₪1 (exact for 1-2 stops, a beam search beyond; shortlist of 60 branches). Cards'
 "near" price, deals, the map's stores and opening hours (per branch area) follow the same corridor. POST /api/way/trip
-= the trip through the stops and what it adds over going straight. Checkout: #way-plan (stop counts, stops in order with
-what to buy, +min/+km, Google Maps through the stops); the map draws the band, the trip and numbered stop pins.
+= the trip through the stops and what it adds over going straight. Checkout: #way-plan (stop counts; right under them the
++min/+km and the navigation buttons; stops in order with what to buy; the trip's end as a last row); the map draws the
+band, the trip and numbered stop pins. Navigation (2026-11-06, per user): Google Maps = the whole trip, every stop as a
+waypoint (phones leave out the origin so the app can Start from your location; Google's docs allow only 3 waypoints in
+a phone's browser without the app, 9 elsewhere). Waze deep links take one destination (no stops parameter), so Waze
+goes a leg at a time: a Waze button per stop and for the end, and the main Waze button = the next leg, moved on by
+each one opened (localStorage 'waze-leg' {key: tripKey, i}, 12 h). Car trips only; by bike/on foot only Google Maps.
 Landing: the "On the way" section right after the hero (phone-way-*.webp, demo account at Tel Aviv City Hall -> the
 Ramat Gan diamond exchange towers by bike). Tests: tests/test_commute.py, tests/test_way_server.py.
 Attack surface (2026-11-05, per user: the only way in is the public URL). `app/guard.py` + checks in server.py:
