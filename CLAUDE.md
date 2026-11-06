@@ -404,3 +404,24 @@ are deleted once indexed. Guards: Host must be localhost (or LAN when "use from 
 everyone on the Wi-Fi is the household), cross-site writes 403 as on the server. Indexer lock uses msvcrt on Windows.
 Tested end to end on Linux in a scratch folder (Tel Aviv demo address, 2 km: 202 stores, ~3.4 GB of XML before
 deleting); macOS and Windows paths are written but untested on real machines. Tests: tests/test_local.py.
+Price Board (2026-11-06, per user: a public page for everyone, signed in or not; Sal-Kal is a not-for-profit
+public service, nothing is sold): https://sal-kal.com/prices (+ /prices/2..N, /prices/changes, /sitemap.xml).
+`app/board.py`, run last in sal-index (python -m app.board, ~15 s): every barcode product at 2+ chains (~66.6k, 100 a
+page, ordered by store count), each chain's cheapest confirmed shelf price (price_last; the branch range on hover),
+the chain's last price change (▲/▼ old price + day) and a chain table (price level vs the median, raised/lowered in
+7/30 days). Price changes are STORE-level, not the cheapest-branch series (78% of its day-to-day moves were branches'
+files going stale or coming back): trigger `prices_moved` (app/db.py) on prices UPDATE writes price_moves_raw;
+board.collect() keeps a change only for a comparable barcode the chain names like the others, both prices within
+trust.OUTLIER of products.median, store not price-flagged, old price published <= RAW_GAP_DAYS (4) before, one net
+change per store and day; then price_moves(key, chain, day, was, now, stores) (setting moves_since = first day).
+Pages are written gzipped to /srv/sal/data/board/<version>/ (current + one previous; `current` names it), static
+URLs stamped at build: the server (Board class, _board_page) sends the stored bytes as they are, ETag = version (304s),
+Cache-Control public max-age=300 s-maxage=1800; query strings ignored, anything else is a fixed 404. No database work
+per visitor (~520 req/s from the one process on the LAN; Cloudflare can serve it all once a Cache Rule makes /prices*
+eligible for cache, ignoring query strings). The pages are identical for everyone: never put anything personal in
+them (Cloudflare may cache them). Signed in: prices.js adds search (name words or barcode start), category, sort
+(popular|rises|drops|recent|gap), "changed only" via GET /api/prices (sign-in like every /api; filters rows.json.gz in
+memory); it only asks /api/me when localStorage has 'cart' (the app was used here), so anonymous views make no API
+call. Row details: every chain, its last change, a step chart (embedded history; /api/history for search results).
+Built only from the public price layer, never user data. A deploy that changes prices.* shows after the next build
+(run one by hand). Tests: tests/test_board.py.

@@ -12,6 +12,8 @@ ExecStart=/srv/sal/venv/bin/python -m app.indexer
 ExecStart=/srv/sal/venv/bin/python -m app.geo
 # then recompute the deals shelves (real savings vs typical prices)
 ExecStart=/srv/sal/venv/bin/python -m app.deals
+# then the public Price Board's pages (/prices), built ahead so visitors never make the server compute
+ExecStart=/srv/sal/venv/bin/python -m app.board
 TimeoutStartSec=3h
 MemoryDenyWriteExecute=yes
 SystemCallFilter=@system-service

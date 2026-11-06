@@ -6,6 +6,7 @@ belongs to the household account, user 1, as before accounts existed."""
 import asyncio
 import base64
 import contextvars
+import gzip
 import hashlib
 import hmac
 import html
@@ -30,7 +31,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import auth, botcheck, catalog, commute, engine, geo, guard, places, reports, stats, trust
+from . import auth, board, botcheck, catalog, commute, engine, geo, guard, places, reports, stats, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
 from .chains import BRAND_HE, chain_name
 
@@ -380,6 +381,76 @@ def app_page():
 @app.get("/about")
 def about():
     return _page("landing.html")
+
+
+# ---------------------------------------------------------------- the public Price Board (app/board.py)
+# Pages built after each index run; anyone may read them, signed in or not. A request picks one of a fixed set of
+# ready-made pages (its query string is ignored), so a visitor can't make the server compute anything: unknown
+# addresses get the same small 404. The pages are the same for everyone (Cloudflare may cache them); what signed-in
+# people get on top (search, categories, sorting) comes from /api/prices, which needs sign-in like every /api call.
+_board = board.Board(board.board_dir())
+_board_csp = {}  # version -> the pages' CSP (they share one head, so one inline script hash)
+
+
+def _board_page(name, request):
+    """A built page as it is on disk (gzipped, its static URLs already stamped): no work beyond a dict lookup."""
+    raw, version = _board.file(name)
+    if raw is None:
+        return HTMLResponse("<!doctype html><title>404</title><p>Not found. <a href=\"/prices\">Prices</a></p>",
+                            status_code=404, headers={"Cache-Control": "public, max-age=300"})
+    csp = _board_csp.get(version)
+    if csp is None:
+        _board_csp.clear()
+        csp = _board_csp[version] = _csp(gzip.decompress(raw).decode("utf-8"))
+    csp = csp.replace("script-src 'self'", f"script-src 'self' 'nonce-{secrets.token_urlsafe(18)}'", 1)
+    headers = {"Content-Security-Policy": csp, "Cache-Control": "public, max-age=300, s-maxage=1800",
+               "ETag": f'"{version}"', "Vary": "Accept-Encoding"}
+    if request.headers.get("if-none-match") == f'"{version}"':
+        return Response(status_code=304, headers=headers)
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(raw, media_type="text/html; charset=utf-8", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(raw), media_type="text/html; charset=utf-8", headers=headers)
+
+
+@app.get("/prices")
+def prices_first(request: Request):
+    return _board_page("p1.html.gz", request)
+
+
+@app.get("/prices/changes")
+def prices_changes(request: Request):
+    return _board_page("changes.html.gz", request)
+
+
+@app.get("/prices/{n}")
+def prices_page(n: str, request: Request):
+    # digits only, no leading zero, within the built pages: anything else is the 404 (never computed)
+    if not (n.isdigit() and n[0] != "0" and len(n) <= 5 and 2 <= int(n) <= _board.pages()):
+        return _board_page("-", request)
+    return _board_page(f"p{int(n)}.html.gz", request)
+
+
+@app.get("/sitemap.xml")
+def sitemap():
+    raw, version = _board.file("sitemap.xml")
+    if raw is None:
+        raise HTTPException(404)
+    return Response(raw, media_type="application/xml", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/prices")
+def prices_search(q: str = "", cat: str = "", sort: str = "popular", moved: bool = False, page: int = 1):
+    """Signed-in search over the Price Board: rows as the board shows them (the page renders them)."""
+    uid()
+    q = q[:200]
+    if sort not in board.SORTS:
+        sort = "popular"
+    if cat and not any(x["slug"] == cat for x in catalog.CATEGORIES):
+        cat = ""
+    page = max(1, min(int(page or 1), 2000))
+    rows, total = _board.search(q, cat, sort, moved, page)
+    return {"rows": rows, "total": total, "page": page, "pages": max(1, -(-total // board.PAGE)),
+            "cats": [{"slug": x["slug"], "name": x["name"], "he": x["he"]} for x in catalog.CATEGORIES]}
 
 
 # ---------------------------------------------------------------- Sal-Kal on your own computer (app/install, app/local.py)

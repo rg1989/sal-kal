@@ -44,6 +44,19 @@ CREATE TABLE IF NOT EXISTS price_history(key TEXT, chain_id TEXT, day INTEGER, m
   PRIMARY KEY(key, chain_id, day)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS price_last(key TEXT, chain_id TEXT, mn REAL, mx REAL, day INTEGER,
   PRIMARY KEY(key, chain_id)) WITHOUT ROWID;
+-- a store's shelf price for a barcode product changing, caught as the indexer writes the newer file (was_ts = the
+-- file the old price came from). app.board checks and folds them into price_moves, then empties this.
+CREATE TABLE IF NOT EXISTS price_moves_raw(key TEXT, chain_id TEXT, store_id INTEGER, was REAL, now REAL,
+  was_ts INTEGER, ts INTEGER);
+CREATE TRIGGER IF NOT EXISTS prices_moved AFTER UPDATE OF price ON prices
+  WHEN abs(new.price - old.price) >= 0.005 AND instr(new.key, ':') = 0
+BEGIN
+  INSERT INTO price_moves_raw VALUES(new.key, new.chain_id, new.store_id, old.price, new.price, old.ts, new.ts);
+END;
+-- confirmed shelf-price changes per chain and day (app.board): `stores` branches went from `was` to `now`
+CREATE TABLE IF NOT EXISTS price_moves(key TEXT, chain_id TEXT, day INTEGER, was REAL, now REAL, stores INTEGER,
+  ts INTEGER, PRIMARY KEY(key, chain_id, day, was, now)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS price_moves_day ON price_moves(day);
 -- every name a chain uses for a barcode product (the names on its shelves); ts = newest file (YYYYMMDDHHMM) it was in
 CREATE TABLE IF NOT EXISTS item_names(ITEM_NAMES_COLS) WITHOUT ROWID;
 -- barcode products a chain names differently from the other chains (app.names.odd_names): not the same product.

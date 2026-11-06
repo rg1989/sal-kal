@@ -32,6 +32,7 @@ const Usage = (() => {
   const page = () => {
     const b = document.body;
     if (!b) return 'boot';
+    if (b.dataset.page) return b.dataset.page;  // a page of its own (the Price Board: 'prices')
     if (!document.getElementById('view-home')) return 'landing';  // the landing page (/ before signing in, /about)
     if (b.classList.contains('gated')) return 'signin';
     if (b.classList.contains('onboarding')) return 'onboard';
@@ -233,7 +234,11 @@ const Usage = (() => {
   }, 3000));
 
   // the landing page has no router of its own to say it was opened
-  const landing = () => { if (page() === 'landing') view('landing', location.pathname === '/about' ? 'about' : undefined); };
+  const landing = () => {
+    const p = page();
+    if (p === 'landing') view('landing', location.pathname === '/about' ? 'about' : undefined);
+    else if (document.body.dataset.page) view(p, location.pathname.split('/')[2] || undefined);
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', landing); else landing();
 
   return {
