@@ -452,6 +452,9 @@ def fetch(work, first=FIRST_VERSION, last=None, jobs=2):
 STAGE = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-1500000;
+PRAGMA mmap_size=4000000000;
 -- every branch's newest barcode prices (its last full file so far) and when that file was published
 CREATE TABLE IF NOT EXISTS last(key TEXT, chain_id TEXT, store_id INTEGER, price REAL,
   PRIMARY KEY(key, chain_id, store_id)) WITHOUT ROWID;
