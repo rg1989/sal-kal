@@ -125,8 +125,16 @@ body[data-os="linux"] .v > [data-os="linux"] { visibility: visible; }
 .keys { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); min-height: 46px; }
 .how .btn.primary { min-height: 46px; }
 .v.other { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
-.v.other .alt { margin: 0; }
-.how kbd { font: 600 13px var(--ui); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; background: var(--surface); }
+.v.other h2 { margin: 0; font-size: 16px; line-height: 1.4; color: var(--ink); }
+.sub { list-style: none; counter-reset: t; padding: 0; margin: 0; display: grid; gap: 10px; width: 100%; color: var(--ink-2); font-size: 15px; }
+.sub > li { counter-increment: t; display: grid; grid-template-columns: 26px 1fr; gap: 4px 10px; align-items: start; }
+.sub > li::before { content: counter(t); grid-row: 1 / span 2; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--accent);
+  display: grid; place-items: center; font: 700 14px var(--num); color: var(--ink-2); margin-top: 1px; }
+.sub > li > p { grid-column: 2; margin: 0; padding-top: 1px; }
+.sub > li > .cmd { grid-column: 2; margin-top: 6px; }
+.sub .keys { display: inline-flex; min-height: 0; vertical-align: middle; }
+.sub a { color: var(--ink); text-decoration-color: var(--tag-edge); text-decoration-thickness: 2px; text-underline-offset: 4px; font-weight: 600; }
+.dl kbd { font: 600 13px var(--ui); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; background: var(--surface); }
 .cmd { display: flex; align-items: stretch; gap: 0; width: 100%; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface-2); }
 .cmd code { flex: 1; border: 0; border-radius: 0; background: none; padding: 12px 14px; font-size: 14px; direction: ltr; text-align: left;
   word-break: normal; overflow-wrap: anywhere; }
