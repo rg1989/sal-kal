@@ -66,9 +66,9 @@ lv = board.levels({"a": {"X": [10, 10, 10], "Y": [12, 12], "Z": [8, 9, 30]},    
                    "b": {"X": [5], "Y": [6]}})                                    # two chains: not compared
 assert set(lv) == {"X", "Y", "Z"} and all(n == 1 for _, n in lv.values()), lv
 assert abs(lv["X"][0]) < 1e-9 and abs(lv["Y"][0] - 0.2) < 1e-9 and abs(lv["Z"][0] + 0.1) < 1e-9, lv
-assert board.level_words(-0.123)[1] == "12% cheaper than the middle chain"
-assert board.level_words(0.087)[1] == "8.7% more expensive than the middle chain"
-assert board.level_words(0.004)[1] == "Same as the middle chain"
+assert board.level_words(-0.123)[1] == "12% below the typical price"
+assert board.level_words(0.087)[1] == "8.7% above the typical price"
+assert board.level_words(0.004)[1] == "At the typical price"
 
 # ---------------------------------------------------------------- store changes as the indexer writes them
 before = dict(c.execute("SELECT store_id, price FROM prices WHERE key=? AND chain_id=?", (MILK, RAMI)).fetchall())
@@ -153,7 +153,7 @@ assert meta["products"] >= 20 and "Rami Levy" in meta["chains"], meta
 p1 = gzip.decompress(open(os.path.join(root, "p1.html.gz"), "rb").read()).decode()
 assert "מעקב מחירים" in p1 and "Price Watch" in p1 and "/static/prices.js?v=" in p1   # stamped at build: served as is
 assert fx.WEIGHED[0] not in p1                                           # chain codes (produce) aren't on the page
-assert "מהרשת האמצעית" in p1 and "the middle chain" in p1               # every level in plain words
+assert "מהמחיר המקובל" in p1 and "the typical price" in p1               # every level in plain words
 # the page is a visitor's: the chains ranked, the sign-in sheet; no chain's lists, no search rows, no other period
 blob = json.loads(p1.split('id="board-data">', 1)[1].split("</script>", 1)[0])
 assert blob["body"]["chains"] == {} and "all" in blob["body"] and blob["rank"][0][0] in meta["chains"], blob

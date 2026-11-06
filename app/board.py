@@ -540,10 +540,10 @@ def pct_txt(x):
 def level_words(x):
     """(he, en): the chain's level in plain words."""
     if abs(x) < 0.005:
-        return "כמו הרשת האמצעית", "Same as the middle chain"
+        return "במחיר המקובל", "At the typical price"
     if x < 0:
-        return f"{pct_txt(x)} זולה מהרשת האמצעית", f"{pct_txt(x)} cheaper than the middle chain"
-    return f"{pct_txt(x)} יקרה מהרשת האמצעית", f"{pct_txt(x)} more expensive than the middle chain"
+        return f"זולה ב־{pct_txt(x)} מהמחיר המקובל", f"{pct_txt(x)} below the typical price"
+    return f"יקרה ב־{pct_txt(x)} מהמחיר המקובל", f"{pct_txt(x)} above the typical price"
 
 
 def counts_words(nup, ndn):
@@ -647,7 +647,7 @@ def rank_html(d, default, body):
     cut = len(out) > RANK_CUT + 2
     more = (f'<button type="button" class="more rk-more" aria-expanded="false">'
             f'{both(f"כל {len(out)} הרשתות", f"All {len(out)} chains")}</button>') if cut else ""
-    return ('<figure class="card rank guest-only"><figcaption><b>' + both("מחיר לעומת הרשת האמצעית", "Price against the middle chain")
+    return ('<figure class="card rank guest-only"><figcaption><b>' + both("מחירים לעומת המחיר המקובל", "Prices against the typical price")
             + "</b>" + key + f'</figcaption><ol class="rks{" cut" if cut else ""}">' + "".join(out) + "</ol>" + more + "</figure>")
 
 
@@ -711,8 +711,8 @@ def method_html(d):
          "Shelf prices from the files chains must publish (Food Act 2014, section 30). Barcode products named alike at every chain. Deals not included."),
         ("סניפים: חנויות פיזיות; חנויות אונליין וסניפי אילת (בלי מע״מ) לא נספרים. מחירים ומספרי סניפים של היום: סניפים עם קובץ מחירים מ־26 השעות האחרונות.",
          "Branches: physical stores; online stores and Eilat branches (no VAT) are left out. Today's prices and branch counts: branches with a price file from the last 26 hours."),
-        ("מחיר רשת למוצר: המחיר בסניף האמצעי שלה. הרשת האמצעית: החציון של מחירי הרשתות. ההשוואה במוצרים שנמכרים בשלוש רשתות לפחות, בממוצע גאומטרי.",
-         "A chain's price for a product: its middle branch's. The middle chain: the median of the chains' prices. Compared over products sold at three chains or more, as a geometric mean."),
+        ("מחיר רשת למוצר: המחיר המקובל בסניפים שלה (חצי מהסניפים גובים יותר, חצי פחות). המחיר המקובל למוצר: האמצע בין מחירי הרשתות (חצי מהרשתות גובות יותר, חצי פחות). ההשוואה במוצרים שנמכרים בשלוש רשתות לפחות, בממוצע (גאומטרי) על כל המוצרים.",
+         "A chain's price for a product: the typical price at its branches (half charge more, half less). A product's typical price: the middle of the chains' prices (half the chains charge more, half less). Compared over products sold at three chains or more, averaged (geometric mean) over all of them."),
         (f"העלאה או הורדה: {MIN_BRANCHES} סניפים של הרשת לפחות העבירו מוצר מאותו מחיר מדף לאותו מחיר חדש, באותו יום. שינוי בסניף אחד או שניים לא מוצג.",
          f"A rise or cut: {MIN_BRANCHES} or more of the chain's branches moved a product from the same shelf price to the same new one on the same day. A change at one or two branches isn't shown."),
         ("״מתוך Y סניפים״: סניפי הרשת שמכרו את המוצר מאותו יום והלאה.",

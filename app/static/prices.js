@@ -25,9 +25,9 @@
   const chainHe = b => blob.he[b] || b;
   const chainBoth = b => both(chainHe(b), b);
   const pctTxt = x => { const a = Math.abs(x) * 100; return a >= 9.5 ? `${a.toFixed(0)}%` : `${a.toFixed(1)}%`.replace('.0%', '%'); };
-  const levelWords = x => (Math.abs(x) < 0.005 ? ['כמו הרשת האמצעית', 'Same as the middle chain']
-    : x < 0 ? [`${pctTxt(x)} זולה מהרשת האמצעית`, `${pctTxt(x)} cheaper than the middle chain`]
-      : [`${pctTxt(x)} יקרה מהרשת האמצעית`, `${pctTxt(x)} more expensive than the middle chain`]);
+  const levelWords = x => (Math.abs(x) < 0.005 ? ['במחיר המקובל', 'At the typical price']
+    : x < 0 ? [`זולה ב־${pctTxt(x)} מהמחיר המקובל`, `${pctTxt(x)} below the typical price`]
+      : [`יקרה ב־${pctTxt(x)} מהמחיר המקובל`, `${pctTxt(x)} above the typical price`]);
   const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
     set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
     del: k => { try { localStorage.removeItem(k); } catch { /* private mode */ } } };
@@ -178,25 +178,91 @@
       mini.insertAdjacentHTML('beforeend', table(B, x, `${L(chainHe(b), b)}: ${L('מוצרים שהמחיר שלהם עלה וירד', 'products raised and cut')}`, true));
       $('.cnt', card).innerHTML = both(`${x.nup === 1 ? 'העלתה מוצר אחד' : `העלתה ${int(x.nup)} מוצרים`} · הורידה ${int(x.ndn)}`,
         `${x.nup === 1 ? 'Raised 1 product' : `Raised ${int(x.nup)} products`} · cut ${int(x.ndn)}`);
-      if (x.tu) drawLists(card, x);
     }
+    if (M) drawModal();  // a language switch redraws an open list in place
   }
-  const SHOW = 8;
   function changeLi(it) {
     const [, name, d, wlo, whi, nlo, nhi, lo, hi, y, plo, phi] = it;
     return `<li><span class="nm" dir="auto">${esc(name)}</span><span class="pr"><bdi dir="ltr">${rng(wlo, whi)} → <b>${rng(nlo, nhi)}</b></bdi> <b class="${plo > 0 ? 'up' : 'dn'}"><bdi dir="ltr">${esc(chg(plo, phi))}</bdi></b></span>
       <span class="sub">${branchesAt(lo, hi, y)} · <bdi dir="ltr">${day(d)}</bdi></span></li>`;
   }
-  function drawLists(card, x) {
-    const box = $('.cols', card);
-    if (!x.tu.length && !x.td.length) { box.dataset.p = cur; box.innerHTML = `<p class="none">${both('אין שינויים בתקופה', 'No changes in this period')}</p>`; return; }
-    const all = box.dataset.all === '1';
-    const col = (he, en, items) => `<div class="col"><h4>${both(he, en)}</h4>${items.length
-      ? `<ol class="mvs">${items.slice(0, all ? items.length : SHOW).map(changeLi).join('')}</ol>` : `<p class="none">${both('אין', 'None')}</p>`}</div>`;
-    box.dataset.p = cur;
-    const more = !all && (x.tu.length > SHOW || x.td.length > SHOW);
-    box.innerHTML = col('העלאות גדולות', 'Biggest rises', x.tu) + col('הורדות גדולות', 'Biggest cuts', x.td)
-      + (more ? `<button type="button" class="more" data-more>${both('עוד', 'More')}</button>` : '');
+  // ---------------------------------------------------------------- the modal: a long list never grows the page
+  // One <dialog> for every list that would otherwise unfold into the page (a chain's biggest changes, every chain in
+  // the ranking, every chain's price for a product): a fixed frame (head, tabs, a body that scrolls on its own,
+  // pages of PER rows), full-height sheet on phones. Escape, the ×, or a click outside closes it.
+  const PER = 25;
+  const X_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  let modal = null, M = null;
+  function modalEl() {
+    if (modal) return modal;
+    modal = document.createElement('dialog');
+    modal.className = 'pw-modal';
+    modal.setAttribute('aria-labelledby', 'pm-t');
+    modal.innerHTML = `<header class="pm-head"><h3 id="pm-t"></h3><p class="pm-sub"></p>
+      <button type="button" class="gx" data-close aria-label="סגירה / Close">${X_ICON}</button></header>
+      <div class="pm-tabs" role="tablist"></div><div class="pm-body" tabindex="-1"></div>
+      <footer class="pm-foot"><button type="button" class="pm-pg" data-pg="-1"></button><span class="pm-at" aria-live="polite"></span>
+      <button type="button" class="pm-pg" data-pg="1"></button></footer>`;
+    document.body.append(modal);
+    modal.addEventListener('click', e => {
+      const r = modal.getBoundingClientRect();
+      const out = e.target === modal && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+      if (out || e.target.closest('[data-close]')) { modal.close(); return; }
+      const tab = e.target.closest('[data-tab]');
+      if (tab) { M.tab = +tab.dataset.tab; M.page = 0; drawModal(); return; }
+      const pg = e.target.closest('[data-pg]');
+      if (pg && !pg.disabled) { M.page += +pg.dataset.pg; drawModal(); }
+    });
+    modal.addEventListener('close', () => { root.classList.remove('pm-open'); M = null; });
+    return modal;
+  }
+  // spec: {title, sub, tabs: [{he, en, items: [html li]}], list: 'class of the <ol>', per (PER), empty: [he, en]}
+  function openModal(spec) {
+    const d = modalEl();
+    M = { ...spec, tab: spec.tab || 0, page: 0 };
+    drawModal();
+    if (!d.open) { d.showModal(); root.classList.add('pm-open'); }
+    $('.pm-body', d).focus({ preventScroll: true });
+  }
+  function drawModal() {
+    if (!M) return;
+    const d = modalEl(), tabs = M.tabs, t = tabs[M.tab], n = t.items.length, per = M.per || PER, pages = Math.max(1, Math.ceil(n / per));
+    M.page = Math.min(Math.max(0, M.page), pages - 1);
+    const paged = tabs.some(x => x.items.length > per);
+    d.classList.toggle('fixed', paged || tabs.length > 1);  // a list that pages or switches keeps one size
+    $('#pm-t', d).innerHTML = M.title;
+    $('.pm-sub', d).innerHTML = M.sub || '';
+    $('.pm-sub', d).hidden = !M.sub;
+    const tl = $('.pm-tabs', d);
+    tl.hidden = tabs.length < 2;
+    tl.innerHTML = tabs.length < 2 ? '' : tabs.map((x, i) => `<button type="button" role="tab" data-tab="${i}" aria-selected="${i === M.tab}">${both(x.he, x.en)} <span class="pm-n">${int(x.items.length)}</span></button>`).join('');
+    const a = M.page * per, b = Math.min(n, a + per);
+    const body = $('.pm-body', d);
+    body.innerHTML = n ? `<ol class="${M.list}">${t.items.slice(a, b).join('')}</ol>` : `<p class="none">${both(...(M.empty || ['אין', 'None']))}</p>`;
+    body.scrollTop = 0;
+    const foot = $('.pm-foot', d);
+    foot.hidden = pages < 2;
+    const [prev, next] = $$('.pm-pg', d), rtlPage = lang() === 'he';
+    prev.disabled = M.page === 0;
+    next.disabled = M.page >= pages - 1;
+    prev.innerHTML = both(`${rtlPage ? '→' : '←'} הקודם`, '← Previous');
+    next.innerHTML = both(`הבא ${rtlPage ? '←' : '→'}`, 'Next →');
+    prev.setAttribute('aria-label', L('הדף הקודם', 'Previous page'));
+    next.setAttribute('aria-label', L('הדף הבא', 'Next page'));
+    const rg = `<bdi dir="ltr">${int(a + 1)}–${int(b)}</bdi>`;
+    $('.pm-at', d).innerHTML = `<span lang="he">${rg} מתוך ${int(n)}</span><span lang="en">${rg} of ${int(n)}</span>`;
+  }
+  // a chain's biggest changes in the period shown
+  async function chainChanges(chain) {
+    let body = B;
+    if (!body || !hasLists(body)) { try { body = B = await load(cur); } catch { return; } }
+    const x = body.chains[chain] || { tu: [], td: [] }, lvl = (blob.rank || []).find(r => r[0] === chain);
+    openModal({
+      title: `${chainBoth(chain)}${both(': השינויים הגדולים', ': biggest changes')}`,
+      sub: `<bdi dir="ltr">${span(body.from, body.to)}</bdi>${lvl ? ` · ${both(...levelWords(lvl[1]))}` : ''}`,
+      tabs: [{ he: 'העלאות', en: 'Rises', items: (x.tu || []).map(changeLi) }, { he: 'הורדות', en: 'Cuts', items: (x.td || []).map(changeLi) }],
+      tab: !(x.tu || []).length && (x.td || []).length ? 1 : 0, list: 'mvs', empty: ['אין שינויים בתקופה', 'No changes in this period'],
+    });
   }
   async function choose(p) {
     if (member === false && p !== cur) gate('period');
@@ -211,7 +277,6 @@
       return;
     }
     document.body.classList.remove('busy');
-    $$('.cols').forEach(c => { delete c.dataset.all; });
     drawAll();
     writeHash();
   }
@@ -305,10 +370,10 @@
     const f = span ? Math.min(1, Math.abs(level) / span) : 0;
     return `<li class="chain card" data-chain="${esc(b)}"><div class="ch-head"><h3>${chainBoth(b)}</h3>
       <span class="ch-br">${both(`${int(branches)} סניפים`, `${int(branches)} branches`)}</span></div>
-      <p class="lvl"><b class="${cls}">${both(lh, le)}</b> <span>${both(`לפי ${int(n)} מוצרים`, `over ${int(n)} products`)}</span></p>
+      <p class="lvl"><b class="${cls}">${both(lh, le)}</b> <span>${both(`בהשוואה של ${int(n)} מוצרים`, `compared on ${int(n)} products`)}</span></p>
       <div class="lbar" aria-hidden="true"><span class="${level < 0 ? 'neg' : 'pos'}" style="--f:${f.toFixed(3)}"></span></div>
       <div class="mini" data-chain="${esc(b)}"></div><p class="cnt"></p>
-      <details class="big"><summary>${both('השינויים הגדולים', 'Biggest changes')}</summary><div class="cols"></div></details></li>`;
+      <button type="button" class="big-btn" data-big aria-haspopup="dialog">${both('השינויים הגדולים', 'Biggest changes')}</button></li>`;
   }
   async function becomeMember() {
     results.innerHTML = '';
@@ -371,40 +436,27 @@
       if (e.target.closest('.find-lk')) { gate('search'); return; }
     }
     const rkMore = e.target.closest('.rk-more');
-    if (rkMore) {  // the ranking's folded rows (on the page already: no sign-in)
-      const list = $('.rks', rkMore.closest('.rank'));
-      rkMore.dataset.label = rkMore.dataset.label || rkMore.innerHTML;
-      const open = !list.classList.toggle('cut');
-      rkMore.setAttribute('aria-expanded', String(open));
-      rkMore.innerHTML = open ? both('פחות', 'Fewer') : rkMore.dataset.label;
+    if (rkMore) {  // every chain in the ranking (on the page already: no sign-in), in the modal
+      const rows = $$('.rks > li', rkMore.closest('.rank')).map(li => li.outerHTML);
+      openModal({ title: both('כל הרשתות, מהזולה ליקרה', 'Every chain, cheapest first'),
+        sub: $('.rank figcaption .rk-key', rkMore.closest('.rank'))?.innerHTML || '',
+        tabs: [{ he: '', en: '', items: rows }], list: 'rks', per: 60 });
       return;
     }
+    const big = e.target.closest('[data-big]');
+    if (big) { chainChanges(big.closest('.chain').dataset.chain); return; }
     const per = e.target.closest('.seg [data-p]');
     if (per) { choose(per.dataset.p); try { navigator.vibrate?.(8); } catch { /* not allowed yet */ } return; }
     if (e.target.closest('#tbl-toggle')) { tableOpen = !tableOpen; drawAll(); return; }
-    const more = e.target.closest('[data-more]');
-    if (more) {
-      const card = more.closest('.chain'), box = $('.cols', card);
-      box.dataset.all = '1';
-      const x = B.chains[card.dataset.chain];
-      if (x?.tu) drawLists(card, x);
-      return;
-    }
     const allChains = e.target.closest('[data-chains]');
-    if (allChains) { $$('.rr[hidden]', allChains.closest('.res')).forEach(li => { li.hidden = false; }); allChains.remove(); }
+    if (allChains) {  // a product's price at every chain, in the modal
+      const res = allChains.closest('.res');
+      const rows = $$('.rp > .rr', res).map(li => { const c = li.cloneNode(true); c.hidden = false; return c.outerHTML; });
+      openModal({ title: `<span dir="auto">${$('summary .nm', res).innerHTML}</span>`,
+        sub: `${$('summary .bc', res)?.innerHTML || ''} · ${$('summary .sm', res)?.innerHTML || ''}`,
+        tabs: [{ he: '', en: '', items: rows }], list: 'rp', per: 60 });
+    }
   });
-  // a chain's biggest changes: the default period's are in the page; another period's come with its data file
-  document.addEventListener('toggle', e => {
-    const d = e.target;
-    if (!d.classList?.contains('big') || !d.open || !B) return;
-    const card = d.closest('.chain'), p = cur;
-    load(p).then(body => {
-      if (p !== cur) return;
-      B = body;
-      const x = B.chains[card.dataset.chain];
-      if (x?.tu && $('.cols', card).dataset.p !== p) drawLists(card, x);
-    }).catch(() => {});
-  }, true);
   document.addEventListener('langchange', () => { placeholder(); hideTip(); drawAll(); if (member === false) guestSearch(); });
   let w = innerWidth;
   addEventListener('resize', () => { if (Math.abs(innerWidth - w) > 20) { w = innerWidth; drawAll(); } });
