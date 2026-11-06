@@ -12,9 +12,7 @@
 <link rel="manifest" id="manifest" href="/static/manifest-he.webmanifest">
 <link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD23F'/%3E%3Cg fill='none' stroke='%231C2321' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.3 13 14 8.2M20.7 13 18 8.2'/%3E%3Cpath d='M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z'/%3E%3Cpath d='M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4'/%3E%3C/g%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/fonts/fonts.css">
 <link rel="stylesheet" href="/static/styles.css">
 <script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;var l=localStorage.getItem("lang");if(l==="en"){document.documentElement.lang="en";document.documentElement.dir="ltr"}}catch(e){}</script>
 </head>
@@ -29,10 +27,13 @@
 </div>
 
 <header class="top">
+  <div class="top-start">
   <a class="brand" href="#/" data-i18n-aria="Sal-Kal — home" aria-label="Sal-Kal — home">
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" class="tile"/><g class="ink-s" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
     <span data-i18n="Sal-Kal">Sal-Kal</span>
   </a>
+  <a class="pw-tag" href="/prices"><span class="pw-in"><svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M10.2 2.8h5.4a1.6 1.6 0 0 1 1.6 1.6v5.4a1.6 1.6 0 0 1-.47 1.13l-6.3 6.3a1.6 1.6 0 0 1-2.26 0l-5.4-5.4a1.6 1.6 0 0 1 0-2.26l6.3-6.3a1.6 1.6 0 0 1 1.13-.47z"/><circle cx="13.6" cy="6.4" r="1.4"/></g></svg><span class="pw-t" data-i18n="Price Watch">Price Watch</span></span></a>
+  </div>
   <div class="search top-search" role="search">
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.2 13.2L17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     <input id="top-q" type="search" data-i18n-ph="Search milk, eggs, a barcode…" autocomplete="off" dir="auto"

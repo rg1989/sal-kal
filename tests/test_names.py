@@ -122,4 +122,23 @@ assert odd({**seven_up, "E": "גזוז בטעם תפוז"}, "סבן אפ")[0] ==
 # a name cut at 20 characters: its last word is the start of a word
 assert odd({"A": "מסטיק מנטוס פיור בטע", "B": "מסטיק מנטוס פיור בטעם ענבים", "C": "מנטוס פיור ענבים 60 גר"},
            "מנטוס פיור ענבים")[0] == set()
+
+# size grades: M eggs aren't L eggs (7290001201589: Super Sapir's M among everyone's L), even when a name with no
+# grade ("ביצים") joins them into one group
+from app.names import _fold, _sizes  # noqa: E402
+eggs = {"SS": "ביצים 12יח' M", "SH": "12 ביצי משק טריות L לסר", "CA": "12 ביצים L  מ.לסר", "RL": "ביצים 12 יח L",
+        "CM": ["ביצים", "ביצים L"], "YO": "ביצים 12 יח גדול", "TT": "ביצים אריזון 12 גדול"}
+assert odd(eggs, "12 ביצים L  מ.לסר")[0] == {"SS"}, odd(eggs, "12 ביצים L  מ.לסר")
+assert odd({k: v for k, v in eggs.items() if k != "SS"}, "12 ביצים L")[0] == set()  # גדול is an L
+assert odd({"A": "שקיות אשפה L 100 יח", "B": "שקיות אשפה XL 100 יח", "C": "שקיות אשפה XL"}, "שקיות אשפה XL")[0] == {"A"}
+assert odd({"A": "דלי לפופקורן גדול", "B": "דלי לפופקורן בינוני", "C": "דלי לפופקורן בינוני"}, "דלי לפופקורן")[0] == {"A"}
+# loose Hebrew words: גדול and ענק are one size; "אקסטרה לארג'" is XL; X L is XL; S/M is both
+assert odd({"A": "גפרור ענק", "B": "גפרורים גדול.", "C": "גפרור ענק שמאי"}, "גפרור ענק")[0] == set()
+assert odd({"A": "תחתונים סופגים אקסטרה לארג' 12 יח'", "B": "תחתונים XL סופגים 12 יח", "C": "תחתונים סופגים XL"},
+           "תחתונים XL")[0] == set()
+assert _sizes(_fold("המבורגר 500 גר`X L")) == {"xl"} and _sizes(_fold("תחתון S/M")) == {"s", "m"}
+# not grades: a unit after a number, M&M's, Shikma's S+ line, a set of two sizes
+for name in ("קוקה קולה 1.5L", "מים 2 L", "M&M'S בוטנים", "M M'S שוקולד חלב", "סופגן שיקמה אקסטרא S+",
+             "סט צלחות ענק ובינוני", "סט צלחות סטון עמק+בינוני", "טיטולים מידה 4"):
+    assert _sizes(_fold(name)) == frozenset(), (name, _sizes(_fold(name)))
 print("ok")

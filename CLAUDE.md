@@ -110,6 +110,56 @@ Delivery areas are not in the price files (Super Sapir's terms: "defined deliver
 site, min ₪200 varying by area). So "Delivered home" ranks a chain only when the user ticked "Delivers to me" for it in
 the Delivery fees dialog (`delivers_here` in the `delivery` setting); other chains are listed apart as "Delivery area
 not confirmed" (`no_area` in the compare response) and in-store mode says so instead of a delivered total.
+False-information audit (2026-11-06, per user: showing a business with a false price or change is a legal risk; leave a
+fact out rather than state it loosely). Five audits checked prices, deals, stores, history and the site's own text
+against the chains' raw files. Fixes, live 21:19:
+- **Prices** (`indexer.judge_prices`):
+  - ₪0.10 or less is a placeholder (PLACEHOLDER), never counted.
+  - A retailer with fewer than 4 stores whose prices for one product are 3× apart: none of them counts.
+  - City Market Shops' internal codes (UNTRUSTED_CODES): franchisees reuse a code for different items, so never trusted.
+  - Unit prices (`server._pack`): none when the fields and the name's size disagree, a multi-pack name has no size,
+    or the size is ≤ 2 g or > 10 kg with no name to back it.
+  - About 77% of "2× the chain's other branches" prices are real branch prices.
+- **Deals** (`indexer._promo_fields`, `_club_codes`, `deal_terms`, `deals.py`, `engine.price_line`):
+  - ClubID in every form ("(2=name|2=name)", '("name=3" | …)'). Unreadable means "?" (club-only), "עובד" means
+    "staff" (never counted, not even with Club prices).
+  - An item joins a promotion only when its own DiscountedPrice / MinQty / DiscountRate equal the promotion's.
+  - A number followed by % is never a price.
+  - Weekday-limited promos (PromotionDays) are skipped.
+  - Carts don't count deals over 70% off the shelf price.
+  - The saving is against the store's own shelf price, and the deal price must be under the typical price; cards
+    say "מחיר מדף ₪X".
+  - An end time before 06:00 counts as the day before (Shufersal ends at 02:59).
+- **Stores** (`chains.walk_in`, `geo.py`, `engine.py`, `server.py`):
+  - Wolt listings, online warehouses and "@ other brand" shops are online-only.
+  - A chain's online price comes from its own web shop.
+  - A geocoded point counts only within 6 km of its town's official point (8 km for 13 big cities;
+    app/data/town-points.json, `python -m app.geo --town-points`).
+  - Town-level points say "about X km (town centre)" with no route or drive time.
+  - OpenStreetMap hours only for exact branches that share no point with another branch of the chain.
+  - A branch's own sub-chain brand is shown.
+  - Size grades (S/M/L/XL, קטן/בינוני/גדול) disagree in `names.py`.
+- **Parsing** (`indexer.iter_records`, `index_stores`):
+  - SubChainName per SubChain section.
+  - City Market's `<SubChainStoreXMLObject>` stores are read.
+  - Files declared ISO-8859-8 are read as windows-1255 (lxml silently stopped at the first niqqud byte).
+  - XML errors that can lose data, and Stores files with no stores, set `index_status.error` (/admin).
+  - Stores are re-read only when a new Stores file arrives; on 2026-11-06 home's copies were re-read with
+    `restore_stores.py` (scratchpad).
+- **Site text:**
+  - The privacy page lists what is really kept and sent.
+  - Deletion "erases it from the site's database"; old user-backup copies on both machines still exist, pending the
+    owner.
+  - /api/status counts fresh walk-in branches, chains by name and products with a confirmed price.
+  - Landing claims corrected.
+  - Fonts are self-hosted (app/static/fonts, OFL; CSP font-src 'self'), so no page load reaches Google.
+- **Still open:**
+  - Cloudflare Web Analytics (beacon) is on for the zone and runs on every page through the CSP nonce, despite "no
+    outside trackers" (owner to switch off).
+  - City Market barcodes sold under another product's name (30 rows).
+  - Card names that are only numbers.
+  - The 30-day ▲/▼ arrows and product history charts still use the cheapest-branch series, which moves when branches
+    drop out.
 
 ## Product matching
 Packaged goods use the manufacturer EAN barcode as ItemCode → identical across chains → exact match.
@@ -450,24 +500,31 @@ are deleted once indexed. Guards: Host must be localhost (or LAN when "use from 
 everyone on the Wi-Fi is the household), cross-site writes 403 as on the server. Indexer lock uses msvcrt on Windows.
 Tested end to end on Linux in a scratch folder (Tel Aviv demo address, 2 km: 202 stores, ~3.4 GB of XML before
 deleting); macOS and Windows paths are written but untested on real machines. Tests: tests/test_local.py.
-Price Board (2026-11-06, per user: a public page for everyone, signed in or not; Sal-Kal is a not-for-profit
-public service, nothing is sold): https://sal-kal.com/prices (+ /prices/2..N, /prices/changes, /sitemap.xml).
-`app/board.py`, run last in sal-index (python -m app.board, ~15 s): every barcode product at 2+ chains (~66.6k, 100 a
-page, ordered by store count), each chain's cheapest confirmed shelf price (price_last; the branch range on hover),
-the chain's last price change (▲/▼ old price + day) and a chain table (price level vs the median, raised/lowered in
-7/30 days). Price changes are STORE-level, not the cheapest-branch series (78% of its day-to-day moves were branches'
-files going stale or coming back): trigger `prices_moved` (app/db.py) on prices UPDATE writes price_moves_raw;
-board.collect() keeps a change only for a comparable barcode the chain names like the others, both prices within
-trust.OUTLIER of products.median, store not price-flagged, old price published <= RAW_GAP_DAYS (4) before, one net
-change per store and day; then price_moves(key, chain, day, was, now, stores) (setting moves_since = first day).
-Pages are written gzipped to /srv/sal/data/board/<version>/ (current + one previous; `current` names it), static
-URLs stamped at build: the server (Board class, _board_page) sends the stored bytes as they are, ETag = version (304s),
-Cache-Control public max-age=300 s-maxage=1800; query strings ignored, anything else is a fixed 404. No database work
-per visitor (~520 req/s from the one process on the LAN; Cloudflare can serve it all once a Cache Rule makes /prices*
-eligible for cache, ignoring query strings). The pages are identical for everyone: never put anything personal in
-them (Cloudflare may cache them). Signed in: prices.js adds search (name words or barcode start), category, sort
-(popular|rises|drops|recent|gap), "changed only" via GET /api/prices (sign-in like every /api; filters rows.json.gz in
-memory); it only asks /api/me when localStorage has 'cart' (the app was used here), so anonymous views make no API
-call. Row details: every chain, its last change, a step chart (embedded history; /api/history for search results).
-Built only from the public price layer, never user data. A deploy that changes prices.* shows after the next build
-(run one by hand). Tests: tests/test_board.py.
+Price Watch, "מעקב מחירים" (was the Price Board; redesigned and live 2026-11-06 21:19, per user): https://sal-kal.com/prices,
+the yellow price-tag button in the app's and the public pages' headers. `app/board.py`, run last in sal-index (python -m
+app.board, ~2.5 min: one pass over every branch's prices). Rules, so nothing says more about a chain than its files
+(an audit found single branches' markdowns shown as the chain's): branches = walk-in stores outside Eilat (CBS 2600;
+online/app listings by chains.walk_in) in every count, price and change; a change is the chain's only when 3+ branches
+(MIN_BRANCHES) moved a product from the same old price to the same new one on the same day; changes come from
+store-level price_moves (trigger `prices_moved` -> price_moves_raw -> collect(), confirmed as before) and, exact per
+branch from branch_moves_since on, branch_moves (+ ledger branch_moves_st); older days count stores minus the chain's
+online/Eilat stores and say "at least X"; "of Y" = branches that listed it from that day on; a chain's level = its
+median branch price vs the middle chain's, products at 3+ chains, in words ("11% cheaper than the middle chain");
+no price lines from price_history (it moves when branches' files go stale). /prices/2..N and /prices/changes 301 to
+/prices; the sitemap is / and /prices.
+Light for visitors, in depth signed in (per user: "cool visuals but not in-depth" without an account, hints so
+visitors sign up, less load): the built page (p1.html.gz, the same bytes for everyone, Cache-Control public; Cloudflare
+answers DYNAMIC today) is the visitor's: the default period's all-chains rises/cuts chart, PEEK (3) real rises at the
+most branches (each at most +PEEK_MAX 50%: a bigger jump is usually a sale ending) over veiled rows, the chains ranked
+by level with raised/cut counts (RANK_CUT 12, then "All N chains"), the method, and the sign-in sheet (<dialog
+id="gate">, the feature reached for marked). Its data blob is only the all-chains series and the ranking; a visitor
+who never used the app makes no API call. prices.js asks /api/me only when localStorage has 'cart', 'pw_member' or a
+fresh 'pw_return' (<html class="pw-check"> hides the visitor's parts until it knows, 4 s failsafe); signed in it marks
+<html class="member">, builds each chain's card and fetches GET /api/prices/data/chg-<period>.json (private cache):
+every period, each chain's chart and biggest changes; search is GET /api/prices (rows.json.gz in memory, 30 rows).
+Both are plain /api routes, so the who-middleware's sign-in applies (401). Locked controls (other periods, a chain
+row, the search box: typing shows the sign-in with the word over veiled rows) open the sheet; "Sign up free" goes to
+/app leaving 'pw_return' {t, h}, and account.js backToPrices() sends a signed-in boot back to /prices#q=… within 30
+min, once, before the first-run setup. Veils are shapes, never made-up numbers beside a chain's name. Built only
+from the public price layer, never user data. A deploy that changes prices.* shows after the next build (run one by
+hand). Tests: tests/test_board.py.

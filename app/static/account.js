@@ -29,11 +29,30 @@ async function boot() {
   }
   if (!me) { document.body.classList.remove('booting'); return showGate('offline'); }
   Object.assign(ME, me);
-  if (ME.user?.lang && ME.user.lang !== L()) setLang(ME.user.lang, false);  // your account's language, on every device
+  if (ME.user?.lang && ME.user.lang !== L()) {
+    // a language picked in this browser (here, on the landing page or the Price Board: site.js) wins and the account
+    // follows it; a browser where none was picked takes the account's, so a new device opens in your language
+    let picked = false;
+    try { picked = !!localStorage.getItem('lang_pick'); } catch { /* private mode */ }
+    if (picked) { ME.user.lang = L(); api('/api/me', { method: 'PUT', body: { lang: L() }, quiet: true }).catch(() => {}); }
+    else setLang(ME.user.lang, false);
+  }
   renderAccountButton();
   if (ME.mode === 'accounts' && !ME.user) return showGate(err);
+  if (ME.user && backToPrices()) return;
   if (ME.user && !ME.user.onboarded) return startOnboarding();
   goShop();
+}
+// signed in from Price Watch (/prices, prices.js left 'pw_return' within the last half hour): back there, with what was
+// typed in its search; once, and the setup waits for the next visit to the app
+function backToPrices() {
+  let r = null;
+  try { r = JSON.parse(localStorage.getItem('pw_return') || 'null'); localStorage.removeItem('pw_return'); } catch { return false; }
+  if (!r || !(Date.now() - r.t < 30 * 60e3)) return false;
+  try { localStorage.setItem('pw_member', '1'); } catch { /* private mode */ }
+  const h = typeof r.h === 'string' && /^#q=[^#]{0,1300}$/.test(r.h) ? r.h : '';
+  location.replace(`/prices${h}`);
+  return true;
 }
 function goShop() {
   $('#gate').hidden = $('#onboard').hidden = true;
@@ -187,7 +206,9 @@ function AddressPicker(root, { home, onPick }) {
         <input id="${root.id}-num" class="num-in" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" enterkeyhint="done" disabled>
       </div>
     </div>
-    <div class="addr-result" aria-live="polite"></div>`;
+    <div class="addr-result" aria-live="polite"></div>
+    <div class="addr-map" hidden><div class="addr-map-canvas"></div><span class="addr-map-pin" aria-hidden="true"></span>
+      <p class="addr-map-hint">${t('Drag the map so the pin is on your building')}</p></div>`;
   const $r = s => root.querySelector(s);
   const townIn = $r('[data-field="town"] input'), streetIn = $r('[data-field="street"] input'), numIn = $r('.num-in');
   const combos = {};
@@ -212,8 +233,54 @@ function AddressPicker(root, { home, onPick }) {
     const el = $r('.addr-result');
     el.className = `addr-result ${state || ''}`;
     el.innerHTML = state === 'busy' ? `<span class="spin" aria-hidden="true"></span>${t('Finding it on the map…')}`
-      : state === 'ok' ? `<span class="loc-pin" aria-hidden="true"></span><bdi>${esc(st.home.label)}</bdi>${text ? `<small class="warn">${esc(text)}</small>` : pinNote(st.home)}`
+      : state === 'ok' ? `<span class="loc-pin" aria-hidden="true"></span><bdi>${esc(st.home.label)}</bdi>${text ? `<small>${esc(text)}</small>` : pinNote(st.home)}`
       : state === 'err' ? esc(text) : '';
+    pinMap(state === 'ok' ? st.home : null);
+  }
+  // No exact house found (neither the national address points nor OpenStreetMap have it): a small map with the pin in
+  // the middle; moving the map puts the pin on the building. Optional: the address works as it is.
+  const PM = { map: null, for: null, touched: false };
+  async function pinMap(h) {
+    const box = $r('.addr-map');
+    if (!h || ['house', 'gps'].includes(h.precision)) { box.hidden = true; PM.for = null; return; }
+    const key = `${h.town}:${h.street || ''}:${h.number || ''}`;
+    box.hidden = false;
+    if (PM.for === key && PM.map) return;  // the same address (a pin just moved): the map stays as the person left it
+    PM.for = key;
+    const zoom = h.precision === 'town' ? 14.5 : 17.5;
+    try {
+      await loadMapLib();
+      if (PM.for !== key) return;
+      if (maplibregl.getRTLTextPluginStatus() === 'unavailable') maplibregl.setRTLTextPlugin('/static/vendor/mapbox-gl-rtl-text.js', false);
+      if (!PM.map) {
+        mapBase = mapBase || await fetch('https://tiles.openfreemap.org/styles/positron').then(r => r.json());
+        // the plain map, house numbers and street names in the page's language: for finding your own building
+        const style = structuredClone(mapBase), name = L() === 'he' ? ['coalesce', ['get', 'name:he'], ['get', 'name']]
+          : ['coalesce', ['get', 'name:en'], ['get', 'name:latin'], ['get', 'name']];
+        for (const l of style.layers) if (l.type === 'symbol' && /name/.test(JSON.stringify(l.layout?.['text-field'] || ''))) l.layout['text-field'] = name;
+        PM.map = new maplibregl.Map({ container: $r('.addr-map-canvas'), style, center: [h.lon, h.lat], zoom,
+          attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false, touchPitch: false });
+        PM.map.once('load', () => $r('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));  // the credit folds into its (i)
+        PM.map.touchZoomRotate.disableRotation();
+        PM.map.on('dragstart', () => { PM.touched = true; });
+        PM.map.on('zoomstart', e => { if (e.originalEvent) PM.touched = true; });
+        PM.map.on('moveend', () => {
+          if (!PM.touched || !st.home) return;
+          PM.touched = false;
+          const c = PM.map.getCenter();
+          st.home = { ...st.home, lat: c.lat, lon: c.lng, precision: 'pin', source: 'pin' };
+          delete st.home.near;
+          const note = $r('.addr-result small');
+          if (note) note.textContent = t('Pin placed by you'); else $r('.addr-result')?.insertAdjacentHTML('beforeend', `<small>${t('Pin placed by you')}</small>`);
+          haptic('select');
+          Usage.ev('addr', { a: 'pin' });
+          onPick?.(st.home);
+        });
+      } else {
+        PM.map.resize();
+        PM.map.jumpTo({ center: [h.lon, h.lat], zoom });
+      }
+    } catch { box.hidden = true; }
   }
   // list boxes: type to filter, arrows + Enter, tap to choose
   function combo(field, input, load, choose) {
@@ -459,9 +526,10 @@ const normName = s => String(s || '').toLowerCase().replace(/["'׳״`()\[\].,/\\
 // How exact a located address is, said plainly when it isn't the house itself.
 const roughPin = h => h && (h.precision === 'street' || (h.precision === 'town' && h.street));
 function pinNote(h) {
+  if (h.precision === 'pin') return `<small>${t('Pin placed by you')}</small>`;
   if (h.precision === 'near') return `<small>${h.near ? t('No. {n} isn’t on the map: placed at no. {m}', { n: h.number, m: h.near }) : t('Placed a few doors away')}</small>`;
-  if (h.precision === 'street') return h.number ? `<small class="warn">${t('This number isn’t on the map: the pin is somewhere on the street')}</small>` : `<small>${t('Add the house number to be exact')}</small>`;
-  if (h.precision === 'town') return h.street ? `<small class="warn">${t('Not the exact address — edit it')}</small>` : `<small>${t('Town centre: add a street to be exact')}</small>`;
+  if (h.precision === 'street') return `<small>${h.number ? t('This number isn’t on the map: the pin is on the street') : t('Add the house number to be exact')}</small>`;
+  if (h.precision === 'town') return `<small>${h.street ? t('The street isn’t on the map: the pin is in the town centre') : t('Town centre: add a street to be exact')}</small>`;
   return '';
 }
 
@@ -517,7 +585,7 @@ function renderLoc() {
           <b class="num">${km < 1 ? Math.round(km * 1000) : km}</b><small>${km < 1 ? t('m') : t('km')}</small></button>`).join('')}</div>`;
   else if (pl.length) pick = `<button type="button" class="pill new-btn" data-add>${PLUS}${t('Add a second place')}</button>`;
   const rows = pl.map(x => LOC.edit === x.id ? `<li>${placeEditor(x)}</li>` : `<li class="pl-row">
-      <span class="pl-dot" aria-hidden="true"></span><span class="pl-text"><b dir="auto">${esc(placeLabel(x))}</b><small><bdi>${esc(x.label)}</bdi></small>${roughPin(x) ? `<small class="pl-warn">${x.precision === 'street' ? t('Pin is on the street, not at the house') : t('Not the exact address — edit it')}</small>` : ''}</span>
+      <span class="pl-dot" aria-hidden="true"></span><span class="pl-text"><b dir="auto">${esc(placeLabel(x))}</b><small><bdi>${esc(x.label)}</bdi></small>${roughPin(x) ? `<small class="pl-note">${x.precision === 'street' ? t('Pin on the street') : t('Pin in the town centre')}</small>` : ''}</span>
       <button type="button" class="pl-btn" data-edit="${esc(x.id)}">${t('Edit')}</button>
       ${pl.length > 1 ? `<button type="button" class="pl-btn pl-del" data-del="${esc(x.id)}" aria-label="${esc(t('Remove {x}', { x: placeLabel(x) }))}">${SVG.trash}</button>` : ''}</li>`).join('');
   el.innerHTML = (pl.length ? `<div class="seg area-seg" role="radiogroup" aria-label="${esc(t('Where to look'))}">
@@ -723,7 +791,10 @@ function renderLangButtons() {
 function setLang(l, save = true) {
   if (l === L() || !['he', 'en'].includes(l)) return;
   switchLang(l);  // i18n.js: dictionary, <html lang dir>, data-i18n labels
-  if (save) haptic('select');
+  if (save) {
+    haptic('select');
+    try { localStorage.setItem('lang_pick', String(Date.now())); } catch { /* private mode */ }
+  }
   renderLangButtons();
   renderAccountButton();
   if (!$('#gate').hidden) renderGate();

@@ -35,8 +35,11 @@ assert 9.0 < local._seg_km(32.08, 34.98, a, b) < 9.6
 # near stores: around a place within the distance (+ margin), and along the way
 con = local._con()
 con.execute("CREATE TABLE IF NOT EXISTS towns(code INTEGER PRIMARY KEY, name TEXT)")
-rows = [("1", 1, "A", "הרצל 1", "עיר"), ("1", 2, "B", "הרצל 2", "עיר"), ("2", 3, "C", "הרצל 3", "עיר"), ("2", 4, "D", "הרצל 4", "עיר")]
-pts = {"הרצל 1, עיר": (32.08, 34.78), "הרצל 2, עיר": (32.08, 34.83), "הרצל 3, עיר": (32.13, 34.83), "הרצל 4, עיר": (32.08, 34.88)}
+con.executemany("INSERT OR REPLACE INTO towns VALUES(?,?)", [(8600, "רמת גן"), (6600, "חולון")])  # a point counts only
+rows = [("1", 1, "A", "הרצל 1", "רמת גן"), ("1", 2, "B", "הרצל 2", "רמת גן"), ("2", 3, "C", "הרצל 3", "חולון"),  # in its
+        ("2", 4, "D", "הרצל 4", "רמת גן")]                                                                     # town
+pts = {"הרצל 1, רמת גן": (32.08, 34.78), "הרצל 2, רמת גן": (32.08, 34.83), "הרצל 3, חולון": (32.13, 34.83),
+       "הרצל 4, רמת גן": (32.08, 34.88)}  # (3 isn't in Holon: it goes at Holon's own point, 7 km from home)
 con.executemany("INSERT INTO stores(chain_id, store_id, name, address, city) VALUES(?,?,?,?,?)", rows)
 con.executemany("INSERT INTO geocache VALUES(?,?,?,0)", [(q, la, lo) for q, (la, lo) in pts.items()])
 home, work = {"id": "home", "lat": 32.08, "lon": 34.78}, {"id": "work", "lat": 32.08, "lon": 34.88}
@@ -51,9 +54,9 @@ def prefs(p):
 prefs({"places": [home], "max_km": 1})
 assert local.wanted_stores(con) == [("1", 1)], local.wanted_stores(con)
 prefs({"places": [home], "max_km": 4})          # 4 + 2 km margin reaches store 2 (4.7 km)
-assert local.wanted_stores(con) == [("1", 1), ("1", 2)]
+assert local.wanted_stores(con) == [("1", 1), ("1", 2)], local.wanted_stores(con)
 prefs({"places": [home, work], "max_km": 1, "area": "route", "from": "home", "to": "work", "detour_km": 1})
-assert local.wanted_stores(con) == [("1", 1), ("1", 2), ("2", 4)], local.wanted_stores(con)  # 3 is 5.6 km off the way
+assert local.wanted_stores(con) == [("1", 1), ("1", 2), ("2", 4)], local.wanted_stores(con)  # 3 is at Holon's point, 7 km off the way
 prefs({})
 assert local.wanted_stores(con) == []
 print("ok")

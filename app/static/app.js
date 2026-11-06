@@ -105,6 +105,8 @@ const detour = () => {
 const detourText = d => d < 1 ? t('{n} m', { n: Math.round(d * 1000) }) : t('{n} km', { n: d });
 // a branch's distance: from home, or on my way how far off the route it is
 const distText = d => d == null ? '' : !onWay() ? kmText(d) : d < 0.05 ? t('on your way') : t('{d} off your way', { d: kmText(d) });
+// a branch placed only at its town's point is roughly that far (along the way only branches at their address count)
+const distOf = v => v.precision === 'town' && !onWay() ? t('about {d}', { d: kmText(v.distance_km) }) : distText(v.distance_km);
 // named places: stores around one (at), or along the way between two (from, to). `home` and `work` are worked out
 // from them here exactly as the server does (app/server.py effective), so the page never waits for it.
 const placesOf = () => S.prefs.places || [];
@@ -279,7 +281,7 @@ function renderStores() {
       const best = i === 0 && b.complete && n > 0;
       return sep + `<button type="button" class="lc-store${best ? ' best' : ''}${on ? ' on' : ''}" data-branch="${i}" aria-pressed="${!!on}">
         <span class="ls-name">${esc(cn(b.chain))}${best ? ` <em>${t('Cheapest')}</em>` : ''}</span>
-        <span class="ls-sub">${bdi(storeName(b))}${b.distance_km != null ? ` · ${distText(b.distance_km)}` : ''} · ${countText(b.covered, b.complete, n)}</span>
+        <span class="ls-sub">${b.brand ? bdi(b.brand) + ' · ' : ''}${bdi(storeName(b))}${b.distance_km != null ? ` · ${distOf(b)}` : ''} · ${countText(b.covered, b.complete, n)}</span>
         <span class="ls-total num">${n ? money(b.total) : ''}</span></button>`;
     }).join('') + '</div>';
     return;
@@ -291,7 +293,7 @@ function renderStores() {
   el.innerHTML = list.map(c => {
     const v = view(c), best = c === ch[0] && full(c) && n > 0;
     const where = delivery() ? (v.fee == null ? t('Delivered · fee not set') : v.fee === 0 ? t('Free delivery') : t('incl. {fee} delivery', { fee: money(v.fee) }))
-      : bdi(storeName(v)) + (v.distance_km != null ? ` · ${distText(v.distance_km)}` : '');
+      : (v.brand ? bdi(v.brand) + ' · ' : '') + bdi(storeName(v)) + (v.distance_km != null ? ` · ${distOf(v)}` : '');
     return `<button type="button" class="lc-store${c === p ? ' on' : ''}${best ? ' best' : ''}" data-pin="${esc(c.chain_id)}" aria-pressed="${c === p}">
       <span class="ls-name">${esc(cn(c.name))}${best ? ` <em>${t('Cheapest')}</em>` : ''}</span>
       <span class="ls-sub">${where} · ${countText(v.covered, full(c), n, full(c) ? '' : ' products')}</span>
@@ -546,8 +548,9 @@ function qtyCtl(h, deal) {
 const perText = u => u ? `${money(u.v)} / ${sizeText(u.per)}` : '';
 // a deal in its last days (end time YYYYMMDDHHMM): "ends today", "ends tomorrow", "ends Sat"
 function endsText(ts) {
-  const end = tsDate(ts);
+  let end = tsDate(ts);
   if (!end) return '';
+  if (end.getHours() < 6) end = new Date(end.getTime() - 6 * 3600e3);
   const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()), n = Math.round((day(end) - day(new Date())) / 864e5);
   return n < 0 || n > 2 ? '' : n === 0 ? t('ends today') : n === 1 ? t('ends tomorrow') : t('ends {day}', { day: end.toLocaleDateString(locale(), { weekday: 'short' }) });
 }
@@ -569,7 +572,7 @@ function card(h) {
     : '<span class="c-price"></span>';
   const where = n && n.km != null ? ` · ${kmText(n.km)}` : '';
   const info = d
-    ? `<span class="c-meta">${esc(cn(d.chain))}${d.distance_km != null ? ` · ${distText(d.distance_km)}` : ''} · ${t('usually {price}', { price: money(d.typical) })}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
+    ? `<span class="c-meta">${esc(cn(d.chain))}${d.distance_km != null ? ` · ${distText(d.distance_km)}` : ''} · ${t('shelf price {price}', { price: money(d.price) })}${endsText(d.end_ts) ? ` · <b class="c-ends">${endsText(d.end_ts)}</b>` : ''}</span>
        ${facts ? `<span class="c-meta">${bdi(facts)}</span>` : ''}`
     : `<span class="c-meta">${facts ? bdi(facts) : ''}</span>`
       + (own != null
@@ -844,10 +847,10 @@ function drawDots() {
   if (!map?.getSource('stores') || !mapData?.home) return;
   const dots = bestOnly()
     ? S.result.chains.map(c => ({ ...c.in_store, chain: c.name })).filter(v => v.lat != null)
-      .map(v => ({ lat: v.lat, lon: v.lon, chain: v.chain, name: storeName(v), km: v.distance_km }))
+      .map(v => ({ lat: v.lat, lon: v.lon, chain: v.chain, name: storeName(v), km: v.distance_km, precision: v.precision, brand: v.brand }))
     : mapData.stores;
   map.getSource('stores').setData({ type: 'FeatureCollection', features: dots.map(x => ({ type: 'Feature',
-    properties: { chain: x.chain, name: x.name, km: x.km }, geometry: { type: 'Point', coordinates: [x.lon, x.lat] } })) });
+    properties: { chain: x.chain, name: x.name, km: x.km, precision: x.precision || '', brand: x.brand || '' }, geometry: { type: 'Point', coordinates: [x.lon, x.lat] } })) });
 }
 function renderMapInfo() {
   const info = $('#map-info');
@@ -939,7 +942,7 @@ async function initMap() {
   const pop = new maplibregl.Popup({ closeButton: false, offset: 10, className: 'sal-pop' });
   map.on('click', 'stores', e => {
     const f = e.features[0].properties;
-    pop.setLngLat(e.lngLat).setHTML(`<strong>${esc(cn(f.chain))}</strong><br><bdi>${esc(f.name)}</bdi> · ${distText(+f.km)}`).addTo(map);
+    pop.setLngLat(e.lngLat).setHTML(`<strong>${esc(cn(f.chain))}</strong>${f.brand ? ` · <bdi>${esc(f.brand)}</bdi>` : ''}<br><bdi>${esc(f.name)}</bdi> · ${distOf({ precision: f.precision, distance_km: +f.km })}`).addTo(map);
   });
   map.on('mouseenter', 'stores', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'stores', () => { map.getCanvas().style.cursor = ''; });
@@ -968,10 +971,10 @@ function drawPins() {
     if (v?.lat == null) return;
     const best = c === top[0] && full(c), el = document.createElement('button');
     el.type = 'button';
-    el.className = `price-pin${best ? ' best' : ''}${c === p ? ' on' : ''}`;
+    el.className = `price-pin${best ? ' best' : ''}${c === p ? ' on' : ''}${v.precision === 'town' ? ' approx' : ''}`;  // at its town's point
     el.style.zIndex = c === p ? 60 : 50 - byPrice.indexOf(c);
     el.innerHTML = `${best ? `<em>${t('Cheapest')}</em>` : ''}<b class="num">${money(v.total)}</b><span>${esc(cn(c.name))}${full(c) ? '' : ` · ${v.covered}/${n}`}</span>`;
-    el.title = `${cn(c.name)} · ${storeName(v)}${v.distance_km != null ? ' · ' + distText(v.distance_km) : ''} — ${t('price the cart here')}`;
+    el.title = `${cn(c.name)} · ${storeName(v)}${v.distance_km != null ? ' · ' + distOf(v) : ''} — ${t('price the cart here')}`;
     el.addEventListener('click', e => { e.stopPropagation(); pin(String(c.chain_id)); });
     pins.push(new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] }).setLngLat([v.lon, v.lat]).addTo(map));
   });
@@ -1006,9 +1009,10 @@ function hoursHTML(h, gsearch) {
     const today = new Date().getDay(), td = h.week[today], days = DAYNAMES();
     return `<span>${t('Today {hours}', { hours: `<bdi dir="ltr">${esc(hoursText(td))}</bdi>` })}</span> ${openNow(td) ? `<b class="open">${t('Open now')}</b>` : `<b class="shut">${t('Closed now')}</b>`}
       <details class="sc-week"><summary>${t('All week')}</summary><table>${h.week.map((x, i) =>
-        `<tr${i === today ? ' class="today"' : ''}><th>${days[i]}</th><td><bdi dir="ltr">${esc(hoursText(x))}</bdi></td></tr>`).join('')}</table></details>`;
+        `<tr${i === today ? ' class="today"' : ''}><th>${days[i]}</th><td><bdi dir="ltr">${esc(hoursText(x))}</bdi></td></tr>`).join('')}</table></details>
+      <small class="muted">${t('OpenStreetMap · may differ on holidays')}</small>`;
   }
-  if (h.hours) return `<span dir="ltr">${esc(h.hours)}</span>`;
+  if (h.hours) return `<span dir="ltr">${esc(h.hours)}</span> <small class="muted">${t('OpenStreetMap · may differ on holidays')}</small>`;
   return `<span class="muted">${h.checked === false ? t('Couldn’t check the opening hours just now') : t('Opening hours aren’t listed for this branch')} —
     <a href="${gsearch}" target="_blank" rel="noopener">${t('see them on Google Maps')}</a></span>`;
 }
@@ -1016,23 +1020,31 @@ function storeCardHTML(v, d, h) {
   const top = S.result.chains[0], best = top.in_store, n = nCompared();
   const isBest = n > 0 && !!top.in_store?.complete && String(best.chain_id) === String(v.chain_id) && best.store_id === v.store_id;
   const addr = d ? [d.address, d.city].filter(Boolean).join(', ') : '';
-  const home = S.prefs.home, dest = d?.lat != null ? `${d.lat},${d.lon}` : '';
-  const gsearch = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([d?.brand_he || v.chain, addr].filter(Boolean).join(' '));
+  // a branch placed only at its town's point: no road distance, drive time or route; directions search its address
+  const town = (d?.precision || v.precision) === 'town', brand = d?.brand || v.brand;
+  const home = S.prefs.home, dest = d?.lat != null && !town ? `${d.lat},${d.lon}` : '';
+  const query = [d?.brand_he || v.chain, addr || [storeName(v), realCity(v.city)].filter(Boolean).join(' ')].filter(Boolean).join(' ');
+  const gsearch = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(query);
   const gdir = d?.route?.way ? gmapsTrip([{ lat: d.lat, lon: d.lon }])
     : `https://www.google.com/maps/dir/?api=1${home ? `&origin=${home.lat},${home.lon}` : ''}&destination=${dest}&travelmode=driving`;
+  const away = town ? t('about {d} (town centre)', { d: kmText(d?.km ?? v.distance_km) })
+    : d?.route?.way ? wayStopText(d.route, v) : d?.route ? t('{n} km by road', { n: d.route.km }) : t('{d} away', { d: kmText(v.distance_km) });
   return `<div class="sc-head">
-      <div><p class="sc-chain">${esc(cn(v.chain))}${isBest ? ` <em>${t('Cheapest')}</em>` : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
+      <div><p class="sc-chain">${esc(cn(v.chain))}${brand ? ` · ${bdi(brand)}` : ''}${isBest ? ` <em>${t('Cheapest')}</em>` : ''}</p><p class="sc-branch">${bdi(storeName(v))}${v.last_price_ts ? ` · <span class="muted">${pricesFrom(v.last_price_ts)}</span>` : ''}</p></div>
       ${n ? `<p class="sc-total"><span class="num">${money(v.total)}</span>
         <small>${!v.complete ? t('{a} of {n} products here', { a: v.covered, n }) : n === 1 ? t('for your product') : t('all {n} products', { n })}</small></p>` : ''}
     </div>
     <ul class="sc-rows">
       <li>${ICO.pin}<span>${d ? (addr ? bdi(addr) : `<span class="muted">${t('Address not listed')}</span>`) : `<span class="muted">${t('Finding the address…')}</span>`}</span></li>
-      <li>${d?.route?.way ? TRAVEL[d.route.travel]?.[1] || ICO.car : ICO.car}<span>${d?.route?.way ? wayStopText(d.route, v) : d?.route ? t('{n} km by road', { n: d.route.km }) : t('{d} away', { d: kmText(v.distance_km) })}${onWay() ? '' : `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>`}</span></li>
+      <li>${d?.route?.way ? TRAVEL[d.route.travel]?.[1] || ICO.car : ICO.car}<span>${away}${onWay() || town ? '' : `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>`}</span></li>
       <li title="${t('Opening hours: OpenStreetMap')}">${ICO.clock}<span class="sc-hours">${hoursHTML(h, gsearch)}</span></li>
     </ul>
     ${dest ? `<div class="sc-actions">
       <a class="sc-btn waze" href="https://waze.com/ul?ll=${dest}&navigate=yes" target="_blank" rel="noopener" aria-label="${t('Open in Waze')}">${ICO.go}Waze</a>
-      <a class="sc-btn" href="${gdir}" target="_blank" rel="noopener" aria-label="${t('Open in Google Maps')}">${ICO.go}Google Maps</a></div>` : ''}
+      <a class="sc-btn" href="${gdir}" target="_blank" rel="noopener" aria-label="${t('Open in Google Maps')}">${ICO.go}Google Maps</a></div>`
+    : d && town ? `<div class="sc-actions">
+      <a class="sc-btn waze" href="https://waze.com/ul?q=${encodeURIComponent(query)}&navigate=yes" target="_blank" rel="noopener" aria-label="${t('Search in Waze')}">${ICO.go}Waze</a>
+      <a class="sc-btn" href="${gsearch}" target="_blank" rel="noopener" aria-label="${t('Search in Google Maps')}">${ICO.go}Google Maps</a></div>` : ''}
 `;
 }
 let storeSeq = 0;
@@ -1419,7 +1431,7 @@ async function openProduct(key) {
   const d = deal.deal;
   $('#p-deal').innerHTML = `${saveBadge(d)}
     <span>${t('{deal} at {chain}', { deal: `<strong dir="auto">${esc(d.description)}</strong>`, chain: esc(cn(d.chain)) })}${d.distance_km != null ? ` (${distText(d.distance_km)})` : ''}:
-    ${d.min_qty > 1 ? t('{price} each when you buy {n}', { price: money(d.unit_price), n: d.min_qty }) : t('{price} each', { price: money(d.unit_price) })}, ${t('usually {price}', { price: money(d.typical) })}.</span>
+    ${d.min_qty > 1 ? t('{price} each when you buy {n}', { price: money(d.unit_price), n: d.min_qty }) : t('{price} each', { price: money(d.unit_price) })}, ${t('shelf price {price}', { price: money(d.price) })}.</span>
     ${d.min_qty > 1 && !S.cart.items.some(i => i.key === key) ? addBtn(key, d.min_qty) : ''}`;
   $('#p-deal').hidden = false;
 }
@@ -1511,7 +1523,16 @@ async function productHistory(key, names) {
   const days = new Set(series.flatMap(sr => sr.points.map(p => p[0])));
   el.innerHTML = !series.length ? '' : `<h2 class="p-h">${t('Price history')}</h2>` + (days.size < 2 && (hist.since || 0) >= todayNum()
     ? `<p class="trend-note">${t('Tracking since {day}.', { day: fmtDay(hist.since || todayNum()) })}</p>`
-    : lineChart(series, t('Cheapest shelf price over time at each chain')));
+    : lineChart(series, t('Cheapest shelf price over time at each chain')) + historySource(hist, series));
+}
+// history from before Sal-Kal recorded it comes from the OpenIsraeliSupermarkets archive (CC BY-NC-SA: credit it)
+function historySource(hist, series) {
+  const s = hist?.source;
+  if (!s?.until || !series.some(sr => sr.points.some(p => p[0] < s.until))) return '';
+  const a = (href, text) => `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+  const day = dayDate(s.until).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' });
+  return `<p class="trend-note">${t('Before {day}: from {source} ({license}), adapted.',
+    { day, source: a(s.url, s.by), license: a(s.license_url, s.license) })}</p>`;
 }
 
 $('#view-product').addEventListener('click', e => {
@@ -1630,10 +1651,10 @@ const storeName = v => clean(v.name) || t('Branch {n}', { n: v.store_id });
 function storePlace(v) {
   const city = realCity(v.city), n = storeName(v);
   const name = city && n.includes(city) ? n : [n, city].filter(Boolean).join(', ');
-  return bdi(name) + (v.distance_km != null ? ` · ${onWay() ? distText(v.distance_km) : t('{d} away', { d: kmText(v.distance_km) })}` : '') + driveSlot(v);
+  return bdi(name) + (v.distance_km != null ? ` · ${onWay() || v.precision === 'town' ? distOf(v) : t('{d} away', { d: kmText(v.distance_km) })}` : '') + driveSlot(v);
 }
 const place = v => delivery() ? `${t('Online store')} · ${bdi(storeName(v))}` : storePlace(v);
-const driveSlot = v => S.prefs.home && !onWay() ? `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>` : '';  // on my way: what a stop adds, in the plan
+const driveSlot = v => S.prefs.home && !onWay() && v.precision !== 'town' ? `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>` : '';  // on my way: what a stop adds, in the plan
 
 // drive times load after the results so pricing never waits on the routing service
 async function fillDrive(root = $('#results')) {
@@ -1963,22 +1984,25 @@ document.addEventListener('pointerleave', e => {
   if (e.target.classList?.contains('lchart')) { e.target.querySelector('.xhair')?.setAttribute('hidden', ''); e.target.querySelector('.lc-tip').hidden = true; }
 }, true);
 
-// checkout: the whole cart over time at the chains that have all of it. The history is chain-wide (each product at
-// the chain's cheapest branch), so each line is scaled to end at today's price at your branch.
+// checkout: the whole cart over time at the chains that have all of it. The history is chain-wide: each point is the
+// cart with each product at the chain's cheapest branch that day, as recorded (never scaled to your branch's total,
+// which would draw prices no store charged), and the chart says so.
 function renderTrend() {
   const el = $('#trend'), hist = S.trend, ch = fullChains();
   if (!el || !S.cart.items.length || !hist || !ch.length || delivery()) { if (el) el.hidden = true; return; }
   const series = ch.map(c => {
     const id = String(c.chain_id), pts = withGaps(hist.series[id] || [], hist.ends?.[id]), last = pts.at(-1)?.[1];
     // a chain whose history stopped (a product without a confirmed price) isn't drawn as if it ran to today
-    return { name: c.name, points: last ? pts.map(([d, v]) => [d, v == null ? null : v * paid(c) / last]) : [] };
+    return { name: c.name, points: last ? pts : [] };
   }).filter(sr => sr.points.length);
   if (!series.length) { el.hidden = true; return; }
   el.hidden = false;
   const days = new Set(series.flatMap(sr => sr.points.map(p => p[0])));
   el.innerHTML = `<h2 id="trend-title">${t('Price history')}</h2>` + (days.size < 2 && (hist.since || 0) >= todayNum()
     ? `<p class="trend-note">${t('Tracking since {day}.', { day: fmtDay(hist.since || todayNum()) })}</p>`
-    : lineChart(series, t('This cart over time at {chains}', { chains: series.map(x => cn(x.name)).join(', ') })));
+    : `<p class="trend-note">${t('Each product at the chain’s cheapest branch that day')}</p>` +
+      lineChart(series, t('This cart over time at {chains}, each product at the chain’s cheapest branch', { chains: series.map(x => cn(x.name)).join(', ') })) +
+      historySource(hist, series));
 }
 
 // ---------------------------------------------------------------- stores side by side, product by product

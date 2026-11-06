@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import re
 import time
 import urllib.parse
@@ -97,41 +98,211 @@ def queries(store, town_names=None):
     return res
 
 
-def store_coords(con):
-    """(chain_id, store_id) -> (lat, lon) using the most precise cached query."""
-    cache = {r[0]: (r[1], r[2]) for r in con.execute("SELECT q, lat, lon FROM geocache WHERE lat IS NOT NULL")}
-    tn = {r[0]: r[1] for r in con.execute("SELECT code, name FROM towns")} if _has_towns(con) else {}
-    out = {}
-    for s in con.execute("SELECT chain_id, store_id, name, address, city FROM stores"):
-        for q, _ in queries(s, tn):
-            if q in cache:
-                out[(s["chain_id"], s["store_id"])] = cache[q]
-                break
+# ---------------------------------------------------------------- is the point in the store's own town?
+# The map service answers a free-text query with its best guess anywhere in the country: "חיל ההנדסה 2 באר שבע"
+# came back in Eilat, the town "אריאל" as Ariel Street in Jerusalem. A point counts only when it lies in the store's
+# town (its CBS code, or the official town its City/name names), checked against that town's own point from the
+# official list. A store whose town can't be told, or whose every point is elsewhere, isn't placed by a guess: it
+# goes at its town's own point (town level), or nowhere.
+TOWN_KM = 6         # a branch may be this far from its town's own point
+BIG_KM, BIG_TOWNS = 8, {3000, 5000, 4000, 8300, 9000, 70, 7400, 7900, 7100, 1200, 2600, 6500, 2610}  # the widest
+# cities (Jerusalem's Neve Yaakov is 7.6 km from its point; Herzliya's Weizmann St is 9.8 km from Tel Aviv's)
+TOWN_POINTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "town-points.json")
+POINTS_RID = "e9701dcb-9f1c-43bb-bd44-eb380ade542f"  # data.gov.il: settlements in four languages, with ITM X/Y
+_points = None
+_located = {}       # database + data signature -> {(chain, store): (lat, lon, precision)}
+
+
+def town_points():
+    """CBS town code -> (lat, lon): each town's own point, from the official list bundled in app/data."""
+    global _points
+    if _points is None:
+        try:
+            with open(TOWN_POINTS, encoding="utf-8") as f:
+                _points = {int(k): tuple(v) for k, v in json.load(f)["points"].items()}
+        except (OSError, ValueError, KeyError) as e:
+            log.warning("town points unavailable (%s): stores can't be checked against their towns", e)
+            _points = {}
+    return _points
+
+
+def fetch_town_points(path=TOWN_POINTS):
+    """Rewrites the bundled town points from data.gov.il (a developer's step: python -m app.geo --town-points)."""
+    from .places import _itm_to_wgs84  # places imports this module
+    req = urllib.request.Request(f"https://data.gov.il/api/3/action/datastore_search?resource_id={POINTS_RID}&limit=5000",
+                                 headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        recs = json.load(r)["result"]["records"]
+    pts = {}
+    for x in recs:
+        if x.get("X") and x.get("Y") and str(x.get("symbol_number", "")).isdigit():
+            lat, lon = _itm_to_wgs84(float(x["X"]), float(x["Y"]))
+            if 29.3 <= lat <= 33.5 and 34.2 <= lon <= 35.95:
+                pts[str(int(x["symbol_number"]))] = [round(lat, 5), round(lon, 5)]
+    out = {"about": "Each town's own point (CBS settlement code -> lat, lon), to check that a geocoded store lies in its "
+                    "town. Source: data.gov.il, \"יישובים בשפות עברית, אנגלית, ערבית, רוסית\" (resource "
+                    f"{POINTS_RID}), ITM X/Y converted to WGS84. Refresh: python -m app.geo --town-points",
+           "made": time.strftime("%Y-%m-%d"), "points": dict(sorted(pts.items(), key=lambda kv: int(kv[0])))}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    return len(pts)
+
+
+def _fold(s):
+    from .places import norm  # the same folding as the address picker: קריית = קרית, no quotes or dashes
+    return norm(s)
+
+
+# town names that are also everyday words in store names ("אזור תעשיה" is an industrial zone, not Azor)
+GENERIC = {"אזור", "רחוב", "מרכז", "צומת", "כרמל", "אלון", "עזר", "ספיר", "שדה", "גבעה", "נווה", "מגדל", "כנרת"}
+ABBREV = {"ת א": 5000, "ב ש": 9000, "פ ת": 7900}  # ת"א, ב"ש, פ"ת as chains write them
+
+
+def town_index(tn):
+    """Folded town name -> CBS code: the official names, OpenStreetMap's usual spellings, and each part of a joined
+    name ("תל אביב - יפו" -> "יפו", "פרדס חנה-כרכור" -> "כרכור") unless that part is a word of another town's
+    name too ("חצור" of "חצור-אשדוד" is also חצור הגלילית)."""
+    exact, parts = {}, {}
+    for code, name in tn.items():
+        name = (name or "").strip()
+        if not name:
+            continue
+        for v in (name, name.replace("קרית", "קריית"), re.sub(r"\(.*?\)", " ", name)):
+            if _fold(v):
+                exact.setdefault(_fold(v), code)
+        for p in re.split(r"\s+-\s+|-", name):
+            p = _fold(p)
+            if len(p) >= 3 and p != _fold(name):
+                parts.setdefault(p, set()).add(code)
+    words = {}
+    for n, code in exact.items():
+        for i in range(len(n.split())):
+            for j in range(i + 1, len(n.split()) + 1):
+                words.setdefault(" ".join(n.split()[i:j]), set()).add(code)
+    out = dict(exact)
+    for p, codes in parts.items():
+        if p not in out and len(codes) == 1 and words.get(p, set()) <= codes:
+            out[p] = next(iter(codes))
     return out
 
 
-def exact_stores(con):
-    """The branches placed at their own address (a street address, or the shop itself found by name), not at the
-    centre of their town. Many chains publish only a town, and a town-level point is a few km off: fine for "within
-    5 km of home", wrong for "on the route". A point counts as a town when a town's own query found it, or when 3+
-    branches at different addresses share it."""
+def store_town(store, tn, index, brand=""):
+    """(CBS code of a store's town, how it is known): "city" = its City field (a code or an official name); "name" =
+    the one official town its name names (the chain's own brand words left out; nothing when it names two). The
+    address is never read for this: street names are town names too ("ירושלים 1" in Kiryat Motzkin).
+    (None, None) when it can't be told."""
+    city = (store["city"] or "").strip()
+    if city.isdigit():  # a CBS code; "0" or a code not on the list: told by the name below, if at all
+        if int(city) in tn:
+            return int(city), "city"
+        city = ""
+    if city and city.lower() not in ("unknown", "-", "לא ידוע"):
+        hit = index.get(_fold(city))
+        if hit is not None:
+            return hit, "city"
+    name = f" {' '.join(re.sub(r'[^\w ]', ' ', _fold(store['name'])).split())} "  # "בית אל*" too
+    for w in _fold(brand).split():
+        name = name.replace(f" {w} ", " ")
+    hits = {n: code for n, code in index.items() if n not in GENERIC and len(n) >= 3 and f" {n} " in name}
+    hits.update({n: code for n, code in ABBREV.items() if f" {n} " in name})
+    # a name inside a longer one that matched is part of it ("ברק" of "בני ברק")
+    codes = {code for n, code in hits.items() if not any(m != n and f" {n} " in f" {m} " for m in hits)}
+    return (next(iter(codes)), "name") if len(codes) == 1 else (None, None)
+
+
+def in_town(pt, code):
+    """The point lies within TOWN_KM (BIG_KM for the widest cities) of the town's own point. False when the town or
+    its point isn't known."""
+    ref = town_points().get(code) if code is not None else None
+    return bool(ref and pt and km(pt[0], pt[1], ref[0], ref[1]) <= (BIG_KM if code in BIG_TOWNS else TOWN_KM))
+
+
+def hit_ok(hit, code, tn):
+    """A fresh answer from the map service is kept only in the store's town: its address names that town, or failing
+    that it lies near the town's own point."""
+    a = hit.get("address") or {}
+    names = {_fold(a.get(k)) for k in ("city", "town", "village", "municipality") if a.get(k)}
+    if code is not None and tn.get(code):
+        official = _fold(tn[code])
+        if any(n and (n == official or n in official.split() or official in n) for n in names):
+            return True
+    try:
+        return in_town((float(hit["lat"]), float(hit["lon"])), code)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _sig(con):
+    db = con.execute("PRAGMA database_list").fetchone()[2]
+    g = con.execute("SELECT count(*), max(at), total(lat) FROM geocache").fetchone()
+    s = con.execute("SELECT count(*), total(store_id), total(length(name) + length(address) + length(city)) "
+                    "FROM stores").fetchone()
+    t = con.execute("SELECT count(*) FROM towns").fetchone() if _has_towns(con) else (0,)
+    return (db, tuple(g), tuple(s), tuple(t), len(town_points()))
+
+
+def _brands(con):
+    """Chain id -> its brand words (the Hebrew name in its files and on its signs), left out when a store's name is
+    read for its town ("סופר ספיר בית אל": ספיר is a moshav too)."""
+    from .chains import BRAND_HE, chain_name
+    he = {r[0]: r[1] or "" for r in con.execute("SELECT chain_id, name_he FROM chains")} \
+        if con.execute("SELECT 1 FROM sqlite_master WHERE name='chains'").fetchone() else {}
+    ids = set(he) | {r[0] for r in con.execute("SELECT DISTINCT chain_id FROM stores")}
+    return {cid: f"{he.get(cid, '')} {BRAND_HE.get(chain_name(cid), '')}" for cid in ids}
+
+
+def located(con):
+    """(chain_id, store_id) -> (lat, lon, precision): "exact" = found at its own street address in its own town;
+    "town" = its town's point (the town's own query, a tail of its name that is a town, a search by the store's name,
+    an address the map service only knows as its town, or the official town point when no point found fits). Points
+    outside the store's town are never used, nor any point for a store whose town can't be told."""
+    key = _sig(con)
+    hit = _located.get(key)
+    if hit is not None:
+        return hit
     cache = {r[0]: (r[1], r[2]) for r in con.execute("SELECT q, lat, lon FROM geocache WHERE lat IS NOT NULL")}
     tn = {r[0]: r[1] for r in con.execute("SELECT code, name FROM towns")} if _has_towns(con) else {}
+    index, pts, brands = town_index(tn), town_points(), _brands(con)
     towns_at, found, shared = set(), {}, {}
     for s in con.execute("SELECT chain_id, store_id, name, address, city FROM stores"):
+        sk = (s["chain_id"], s["store_id"])
+        code, how = store_town(s, tn, index, brands.get(s["chain_id"], ""))
         qs = queries(s, tn)
         name = (s["name"] or "").strip()
         for q, kind in qs:
-            if kind != "street" and q != name and q in cache:  # the town itself, or a tail of the name that is one
+            if kind != "street" and q != name and q in cache and in_town(cache[q], code):  # the town, or a tail that is one
                 towns_at.add(cache[q])
-        for q, _ in qs:
-            if q in cache:  # the most precise query that found something (as store_coords)
-                found[(s["chain_id"], s["store_id"])] = cache[q]
-                shared.setdefault(cache[q], set()).add(((s["address"] or "").strip(), s["city"]))
+        for q, kind in qs:  # the most precise query that found a point in the store's town
+            if q in cache and in_town(cache[q], code):
+                found[sk] = (cache[q], "street" if kind == "street" else "town")
+                if kind == "street":
+                    shared.setdefault(cache[q], set()).add(((s["address"] or "").strip(), s["city"]))
                 break
+        else:
+            # nothing found fits: the town's own point, when the store's own City says the town (a town told only by
+            # the store's name needs the map service to agree with it)
+            if how == "city" and code in pts:
+                found[sk] = (pts[code], "town")
     # (a street the map service doesn't know comes back as its town: the same point as the town's own query)
     towns_at |= {pt for pt, addrs in shared.items() if len(addrs) >= 3}
-    return {sk for sk, pt in found.items() if pt not in towns_at}
+    out = {sk: (pt[0], pt[1], "exact" if how == "street" and pt not in towns_at else "town")
+           for sk, (pt, how) in found.items()}
+    if len(_located) > 8:
+        _located.clear()
+    _located[key] = out
+    return out
+
+
+def store_coords(con):
+    """(chain_id, store_id) -> (lat, lon): every placed store, at its address or its town's point (see located)."""
+    return {sk: (v[0], v[1]) for sk, v in located(con).items()}
+
+
+def exact_stores(con):
+    """The branches placed at their own street address in their own town, not at a town's point. Many chains publish
+    only a town, and a town-level point is a few km off: fine for "within 5 km of home", wrong for "on the route",
+    for a road distance or for a route on the map. A search by the store's name never counts as its address."""
+    return {sk for sk, v in located(con).items() if v[2] == "exact"}
 
 
 def _has_towns(con):
@@ -139,10 +310,13 @@ def _has_towns(con):
 
 
 def run(con, budget=1500, pause=1.1):
-    """Town-level pass for every store first (fast, few distinct towns), then street level."""
+    """Town-level pass for every store first (fast, few distinct towns), then street level. A store is done once a
+    point in its own town is cached; an answer elsewhere is kept as a miss, so the next spelling is asked instead.
+    Stores whose town can't be told aren't asked about: no answer could be checked."""
     tn = towns(con, fetch=True)
-    cache = {r[0]: r[1] is not None for r in con.execute("SELECT q, lat FROM geocache")}
-    stores = con.execute("SELECT name, address, city FROM stores").fetchall()
+    index, brands = town_index(tn), _brands(con)
+    cache = {r[0]: (r[1], r[2]) if r[1] is not None else None for r in con.execute("SELECT q, lat, lon FROM geocache")}
+    stores = con.execute("SELECT chain_id, name, address, city FROM stores").fetchall()
     sent, pending = 0, []
 
     def flush():
@@ -153,8 +327,11 @@ def run(con, budget=1500, pause=1.1):
     try:
         for street in (False, True):
             for s in stores:
+                code, _ = store_town(s, tn, index, brands.get(s["chain_id"], ""))
+                if code is None or code not in town_points():
+                    continue
                 qs = [(q, k) for q, k in queries(s, tn) if (k == "street") == street]
-                if any(cache.get(q) for q, _ in qs):
+                if any(cache.get(q) and in_town(cache[q], code) for q, _ in qs):
                     continue
                 for q, kind in qs:
                     if q in cache:
@@ -162,14 +339,15 @@ def run(con, budget=1500, pause=1.1):
                     if sent >= budget:
                         return sent
                     try:
-                        hit = lookup(q)
+                        hits = lookup(q, limit=3)
                     except Exception as e:  # offline or throttled: try again next run
                         log.warning("lookup failed (%s), stopping this run", e)
                         return sent
                     sent += 1
-                    ok = hit and (kind != "place" or hit[0].get("category") in PLACE)
-                    lat, lon = (float(hit[0]["lat"]), float(hit[0]["lon"])) if ok else (None, None)
-                    cache[q] = ok
+                    ok = next((h for h in hits or [] if (kind != "place" or h.get("category") in PLACE)
+                               and hit_ok(h, code, tn)), None)
+                    lat, lon = (float(ok["lat"]), float(ok["lon"])) if ok else (None, None)
+                    cache[q] = (lat, lon) if ok else None
                     pending.append((q, lat, lon, int(time.time())))
                     if len(pending) >= 10:  # batch writes: the indexer may hold the write lock
                         flush()
@@ -353,8 +531,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=None)
     ap.add_argument("--budget", type=int, default=1500)
+    ap.add_argument("--town-points", action="store_true", help="refresh app/data/town-points.json from data.gov.il")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if a.town_points:
+        log.info("%d town points written to %s", fetch_town_points(), TOWN_POINTS)
+        return
     con = dbmod.connect(a.db)
     n = run(con, a.budget)
     log.info("geocoded %d queries; %d stores located", n, len(store_coords(con)))

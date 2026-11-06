@@ -31,9 +31,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import auth, board, botcheck, catalog, commute, engine, geo, guard, places, reports, stats, trust
+from . import auth, backfill, board, botcheck, catalog, commute, engine, geo, guard, places, reports, stats, trust
 from .images import PHOTO_DIR, photo_path, want as want_photos
-from .chains import BRAND_HE, chain_name
+from .chains import BRAND_HE, chain_name, clean_place, walk_in
 
 # no /docs, /redoc or /openapi.json: nobody outside needs a map of the API
 app = FastAPI(title="Basket", docs_url=None, redoc_url=None, openapi_url=None)
@@ -93,7 +93,7 @@ def prefs():
 # ---------------------------------------------------------------- named places: around one, or on the way between two
 PLACE_ID = re.compile(r"[a-z0-9]{1,16}")
 MAX_PLACES = 12
-ADDR_KEYS = ("label", "lat", "lon", "town", "street", "number", "town_name", "street_name", "precision")
+ADDR_KEYS = ("label", "lat", "lon", "town", "street", "number", "town_name", "street_name", "precision", "source")
 
 
 def places_of(p):
@@ -359,7 +359,7 @@ def _csp(page):
     return ("default-src 'self'; "
             f"script-src 'self' https://challenges.cloudflare.com {' '.join(_sha(s) for s in inline)} 'unsafe-hashes' {' '.join(_sha(h) for h in HANDLERS)}; "
             "worker-src 'self' blob:; child-src blob:; frame-src https://challenges.cloudflare.com; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+            "style-src 'self' 'unsafe-inline'; font-src 'self'; "
             "img-src 'self' data: blob: https://*.googleusercontent.com https://platform-lookaside.fbsbx.com https://*.fbcdn.net; "
             "connect-src 'self' https://tiles.openfreemap.org; media-src 'self'; manifest-src 'self'; object-src 'none'; "
             "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
@@ -383,11 +383,12 @@ def about():
     return _page("landing.html")
 
 
-# ---------------------------------------------------------------- the public Price Board (app/board.py)
-# Pages built after each index run; anyone may read them, signed in or not. A request picks one of a fixed set of
-# ready-made pages (its query string is ignored), so a visitor can't make the server compute anything: unknown
-# addresses get the same small 404. The pages are the same for everyone (Cloudflare may cache them); what signed-in
-# people get on top (search, categories, sorting) comes from /api/prices, which needs sign-in like every /api call.
+# ---------------------------------------------------------------- Price Watch, the public price page (app/board.py)
+# Built after each index run; anyone may read the page, signed in or not. A request picks one of a fixed set of
+# ready-made files (its query string is ignored), so a visitor can't make the server compute anything: unknown
+# addresses get the same small 404. The page is the same for everyone (Cloudflare may cache /prices*): the light,
+# public part. The depth (every period with each chain's lists, and search) is /api/prices*, which needs sign-in
+# like every /api call: answered from the build in memory (never the database), never cached by anyone else.
 _board = board.Board(board.board_dir())
 _board_csp = {}  # version -> the pages' CSP (they share one head, so one inline script hash)
 
@@ -418,16 +419,17 @@ def prices_first(request: Request):
 
 
 @app.get("/prices/changes")
-def prices_changes(request: Request):
-    return _board_page("changes.html.gz", request)
+def prices_changes():
+    # the changes are on /prices (one page); browsers keep a link's #… across a redirect that names none
+    return RedirectResponse("/prices", status_code=301, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/prices/{n}")
 def prices_page(n: str, request: Request):
-    # digits only, no leading zero, within the built pages: anything else is the 404 (never computed)
-    if not (n.isdigit() and n[0] != "0" and len(n) <= 5 and 2 <= int(n) <= _board.pages()):
-        return _board_page("-", request)
-    return _board_page(f"p{int(n)}.html.gz", request)
+    # the old product table's pages 2..N (gone: search instead) move to /prices; anything else is the 404
+    if n.isdigit() and n[0] != "0" and len(n) <= 5 and int(n) >= 2:
+        return RedirectResponse("/prices", status_code=301, headers={"Cache-Control": "public, max-age=86400"})
+    return _board_page("-", request)
 
 
 @app.get("/sitemap.xml")
@@ -439,18 +441,28 @@ def sitemap():
 
 
 @app.get("/api/prices")
-def prices_search(q: str = "", cat: str = "", sort: str = "popular", moved: bool = False, page: int = 1):
-    """Signed-in search over the Price Board: rows as the board shows them (the page renders them)."""
-    uid()
-    q = q[:200]
-    if sort not in board.SORTS:
-        sort = "popular"
-    if cat and not any(x["slug"] == cat for x in catalog.CATEGORIES):
-        cat = ""
-    page = max(1, min(int(page or 1), 2000))
-    rows, total = _board.search(q, cat, sort, moved, page)
-    return {"rows": rows, "total": total, "page": page, "pages": max(1, -(-total // board.PAGE)),
-            "cats": [{"slug": x["slug"], "name": x["name"], "he": x["he"]} for x in catalog.CATEGORIES]}
+def prices_search(q: str = ""):
+    """Price Watch search (signed in): products by name words or the start of a barcode, each with its price range
+    at each chain now and the chains' latest chain-level changes. From the build's rows in memory; at most
+    board.SEARCH_MAX rows, 12 words, 200 characters."""
+    rows, total = _board.search(q[:200])
+    return {"rows": rows, "total": total}
+
+
+@app.get("/api/prices/data/{name}")
+def prices_data(name: str, request: Request):
+    """A period's rises and cuts with each chain's biggest changes (signed in; board.DATA_NAME: chg-<period>.json),
+    as built: nothing computed. The page asks with ?v=<build>, so a new build is a new address; only this browser
+    keeps a copy (private), never a shared cache."""
+    raw, version = _board.file(name + ".gz") if board.DATA_NAME.fullmatch(name) else (None, None)
+    if raw is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    headers = {"Cache-Control": "private, max-age=600", "ETag": f'"{version}"', "Vary": "Accept-Encoding"}
+    if request.headers.get("if-none-match") == f'"{version}"':
+        return Response(status_code=304, headers=headers)
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(raw, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(raw), media_type="application/json", headers=headers)
 
 
 # ---------------------------------------------------------------- Sal-Kal on your own computer (app/install, app/local.py)
@@ -535,11 +547,15 @@ def status():
 def _status_now():
     c = con()
     st = engine.get_setting(c, "index_status", {})
-    counts = c.execute("""SELECT (SELECT count(*) FROM products) products,
-                                 (SELECT count(*) FROM stores WHERE price_full_ts > 0) stores,
-                                 (SELECT count(DISTINCT chain_id) FROM stores WHERE price_full_ts > 0) chains,
+    # what the counters claim: branches with current prices (not web shops), chains by name (a chain can have several
+    # ids), products with a confirmed price somewhere now
+    cut = trust.fresh_cutoff()
+    fresh = c.execute("SELECT chain_id, count(*) FROM stores WHERE last_price_ts >= ? AND coalesce(store_type, 1) != 2 "
+                      "GROUP BY chain_id", (cut,)).fetchall()
+    counts = c.execute("""SELECT (SELECT count(*) FROM products WHERE store_count > 0) products,
                                  (SELECT max(last_price_ts) FROM stores) data_ts""").fetchone()
-    return {"index": st, **dict(counts), "located": len(geo.store_coords(c))}
+    return {"index": st, **dict(counts), "stores": sum(n for _, n in fresh),
+            "chains": len({chain_name(cid) for cid, _ in fresh}), "located": len(geo.store_coords(c))}
 
 
 @app.post("/api/reindex")
@@ -684,7 +700,9 @@ def _way(c, p=None):
     if hit is None:
         path = commute.path(h, w, travel)
         exact = geo.exact_stores(c)  # a branch placed at its town's centre can't be said to be along a route
-        hit = (path, commute.corridor(path["coords"], {sk: ll for sk, ll in geo.store_coords(c).items() if sk in exact}, width))
+        doors = _doors(c, fresh=False)  # nor a web shop, an app's listing or a warehouse
+        hit = (path, commute.corridor(path["coords"], {sk: ll for sk, ll in geo.store_coords(c).items()
+                                                       if sk in exact and sk in doors}, width))
         if not path["straight"]:
             if len(_way_cache) > 100:
                 _way_cache.clear()
@@ -694,6 +712,14 @@ def _way(c, p=None):
 
 # ---------------------------------------------------------------- per card: cheapest near you + price per 100 g / litre
 _near_cache = {}
+
+
+def _doors(c, fresh=True):
+    """The branches you can walk into (chains.walk_in: not a web shop, an online warehouse, a delivery app's listing
+    or another brand's shop), with current prices (fresh: within trust.FRESH_HOURS, as the ranking counts them)."""
+    return {(r[0], r[1]) for r in c.execute(
+        "SELECT chain_id, store_id, name, store_type, sub_chain FROM stores WHERE last_price_ts > 0 AND last_price_ts >= ?",
+        (trust.fresh_cutoff() if fresh else 0,)) if walk_in(r[0], r[2], r[3], r[4])}
 
 
 def _near_stores(c):
@@ -706,15 +732,15 @@ def _near_stores(c):
         return None
     _, way = _way(c, p)
     if way is not None:
-        kind = {(r[0], r[1]): r[2] for r in c.execute("SELECT chain_id, store_id, store_type FROM stores WHERE price_full_ts > 0")}
-        return {sk: round(v[0], 1) for sk, v in way.items() if sk in kind and kind[sk] != 2}
+        doors = _doors(c)
+        return {sk: round(v[0], 1) for sk, v in way.items() if sk in doors}
     k = (home["lat"], home["lon"], max_km, int(time.time() // 600))
     near = _near_cache.get(k)  # read once: another request may clear the cache
     if near is None:
-        kind = {(r[0], r[1]): r[2] for r in c.execute("SELECT chain_id, store_id, store_type FROM stores WHERE price_full_ts > 0")}
+        doors = _doors(c)
         near = {}
         for sk, (lat, lon) in geo.store_coords(c).items():
-            if sk in kind and kind[sk] != 2:  # online-only shops have no door to walk into
+            if sk in doors:  # web shops, apps' listings and warehouses have no door to walk into
                 d = geo.km(home["lat"], home["lon"], lat, lon)
                 if d <= float(max_km or 15):
                     near[sk] = round(d, 1)
@@ -737,13 +763,42 @@ def _per_measure(price, size):
     return None
 
 
+# a multi-pack name: its fields may give the whole pack or one unit
+MULTI_RX = re.compile(r"זוג|שלישי|רביעי|שישי|שמיני|מארז|\d\s*[*x×]|[*x×]\s*\d")
+_DIM = {"g": ("w", 1), "kg": ("w", 1000), "ml": ("v", 1), "L": ("v", 1000)}
+
+
+def _size_base(size):
+    n, u = size.split(" ")
+    dim, f = _DIM[u]
+    return dim, float(n) * f
+
+
 def _pack(d):
-    """The pack size to price per 100 g / litre: the chain's own fields first, since names carry other numbers
-    ("PRO 20 גרם" is 20 g of protein in a 200 g pot). When the chain gave a number but no unit, the name's size
-    counts only if it agrees with that number; a wrong unit price is worse than none."""
+    """The pack size to price per 100 g / litre. A wrong unit price is worse than none (a field of 1000 kg priced
+    kubbeh at ₪0.00 / 100 g), so there is none when:
+    - the chain's fields and the size in the name disagree (weight vs volume, or another amount: a multi-pack
+      name may give one unit's size and the fields the whole pack's, a whole multiple of it);
+    - a multi-pack's name gives no size (the fields may be one can of the six);
+    - the fields give a size no shop sells by itself (2 g or less, over 10 kg) and the name doesn't back it.
+    With no fields, the name's size counts only if it agrees with a unit-less quantity ("PRO 20 גרם" is protein)."""
+    name = d.get("name") or ""
     fields = catalog.size_of("", d.get("quantity"), d.get("unit"))
-    if fields or not d.get("size"):
-        return fields
+    named = catalog.size_of(name)
+    multi = bool(MULTI_RX.search(name))
+    if fields and named:
+        (fd, fn), (nd, nn) = _size_base(fields), _size_base(named)
+        if fd != nd:
+            return None
+        if abs(fn - nn) <= 0.01 * nn + 0.5:
+            return fields
+        k = fn / nn
+        return fields if multi and 2 <= round(k) <= 24 and abs(k - round(k)) < 0.02 else None
+    if fields:
+        _, n = _size_base(fields)
+        return None if multi or n <= 2 or n > 10000 else fields
+    if not d.get("size"):
+        return None
     try:
         q = float(d.get("quantity") or 0)
     except ValueError:
@@ -1155,7 +1210,8 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: i
     if nearby:
         c.execute("CREATE TEMP TABLE IF NOT EXISTS near(chain_id TEXT, store_id INTEGER, PRIMARY KEY(chain_id, store_id))")
         c.execute("DELETE FROM near")
-        c.executemany("INSERT INTO near VALUES(?,?)", [sk for sk in coords if sk in fresh and (
+        doors = _doors(c)  # a web shop's deal isn't a deal near you
+        c.executemany("INSERT INTO near VALUES(?,?)", [sk for sk in coords if sk in fresh and sk in doors and (
             sk in way if way is not None else dist(sk) <= float(max_km))])
         join = "JOIN near n ON n.chain_id=d.chain_id AND n.store_id=d.store_id"
     if not p.get("club"):
@@ -1219,7 +1275,7 @@ def deals(kind: str = "biggest", keys: str = "", limit: int = 12, skip_basket: i
                                       "store_count", "min_price", "max_price", "scope", "code")}
                    | {"img": _img(r["code"])}
                    | {"deal": {"chain": chain_name(r["chain_id"], names.get(r["chain_id"])), "chain_id": r["chain_id"],
-                               "store_id": r["store_id"], "store": st["name"] if st else "", "city": st["city"] if st else "",
+                               "store_id": r["store_id"], "store": st["name"] if st else "", "city": clean_place(st["city"]) if st else "",
                                "distance_km": round(d, 1) if d is not None else None, "price": r["price"],
                                "unit_price": r["unit_price"], "typical": r["typical"], "save_pct": r["save_pct"],
                                "min_qty": r["min_qty"], "description": r["description"], "start_ts": r["start_ts"],
@@ -1251,26 +1307,30 @@ def stores_near(limit: int = 600):
     if not home:
         return {"home": None, "max_km": None, "stores": []}
     names = {r["chain_id"]: r["name_he"] for r in c.execute("SELECT chain_id, name_he FROM chains")}
+    doors = _doors(c)  # branches you can walk into, with current prices (as ranked): no web shops, no stale files
     info = {(r["chain_id"], r["store_id"]): r for r in c.execute(
-        "SELECT chain_id, store_id, name, city, store_type FROM stores WHERE price_full_ts > 0")}
+        "SELECT chain_id, store_id, name, city FROM stores WHERE last_price_ts > 0")}
+    brand = engine.brands(c)
     path, way = _way(c, p)
     near = []
+    exact = geo.exact_stores(c)
     for sk, (lat, lon) in geo.store_coords(c).items():
-        if sk not in info or info[sk]["store_type"] == 2:  # online-only shops have no door to walk into
+        if sk not in info or sk not in doors:
             continue
+        prec = "exact" if sk in exact else "town"
         if way is not None:  # on my way: along the route, nearest to it first
             if sk in way:
-                near.append((way[sk][0], sk, lat, lon))
+                near.append((way[sk][0], sk, lat, lon, prec))
             continue
         d = geo.km(home["lat"], home["lon"], lat, lon)
         if d <= float(max_km or 15):
-            near.append((d, sk, lat, lon))
+            near.append((d, sk, lat, lon, prec))
     near.sort()
     out = {"home": home, "max_km": max_km, "total": len(near),
            "stores": [{"lat": lat, "lon": lon, "km": round(d, 1), "chain": chain_name(sk[0], names.get(sk[0])),
-                       "name": info[sk]["name"] or "", "city": info[sk]["city"] or "",
-                       **({"at": way[sk][1]} if way is not None else {})}
-                      for d, sk, lat, lon in near[:limit]]}
+                       "name": info[sk]["name"] or "", "city": clean_place(info[sk]["city"]), "precision": prec,
+                       "brand": brand.get(sk), **({"at": way[sk][1]} if way is not None else {})}
+                      for d, sk, lat, lon, prec in near[:limit]]}
     if way is not None:
         out.update(max_km=None, work=p["work"], travel=p.get("travel") or "car", detour_km=_detour(p),
                    route={k: path[k] for k in ("coords", "minutes", "km", "straight")})
@@ -1371,7 +1431,8 @@ def drive(body: dict = Body(...)):
     home = _clean_home(home)
     limit("drive", 40, 60)
     c = con()
-    coords = geo.store_coords(c)
+    exact = geo.exact_stores(c)  # a branch at its town's point has no drive time to give
+    coords = {sk: ll for sk, ll in geo.store_coords(c).items() if sk in exact}
     want = set()
     for x in (body.get("stores") if isinstance(body.get("stores"), list) else [])[:60]:
         try:
@@ -1417,7 +1478,7 @@ def product_history(key: str):
     and `ends`, the days a chain stopped having a confirmed price (a gap until its next point; `ended` when it hasn't
     come back). Only for a product that is the same everywhere (a barcode) or one chain's own item."""
     c = con()
-    out = {"since": _since(c), "today": int(time.strftime("%Y%m%d")), "chains": []}
+    out = {"since": _since(c), "today": int(time.strftime("%Y%m%d")), "chains": [], "source": backfill.source(c)}
     if ":" not in key and not comparable(key):
         return out
     names = {r[0]: r[1] for r in c.execute("SELECT chain_id, name_he FROM chains")}
@@ -1470,7 +1531,7 @@ def cart_history(body: dict = Body(...)):
     qty = {i["key"]: i["qty"] for i in _items(body.get("items"), MAX_ITEMS)}
     chains = [str(x) for x in (body.get("chains") or [])][:8]
     if not qty or not chains:
-        return {"since": _since(c), "series": {}, "ends": {}, "changes": {}}
+        return {"since": _since(c), "series": {}, "ends": {}, "changes": {}, "source": backfill.source(c)}
     flagged = _flagged(c, list(qty), set(chains))
     pts = {}
     for k, cid, day, mn in c.execute(
@@ -1507,7 +1568,7 @@ def cart_history(body: dict = Body(...)):
             series[cid] = line
             if gaps:
                 ends[cid] = gaps
-    return {"since": _since(c), "series": series, "ends": ends, "changes": changes}
+    return {"since": _since(c), "series": series, "ends": ends, "changes": changes, "source": backfill.source(c)}
 
 
 # ---------------------------------------------------------------- one store: address, opening hours, route from home
@@ -1559,7 +1620,7 @@ def _osm_area(home, max_km):
 
 
 def _store_row(c, chain_id, store_id):
-    s = c.execute("SELECT name, address, city FROM stores WHERE chain_id=? AND store_id=?", (chain_id, store_id)).fetchone()
+    s = c.execute("SELECT name, address, city, sub_chain FROM stores WHERE chain_id=? AND store_id=?", (chain_id, store_id)).fetchone()
     if not s:
         raise HTTPException(404, "store not found")
     he = c.execute("SELECT name_he FROM chains WHERE chain_id=?", (chain_id,)).fetchone()
@@ -1568,7 +1629,9 @@ def _store_row(c, chain_id, store_id):
 
 @app.get("/api/store/{chain_id}/{store_id}")
 def store_info(chain_id: str, store_id: int):
-    """Address and the driving route from home, for the store card under the map."""
+    """Address and the driving route from home, for the store card under the map. precision "town": the branch is
+    placed at its town's point (geo.located), so there is no route, road distance or drive time to give, only roughly
+    how far its town is ("km", in a straight line)."""
     c = con()
     s, chain, he = _store_row(c, chain_id, store_id)
     city = (s["city"] or "").strip()
@@ -1576,13 +1639,18 @@ def store_info(chain_id: str, store_id: int):
         t = c.execute("SELECT name FROM towns WHERE code=?", (int(city),)).fetchone() if geo._has_towns(c) else None
         city = t[0] if t else ""
     out = {"chain": chain, "brand_he": BRAND_HE.get(chain) or he, "name": s["name"] or "",
-           "address": (s["address"] or "").strip(), "city": city, "lat": None, "lon": None, "route": None}
+           "brand": engine.brands(c).get((chain_id, store_id)),
+           "address": clean_place(s["address"]), "city": clean_place(city), "lat": None, "lon": None, "route": None,
+           "precision": None, "km": None}
     ll = geo.store_coords(c).get((chain_id, store_id))
-    if ll:
-        out["lat"], out["lon"] = ll
+    loc = (*ll, "exact" if (chain_id, store_id) in geo.exact_stores(c) else "town") if ll else None
+    if loc:
+        out["lat"], out["lon"], out["precision"] = loc
         p = prefs()
         home = p.get("home")
         if home:
+            out["km"] = round(geo.km(home["lat"], home["lon"], *ll), 1)
+        if home and loc[2] == "exact":
             limit("route", 60, 60)
             try:
                 if _commuting(p):  # on my way: home -> this store -> work, and what the stop adds
@@ -1598,15 +1666,28 @@ def store_info(chain_id: str, store_id: int):
     return out
 
 
+HOURS_ALONE_KM = 0.3  # geo.match_hours' reach: another branch of the chain this close could be the shop it finds
+
+
 @app.get("/api/store/{chain_id}/{store_id}/hours")
 def store_hours(chain_id: str, store_id: int):
-    """Opening hours from OpenStreetMap, when someone has mapped them for this branch."""
+    """Opening hours from OpenStreetMap, when someone has mapped them for this branch. Only for a branch placed at its
+    own address with no other branch of its chain near it: a branch at its town's point, or two branches side by side
+    (Maayan 2000's 38 and 39 share a point), would get another shop's hours. {"hours": None, "placed": False} then."""
     c = con()
     _, chain, he = _store_row(c, chain_id, store_id)
     p = prefs()
-    ll = geo.store_coords(c).get((chain_id, store_id))
+    placed = geo.store_coords(c)
+    ll = placed.get((chain_id, store_id))
     if not ll or not p.get("home"):
         return {"hours": None, "week": None, "checked": False}
+    siblings = [(chain_id, r[0]) for r in c.execute(  # the chain's other shops (its app listings are the same shop)
+        "SELECT store_id, name, store_type, sub_chain FROM stores WHERE chain_id=? AND store_id<>?", (chain_id, store_id))
+        if walk_in(chain_id, r[1], r[2], r[3])]
+    alone = (chain_id, store_id) in geo.exact_stores(c) and not any(
+        sk in placed and geo.km(placed[sk][0], placed[sk][1], *ll) <= HOURS_ALONE_KM for sk in siblings)
+    if not alone:
+        return {"hours": None, "week": None, "checked": True, "placed": False}
     # on my way the branch can be far from home: the shops around the branch itself (cells of about a kilometre);
     # so is a branch beyond HOURS_KM of home
     home, max_km = p["home"], p.get("max_km")
@@ -1614,7 +1695,7 @@ def store_hours(chain_id: str, store_id: int):
     shops, ok = _osm_area({"lat": round(ll[0], 2), "lon": round(ll[1], 2)}, 1) if _commuting(p) or far \
         else _osm_area(home, min(float(max_km), HOURS_KM) if max_km is not None else None)
     hours, name = geo.match_hours(shops, ll[0], ll[1], [chain, BRAND_HE.get(chain, ""), he])
-    return {"hours": hours, "week": geo.parse_hours(hours), "name": name, "checked": ok}
+    return {"hours": hours, "week": geo.parse_hours(hours), "name": name, "checked": ok, "placed": True}
 
 
 # ---------------------------------------------------------------- compare
@@ -1751,7 +1832,7 @@ def _clean_home(h):
     for k in ("town", "street", "number"):
         if isinstance(h.get(k), int):
             out[k] = h[k]
-    for k in ("town_name", "street_name", "precision"):
+    for k in ("town_name", "street_name", "precision", "source"):
         if isinstance(h.get(k), str):
             out[k] = h[k][:80]
     return out
@@ -2128,8 +2209,8 @@ ADMIN_DIR = os.path.join(os.path.dirname(__file__), "admin")
 ADMIN_HEADERS = {
     "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
     # the page shows what visitors typed and sent: scripts only from this server, never inline
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                               "font-src https://fonts.gstatic.com; img-src 'self' https: data:; connect-src 'self'; "
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                               "font-src 'self'; img-src 'self' https: data:; connect-src 'self'; "
                                "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"}
 
 
@@ -2285,48 +2366,50 @@ LEGAL = {
     "he": {
         "privacy": ("פרטיות", [
             ("מה נשמר", "כשנכנסים עם Google או Facebook נשמרים השם, כתובת הדוא״ל ותמונת הפרופיל שהם מעבירים, ומזהה החשבון אצלם. "
-                        "בנוסף נשמרים הסלים שיצרת, הכתובת שבחרת (רחוב, מספר, יישוב ונקודה במפה), המרחק, השפה והגדרות דמי המשלוח."),
+                        "בנוסף נשמרים הסלים שיצרת, המקומות ששמרת (שם, רחוב, מספר, יישוב ונקודה במפה), הדרך שבחרת, המרחק, השפה והגדרות דמי המשלוח."),
             ("למה", "כדי להציג לך את הסלים שלך ואת המחירים בחנויות שליד הכתובת שבחרת, וכדי לדעת מה לשפר באתר. "
                     "אין פרסומות, אין כלי מעקב של אחרים ואין מכירה או מסירה של מידע."),
-            ("סטטיסטיקת שימוש", "השרת של סל קל עצמו שומר אילו עמודים נפתחו ולכמה זמן, חיפושים וכמה תוצאות נמצאו, לחיצות "
-                                "(על איזה כפתור, אף פעם לא מה שהוקלד), שגיאות וזמני טעינה, וסוג המכשיר, הדפדפן, המדינה והעיר "
+            ("סטטיסטיקת שימוש", "השרת של סל קל עצמו שומר אילו עמודים נפתחו ולכמה זמן, מה חיפשו וכמה תוצאות נמצאו, לחיצות "
+                                "(על איזה כפתור), שגיאות וזמני טעינה, וסוג המכשיר, הדפדפן, גודל המסך, המדינה והעיר "
                                 "כפי ש־Cloudflare מזהה אותם. כתובת ה־IP לא נשמרת. המידע נשמר 180 יום, רק מפעיל האתר רואה אותו, "
                                 "הוא לא נמסר לאף אחד ונמחק יחד עם החשבון."),
             ("שירותים חיצוניים", "הכתובת שבחרת נשלחת פעם אחת ל־OpenStreetMap (Nominatim) כדי לסמן אותה במפה, בלי שם או דוא״ל. "
-                                 "זמני נסיעה ומסלולים מחושבים ב־OSRM לפי נקודות במפה. Google ו־Facebook מעורבים רק ברגע הכניסה."),
+                                 "זמני נסיעה ומסלולים מחושבים ב־OSRM לפי נקודות במפה. אריחי המפה מגיעים מ־OpenFreeMap, ובדף הכניסה "
+                                 "יש בדיקת בוטים של Cloudflare. Google ו־Facebook מעורבים רק ברגע הכניסה."),
             ("עוגיות", "עוגיית כניסה אחת (HttpOnly) שומרת אותך מחובר/ת עד 180 יום, ועוגייה של בחירת השפה. "
                        "מזהה אקראי באחסון הדפדפן מבדיל בין ביקורים לצורך הסטטיסטיקה."),
-            ("מחיקה", "אפשר למחוק את החשבון ואת כל המידע בכל רגע: חשבון ← מחיקת החשבון שלי. המחיקה מיידית ומלאה, כולל סטטיסטיקת השימוש."),
+            ("מחיקה", "אפשר למחוק את החשבון בכל רגע: חשבון ← מחיקת החשבון שלי. החשבון, הסלים, המקומות, ההגדרות וסטטיסטיקת השימוש נמחקים מיד ממסד הנתונים של האתר."),
         ]),
         "data-deletion": ("מחיקת המידע שלך", [
             ("איך מוחקים", "נכנסים לסל קל, לוחצים על תמונת הפרופיל בכותרת, ובוחרים ״מחיקת החשבון שלי״. "
-                           "הסלים, הכתובת, ההגדרות, פרטי הכניסה, סטטיסטיקת השימוש וכל החיבורים הפעילים נמחקים מיד ולצמיתות."),
+                           "הסלים, המקומות, ההגדרות, פרטי הכניסה, סטטיסטיקת השימוש וכל החיבורים הפעילים נמחקים מיד ממסד הנתונים של האתר."),
             ("גם ב־Facebook", "אפשר להסיר את סל קל מהאפליקציות המחוברות בהגדרות Facebook (הגדרות ופרטיות ← אפליקציות ואתרים)."),
         ]),
     },
     "en": {
         "privacy": ("Privacy", [
             ("What is kept", "When you sign in with Google or Facebook, Sal-Kal keeps the name, email address and profile photo they pass on, "
-                             "and your account id there. It also keeps the carts you make, the address you choose (street, number, town "
-                             "and a point on the map), your distance, language and delivery-fee settings."),
+                             "and your account id there. It also keeps the carts you make, the places you save (name, street, number, town "
+                             "and a point on the map), your route, distance, language and delivery-fee settings."),
             ("Why", "To show you your carts and their prices at the stores near the address you chose, and to see what to "
                     "improve on the site. No ads, no outside trackers, and nothing is sold or passed on."),
-            ("Usage statistics", "Sal-Kal's own server keeps which pages were opened and for how long, searches and how many "
-                                 "results they found, clicks (which button, never what was typed), errors and load times, and "
-                                 "the device type, browser, country and city as Cloudflare reports them. IP addresses are not "
+            ("Usage statistics", "Sal-Kal's own server keeps which pages were opened and for how long, what was searched and how many "
+                                 "results it found, clicks (which button), errors and load times, and "
+                                 "the device type, browser, screen size, country and city as Cloudflare reports them. IP addresses are not "
                                  "kept. It is kept for 180 days, seen only by the site's operator, never passed on, and deleted "
                                  "with your account."),
             ("Outside services", "The address you choose is sent once to OpenStreetMap (Nominatim) to put it on the map, without your "
-                                 "name or email. Drive times and routes are worked out by OSRM from map points. Google and Facebook "
-                                 "are involved only when you sign in."),
+                                 "name or email. Drive times and routes are worked out by OSRM from map points. Map tiles come from "
+                                 "OpenFreeMap, and the sign-in page has a Cloudflare bot check. Google and Facebook are involved only "
+                                 "when you sign in."),
             ("Cookies", "One sign-in cookie (HttpOnly) keeps you signed in for up to 180 days, and one remembers your language. "
                         "A random id in the browser's storage tells visits apart for the usage statistics."),
-            ("Deleting", "You can delete your account and everything in it at any time: Account → Delete my account. It is "
-                         "immediate and complete, usage statistics included."),
+            ("Deleting", "You can delete your account at any time: Account → Delete my account. The account, carts, places, "
+                         "settings and usage statistics are erased from the site's database at once."),
         ]),
         "data-deletion": ("Deleting your data", [
-            ("How", "Open Sal-Kal, tap your profile picture in the header and choose “Delete my account”. Your carts, address, settings, "
-                    "sign-ins, usage statistics and every open session are erased at once and for good."),
+            ("How", "Open Sal-Kal, tap your profile picture in the header and choose “Delete my account”. Your carts, places, settings, "
+                    "sign-ins, usage statistics and every open session are erased from the site's database at once."),
             ("On Facebook too", "You can also remove Sal-Kal from your connected apps in Facebook’s settings (Settings & privacy → Apps and websites)."),
         ]),
     },
@@ -2347,8 +2430,8 @@ def _legal_page(kind, request, lang):
 <p class="legal-top"><a href="/">{'← סל קל' if lang == 'he' else '← Sal-Kal'}</a><a href="?lang={other}" lang="{other}">{'English' if lang == 'he' else 'עברית'}</a></p>
 <h1>{html.escape(title)}</h1>{body}</main></body></html>"""
     return HTMLResponse(page, headers={"Cache-Control": "no-cache", "Content-Security-Policy":
-                                       "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' "
-                                       "https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                                       "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; "
+                                       "font-src 'self'; "
                                        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"})
 
 

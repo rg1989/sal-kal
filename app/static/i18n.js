@@ -31,6 +31,7 @@ const HE = {
   'Any': 'כל', 'distance': 'מרחק',
   // ---- brand and header
   'Sal-Kal': 'סל קל', 'Sal-Kal — home': 'סל קל — דף הבית', 'Cart': 'סל', 'Your account': 'החשבון שלך',
+  'Price Watch': 'מעקב מחירים',
   'Search milk, eggs, a barcode…': 'חיפוש מוצרים — חלב, ביצים, ברקוד',
   'Search products (results appear as you type)': 'חיפוש מוצרים (התוצאות מופיעות תוך כדי הקלדה)',
   'Clear search': 'ניקוי החיפוש', 'Categories': 'קטגוריות', 'Stores near you': 'חנויות לידך',
@@ -47,7 +48,7 @@ const HE = {
   // ---- product cards
   'Add': 'הוספה', 'Add {n}': 'הוספת {n}', 'Add to cart': 'הוספה לסל', 'One less': 'פחות אחד', 'One more': 'עוד אחד',
   'from': 'החל מ־', 'near you': 'קרוב אליך', 'price': 'מחיר', 'each, ×{n}': 'ליחידה, ×{n}', 'deal price': 'מחיר מבצע',
-  'usually {price}': 'בדרך כלל {price}', 'Similar at {n}': 'דומה ב־{n}', '{chain} only': 'רק ב{chain}',
+  'shelf price {price}': 'מחיר מדף {price}', 'Similar at {n}': 'דומה ב־{n}', '{chain} only': 'רק ב{chain}',
   'Cheapest {price} at {chain}': 'הכי זול {price} ב{chain}', '{price} at {chain}': '{price} ב{chain}',
   'ends today': 'נגמר היום', 'ends tomorrow': 'נגמר מחר', 'ends {day}': 'נגמר ב{day}',
   // ---- browse
@@ -65,6 +66,7 @@ const HE = {
   'In your cart': 'בסל שלך', 'sold by weight': 'נמכר במשקל', 'Price at {chains}': 'מחיר ב־{chains}',
   'cheapest first': 'מהזול ליקר', 'More expensive': 'יקר יותר', 'Not sold within {n} km': 'לא נמכר ברדיוס {n} ק״מ',
   'Not on sale right now': 'לא נמכר כרגע', 'Price history': 'היסטוריית מחירים', 'Tracking since {day}.': 'במעקב מאז {day}.',
+  'Before {day}: from {source} ({license}), adapted.': 'לפני {day}: מתוך {source} ({license}), בעיבוד.',
   'Cheapest shelf price over time at each chain': 'מחיר המדף הזול לאורך זמן בכל רשת',
   'From {price} at {chain}': 'החל מ־{price} ב{chain}',
   // ---- statuses of a price
@@ -119,7 +121,8 @@ const HE = {
   'No stores within {n} km': 'אין חנויות ברדיוס {n} ק״מ', 'No store has these products': 'אין חנות עם המוצרים האלה',
   '{a} with your product': '{a} עם המוצר שלך', '{a} with all {n} products': '{a} עם כל {n} המוצרים',
   'Next cheapest': 'הבאות בתור', 'More expensive stores': 'חנויות יקרות יותר', 'More': 'עוד',
-  '30 days ago {price}': 'לפני 30 יום: {price}', 'Date': 'תאריך', 'This cart over time at {chains}': 'הסל הזה לאורך זמן ב{chains}',
+  '30 days ago {price}': 'לפני 30 יום: {price}', 'Date': 'תאריך', 'This cart over time at {chains}': 'הסל הזה לאורך זמן ב{chains}', 'This cart over time at {chains}, each product at the chain’s cheapest branch': 'הסל הזה לאורך זמן ב{chains}, כל מוצר בסניף הזול של הרשת',
+  'Each product at the chain’s cheapest branch that day': 'כל מוצר בסניף הזול של הרשת באותו יום',
   'Compare at least two stores': 'צריך לפחות שתי חנויות להשוואה', 'Up to 5 stores side by side': 'עד 5 חנויות זו לצד זו',
   'Product': 'מוצר', 'Cheapest for': 'הכי זול עבור', 'Whole cart': 'כל הסל',
   'Buying each product where it’s cheapest among these stores comes to {total} — {save} less than all of it at {chain}, if the extra stop is worth it to you.':
@@ -133,7 +136,9 @@ const HE = {
   '{a} of {n} products here': '{a} מתוך {n} מוצרים כאן', 'for your product': 'למוצר שלך',
   'Address not listed': 'הכתובת לא רשומה', 'Finding the address…': 'מאתרים את הכתובת…', '{n} km by road': '{n} ק״מ בכביש',
   'Opening hours: OpenStreetMap': 'שעות פתיחה: OpenStreetMap', 'Open in Waze': 'פתיחה ב־Waze',
-  'Open in Google Maps': 'פתיחה ב־Google Maps',
+  'Open in Google Maps': 'פתיחה ב־Google Maps', 'Search in Waze': 'חיפוש ב־Waze', 'Search in Google Maps': 'חיפוש ב־Google Maps',
+  'about {d} (town centre)': 'כ־{d} (מרכז היישוב)', 'about {d}': 'כ־{d}',
+  'OpenStreetMap · may differ on holidays': 'OpenStreetMap · בחגים ייתכן שונה',
   'The whole trip in Google Maps': 'כל הדרך ב־Google Maps', 'Navigate to stop {n} in Waze: {name}': 'ניווט לעצירה {n} ב־Waze: {name}',
   'Navigate to {place} in Waze': 'ניווט אל {place} ב־Waze',
   // ---- settings and dialogs
@@ -176,6 +181,10 @@ const HE = {
   'Couldn’t get your location. Choose your town below.': 'לא הצלחנו לקבל את המיקום. בחרו יישוב למטה.',
   'That location isn’t an address in Israel we can use. Choose your town below.': 'המיקום הזה אינו כתובת בישראל. בחרו יישוב למטה.',
   'Town centre: add a street to be exact': 'מרכז היישוב: הוסיפו רחוב לדיוק', 'Add the house number to be exact': 'הוסיפו מספר בית לדיוק',
+  'Pin on the street': 'הסיכה על הרחוב', 'Pin in the town centre': 'הסיכה במרכז היישוב',
+  'Drag the map so the pin is on your building': 'הזיזו את המפה כך שהסיכה תהיה על הבניין שלכם', 'Pin placed by you': 'הסיכה מוקמה על ידיכם',
+  'This number isn’t on the map: the pin is on the street': 'המספר לא מופיע במפה: הסיכה על הרחוב',
+  'The street isn’t on the map: the pin is in the town centre': 'הרחוב לא מופיע במפה: הסיכה במרכז היישוב',
   // ---- first run
   'Step 1 of 3': 'שלב 1 מתוך 3', 'Step 2 of 3': 'שלב 2 מתוך 3', 'Step 3 of 3': 'שלב 3 מתוך 3',
   'How far will you go?': 'כמה רחוק מוכנים לנסוע?', 'Carts': 'סלים', 'A cart is a list you name': 'סל הוא רשימה עם שם',
@@ -221,7 +230,7 @@ const CHAINS_HE = {
   'Salach Dabach': 'סאלח דבאח', 'Zol Ubegadol': 'זול ובגדול', 'Dor Alon': 'דור אלון', 'Bareket': 'ברקת',
   'Polizer': 'פוליצר', 'Super Yuda': 'סופר יודה', 'Super Sapir': 'סופר ספיר', 'Shuk HaIr': 'שוק העיר',
   'Netiv HaHesed': 'נתיב החסד', 'Maayan 2000': 'מעיין 2000', 'Shefa Birkat Hashem': 'שפע ברכת השם', 'H. Cohen': 'ח. כהן',
-  'City Market': 'סיטי מרקט', 'City Market Kiryat Gat': 'סיטי מרקט קריית גת', 'Mishnat Yosef': 'משנת יוסף',
+  'City Market': 'סיטי מרקט', 'City Market (main company)': 'סיטי מרקט חברה ראשית', 'Mishnat Yosef': 'משנת יוסף',
   'Stop Market': 'סטופ מרקט',
 };
 

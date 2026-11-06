@@ -5,7 +5,8 @@
 #   ./set-login.sh base-url https://sal.example.com
 #   ./set-login.sh owner-email you@gmail.com only this account takes over the household's carts (optional)
 #   ./set-login.sh turnstile <site key>      Cloudflare Turnstile bot check on sign-in; asks for the secret key
-#   ./set-login.sh off google|facebook|turnstile
+#   ./set-login.sh govmap <api key>          GovMap's national address points (exact houses); key registered to the site's domain
+#   ./set-login.sh off google|facebook|turnstile|govmap
 #   ./set-login.sh status
 # With no provider set up Sal runs as before: one household, no sign-in.
 set -euo pipefail

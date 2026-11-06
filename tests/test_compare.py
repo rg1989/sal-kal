@@ -280,7 +280,7 @@ finally:
 
 # one brand under several chain ids is one entry
 assert chains.chain_name("0000000000000") == chains.chain_name("7290000000003") == "City Market"
-assert chains.chain_name("7290058266241") == chains.chain_name("7290058288090") == "City Market Kiryat Gat"
+assert chains.chain_name("7290058266241") == chains.chain_name("7290058288090") == "City Market (main company)"
 assert chains.chain_name("7290058289400") == chains.chain_name("5144744100002") == "Mishnat Yosef"
 CM = ean("729000555555")
 product(c, CM, "במבה")
@@ -375,9 +375,9 @@ assert [ch["name"] for ch in r["chains"]] == ["Shufersal"], [ch["name"] for ch i
 assert r["chains"][0]["online"]["area_confirmed"] is True and r["no_area"] == []
 assert [(s["chain"], s["online"], s["store_id"]) for s in r["stale"]] == [("Rami Levy", True, 60)], r["stale"]
 
-# without a home, any web shop of the chain (the old behaviour): the one with the cart cheapest
+# without a home, a chain with several web shops has none that can be said to serve you: never the cheapest of them
 r = engine.compare(g, gcart, {"mode": "delivery"})
-assert {ch["name"]: ch["online"]["store_id"] for ch in r["chains"]}["Shufersal"] == 53
+assert "Shufersal" not in {ch["name"] for ch in r["chains"]}, r["chains"]
 engine.put_setting(g, "delivery", {})
 
 # produce only: no chain is complete and they are ordered by distance

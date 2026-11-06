@@ -212,11 +212,13 @@ assert engine.compare(g, [], {}, way=way)["way"] == {"plans": []}
 import importlib
 real_geo = importlib.reload(importlib.import_module("app.geo"))  # the comparison above faked store_coords
 x = connect(os.path.join(tmp, "exact.db"))
+x.execute("CREATE TABLE IF NOT EXISTS towns(code INTEGER PRIMARY KEY, name TEXT)")
+x.executemany("INSERT INTO towns VALUES(?,?)", [(8600, "רמת גן"), (6600, "חולון")])  # each point is checked against its town
 for cid, sid, name, addr, city in [
         ("A", 1, "Branch", "הרצל 10", "רמת גן"),          # its street: exact
         ("A", 2, "Branch", "unknown", "רמת גן"),          # only the town: the town's centre
         ("A", 3, "Branch", "ביאליק 5", "רמת גן"),          # a street the map didn't know: came back as the town
-        ("B", 1, "שופרסל קניון איילון", "", ""),           # the shop itself, found by name
+        ("B", 1, "שופרסל קניון איילון", "", ""),           # found by name only, no town to check it against: not placed
         ("C", 1, "Branch", "אחד 1", "חולון"), ("C", 2, "Branch", "שתיים 2", "חולון"),
         ("C", 3, "Branch", "שלוש 3", "חולון"),             # three addresses on one point: not their own
         ("D", 1, "Branch", "הקניון 1", "חולון"), ("D", 2, "Branch 2", "הקניון 1", "חולון")]:  # one mall, two shops
@@ -227,8 +229,8 @@ for q, lat, lon in [("הרצל 10, רמת גן", 32.081, 34.811), ("רמת גן"
                     ("שלוש 3, חולון", 32.01, 34.77), ("הקניון 1, חולון", 32.02, 34.78)]:
     x.execute("INSERT INTO geocache VALUES(?,?,?,0)", (q, lat, lon))
 x.commit()
-assert real_geo.exact_stores(x) == {("A", 1), ("B", 1), ("D", 1), ("D", 2)}, real_geo.exact_stores(x)
-assert len(real_geo.store_coords(x)) == 9
+assert real_geo.exact_stores(x) == {("A", 1), ("D", 1), ("D", 2)}, real_geo.exact_stores(x)
+assert len(real_geo.store_coords(x)) == 8 and ("B", 1) not in real_geo.store_coords(x)
 
 # ================================================================ the route service (no network: a fake answer)
 calls = []

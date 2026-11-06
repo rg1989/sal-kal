@@ -25,7 +25,8 @@ PACK_AFTER_FREE = re.compile(r"\s*(?:יח|גליל|ליטר|ל'|ק\"ג|גרם|מ
 SECOND_RE = re.compile(r"(?:ה)?שני(?:יה|ה)?\s*ב\s*-?\s*(\d{1,2})\s*%")     # השני ב-50%
 HALF_RE = re.compile(r"(?:ה)?שני(?:יה|ה)?\s*ב?\s*חצי\s*מחיר")              # השני בחצי מחיר
 PCT_RE = re.compile(r"(\d{1,2})\s*%")
-NUMS_RE = re.compile(r"(?<![\d.])" + NUM + r"(?![\d])")
+# a number followed by % is a rate, never a price ("50% הנחה" must not confirm a ₪50 deal price)
+NUMS_RE = re.compile(r"(?<![\d.])" + NUM + r"(?![\d.]|\s*%)")
 # the text names the bottle deposit: "פקדון", or Rami Levy's "2ב20 כולל" (deposit included) at the very end
 DEPOSIT_RE = re.compile(r"פקדון|פיקדון|(?<!לא )כולל\W*$")
 HEB = r"(?<![א-ת])"

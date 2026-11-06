@@ -1,12 +1,12 @@
 # Sal-Kal · סל קל
 
-**What your cart costs, at every supermarket near you.** Sal-Kal prices a whole shopping cart at every Israeli
-supermarket chain within your chosen distance, or along your way to work, and shows where it costs least.
+**What your cart costs at the supermarket chains near you.** Sal-Kal prices a whole shopping cart at every Israeli
+supermarket chain that publishes its prices, within your chosen distance, or along your way to work, and shows where it costs least.
 Live at **[sal-kal.com](https://sal-kal.com)**.
 
 **Not for profit, and open source.** Sal-Kal began as a personal project, built for one household's own shopping,
 not as a business. It is free for shoppers, has no ads, and no retailer pays for placement. All the code is in this
-repository under the [MIT license](LICENSE).
+repository under the [MIT license](LICENSE), apart from the bundled map libraries (BSD).
 
 <p align="center"><img src="app/static/landing/phone-checkout-map.webp" width="260" alt="Sal-Kal comparing a cart across stores">
 &nbsp;&nbsp;<img src="app/static/landing/phone-way-map.webp" width="260" alt="Sal-Kal splitting a cart between stops on the way"></p>
@@ -15,7 +15,8 @@ repository under the [MIT license](LICENSE).
 Section 30 of Israel's [Promotion of Competition in the Food and Pharm Sectors Law, 5774–2014](https://he.wikisource.org/wiki/חוק_קידום_התחרות_בענפי_המזון_והפארם)
 requires every large food retailer to publish online the current price of every product, separately for each store,
 updated through the day (the Price Transparency Regulations, 5775–2014). Anyone may use that data. Sal-Kal downloads
-the files with the open-source [israeli-supermarket-scarpers](https://github.com/OpenIsraeliSupermarkets/israeli-supermarket-scarpers),
+the files with Sefi Erlich's [israeli-supermarket-scarpers](https://github.com/OpenIsraeliSupermarkets/israeli-supermarket-scarpers)
+(free for non-commercial use, with credit; Sal-Kal runs it with changes of its own, in `app/scraper_fixes.py`),
 indexes them, and counts a price only when it can be confirmed:
 - the store's file is current (under 26 hours old);
 - it's the same product: a valid manufacturer barcode, named consistently across chains;
@@ -35,7 +36,7 @@ estimate. The price files don't bind the till price; the shelf tag does.
 - **On the way**: pick where from, where to and how (car, bike, on foot). Sal-Kal prices the branches along the route
   and splits the cart over 1–5 stops, showing what each extra stop saves and what it adds to the trip.
 - **Compare product by product**: up to 5 chains side by side, the cheapest per product marked, and the split-shop saving.
-- **Price history** per product and per cart, kept daily since 2026-11-05, with 30-day changes.
+- **Price history** per product and per cart, kept daily since 2026-11-05 (earlier days from the OpenIsraeliSupermarkets archive).
 - **Deals**: biggest savings near you, deals that started this week, deals ending soon. Club prices only if you ask.
 - **Delivery**: online-store totals with each chain's delivery fee, ranked only for chains you say deliver to you.
 - Hebrew by default, with a mirrored right-to-left layout, and English.
@@ -43,13 +44,13 @@ estimate. The price files don't bind the till price; the shelf tag does.
 - Built for phones: bottom sheets, haptics, skeleton loading, and an installable app (PWA, no app store).
 
 ## Privacy
-No outside trackers or ads. Usage statistics are first-party, hold no IP addresses or typed text, and are kept 180
-days. Carts and settings are never sold or passed on. Deleting your account deletes everything tied to it. See
+No ads. Usage statistics are first-party, hold no IP addresses, and are kept 180 days. Carts and settings are never
+sold or passed on. Deleting your account erases it from the site's database. See
 [/privacy](https://sal-kal.com/privacy).
 
 ## Stack
 Python 3.12, FastAPI and SQLite (FTS5) on the server. The frontend is vanilla JS with no build step, MapLibre with
-OpenFreeMap tiles, Nominatim and OSRM. It runs on a home server in a systemd sandbox behind a Cloudflare Tunnel;
+OpenFreeMap tiles, Nominatim and OSRM. It runs on a server in Israel in a systemd sandbox behind a Cloudflare Tunnel;
 see `deploy/`.
 
 ### Install it on your own computer (Mac, Windows, Linux)

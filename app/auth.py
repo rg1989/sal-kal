@@ -10,6 +10,7 @@ Config: auth.json next to the price DB (or $SAL_AUTH), readable by Sal only. Fil
     ./set-login.sh facebook <app id>
     ./set-login.sh base-url https://sal.example.com
     ./set-login.sh turnstile <site key>      Cloudflare Turnstile bot check on sign-in (asks for its secret key)
+    ./set-login.sh govmap <api key>          GovMap's national address points for exact house locations
 With no provider set up Sal runs as before: one household, no sign-in ("local" mode).
 
 The household's carts and settings from before accounts belong to user 1. The first account to sign in takes them
@@ -321,11 +322,13 @@ def main(argv=None):
         cfg["facebook"] = {"app_id": a[1], "app_secret": secret()}
     elif a[:1] == ["turnstile"] and len(a) in (2, 3):  # Cloudflare Turnstile: site key, then its secret key
         cfg["turnstile"] = {"site_key": a[1], "secret": secret()}
+    elif a[:1] == ["govmap"] and len(a) == 2:  # GovMap API key (registered to the site's domain): exact house points
+        cfg["govmap"] = {"key": a[1].strip()}
     elif a[:1] == ["base-url"] and len(a) == 2:
         cfg["base_url"] = a[1].rstrip("/")
     elif a[:1] == ["owner-email"] and len(a) == 2:
         cfg["owner_email"] = a[1].strip().lower()
-    elif a[:1] == ["off"] and len(a) == 2 and a[1] in ("google", "facebook", "turnstile"):
+    elif a[:1] == ["off"] and len(a) == 2 and a[1] in ("google", "facebook", "turnstile", "govmap"):
         cfg.pop(a[1], None)
     elif a[:1] in ([], ["status"]):
         print("config:", config_path())
@@ -333,6 +336,7 @@ def main(argv=None):
         print("base url:", cfg.get("base_url") or "(from each request)")
         t = cfg.get("turnstile") or {}
         print("bot check (Turnstile):", "on, site key " + t["site_key"] if t.get("site_key") and t.get("secret") else "off")
+        print("addresses from GovMap:", "on" if (cfg.get("govmap") or {}).get("key") else "off (OpenStreetMap only)")
         return 0
     else:
         print(__doc__)

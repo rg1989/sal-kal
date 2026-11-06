@@ -13,11 +13,10 @@
 <!--LINKS-->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD23F'/%3E%3Cg fill='none' stroke='%231C2321' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.3 13 14 8.2M20.7 13 18 8.2'/%3E%3Cpath d='M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z'/%3E%3Cpath d='M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/fonts/fonts.css">
+<link rel="stylesheet" href="/static/site.css">
 <link rel="stylesheet" href="/static/prices.css">
-<script>try{if(localStorage.getItem("lang")==="en"){document.documentElement.lang="en";document.documentElement.dir="ltr"}}catch(e){}</script>
+<script>try{var s=localStorage,r=document.documentElement;if(s.getItem("lang")==="en"){r.lang="en";r.dir="ltr"}if(s.getItem("cart")||s.getItem("pw_member")||s.getItem("pw_return"))r.classList.add("pw-check")}catch(e){}</script>
 </head>
 <body data-page="prices">
 <header class="bar">
@@ -25,30 +24,35 @@
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" class="tile"/><g class="ink" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
     <span lang="he">סל קל</span><span lang="en">Sal-Kal</span>
   </a>
-  <nav class="tabs" aria-label="Price board">
-    <a href="/prices" data-tab="prices"><span lang="he">מחירון</span><span lang="en">Prices</span></a>
-    <a href="/prices/changes" data-tab="changes"><span lang="he">שינויים</span><span lang="en">Changes</span></a>
-  </nav>
   <div class="bar-end">
+    <a class="pw-tag" href="/prices" aria-current="page"><span class="pw-in"><svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M10.2 2.8h5.4a1.6 1.6 0 0 1 1.6 1.6v5.4a1.6 1.6 0 0 1-.47 1.13l-6.3 6.3a1.6 1.6 0 0 1-2.26 0l-5.4-5.4a1.6 1.6 0 0 1 0-2.26l6.3-6.3a1.6 1.6 0 0 1 1.13-.47z"/><circle cx="13.6" cy="6.4" r="1.4"/></g></svg><span class="pw-t"><span lang="he">מעקב מחירים</span><span lang="en">Price Watch</span></span></span></a>
     <div class="langs" role="radiogroup" aria-label="Language / שפה">
-      <button type="button" role="radio" data-lang="he" lang="he">עברית</button>
-      <button type="button" role="radio" data-lang="en" lang="en">English</button>
+      <button type="button" role="radio" data-lang="he" lang="he"><i class="flag il" aria-hidden="true"></i>עברית</button>
+      <button type="button" role="radio" data-lang="en" lang="en"><i class="flag us" aria-hidden="true"></i>English</button>
     </div>
-    <a class="btn" href="/app" id="open-app"><span lang="he">לסל קל</span><span lang="en">Open Sal-Kal</span></a>
+    <a class="btn ghost" href="/app" data-open-app><span lang="he">כניסה</span><span lang="en">Sign in</span></a>
   </div>
 </header>
-<main class="board">
+<main class="board" id="main">
 <!--MAIN-->
 </main>
 <footer class="foot">
-  <p><span lang="he">המחירים: קובצי המחירים שהרשתות מחויבות לפרסם לפי חוק קידום התחרות בענפי המזון (2014), סעיף 30. רק מחירים מאומתים: חנויות עדכניות, אותו ברקוד באותו שם בכל הרשתות, מחיר שתואם את שאר החנויות. המחיר בתא הוא הזול ביותר בסניפי הרשת; המחיר המחייב הוא זה שעל המדף.</span>
-    <span lang="en">Prices: the files chains must publish under Israel's Food Act (2014), section 30. Confirmed prices only: current stores, the same barcode named alike at every chain, prices in line with other stores. A cell is the chain's cheapest branch; the shelf tag is what binds.</span></p>
-  <p class="links"><a href="/about"><span lang="he">על סל קל</span><span lang="en">About Sal-Kal</span></a>
-    <a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener">GitHub</a>
-    <a href="/privacy"><span lang="he">פרטיות</span><span lang="en">Privacy</span></a></p>
+  <div class="foot-in">
+    <p class="credit"><span lang="he">נבנה על ידי</span><span lang="en">Built by</span>
+      <a href="https://www.linkedin.com/in/roman-grinevich/" target="_blank" rel="noopener">Roman Grinevich</a></p>
+    <nav class="foot-links">
+      <a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
+      <a href="https://www.linkedin.com/in/roman-grinevich/" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M0 1.15C0 .52.52 0 1.17 0h13.66C15.48 0 16 .52 16 1.15v13.7c0 .63-.52 1.15-1.17 1.15H1.17C.52 16 0 15.48 0 14.85V1.15zm4.94 12.24V6.17H2.54v7.22h2.4zM3.74 5.18c.84 0 1.36-.55 1.36-1.25-.02-.71-.52-1.25-1.34-1.25-.82 0-1.36.54-1.36 1.25 0 .7.52 1.25 1.33 1.25h.01zm4.91 8.21V9.36c0-.22.02-.43.08-.59.17-.43.57-.88 1.23-.88.87 0 1.21.66 1.21 1.63v3.87h2.4V9.25c0-2.22-1.18-3.25-2.76-3.25-1.28 0-1.84.7-2.16 1.2v.03h-.02l.02-.03V6.17h-2.4c.03.68 0 7.22 0 7.22h2.4z"/></svg>LinkedIn</a>
+      <a href="/prices"><span lang="he">מעקב מחירים</span><span lang="en">Price Watch</span></a>
+      <a href="/privacy"><span lang="he">פרטיות</span><span lang="en">Privacy</span></a>
+      <a href="/data-deletion"><span lang="he">מחיקת המידע</span><span lang="en">Deleting your data</span></a>
+    </nav>
+    <p class="fine"><span lang="he">המחירים: קובצי המחירים שהרשתות מחויבות לפרסם לפי חוק קידום התחרות בענפי המזון (2014), סעיף 30. רק מחירים מאומתים: חנויות עדכניות, אותו ברקוד באותו שם בכל הרשתות, מחיר שתואם את שאר החנויות. המחיר המחייב הוא זה שעל המדף.</span><span lang="en">Prices: the files chains must publish under Israel's Food Act (2014), section 30. Confirmed prices only: current stores, the same barcode named alike at every chain, prices in line with other stores. The shelf tag is what binds.</span></p>
+  </div>
 </footer>
 <!--DATA-->
 <script src="/static/usage.js"></script>
+<script src="/static/site.js"></script>
 <script src="/static/prices.js"></script>
 </body>
 </html>

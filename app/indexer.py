@@ -231,13 +231,32 @@ def product_key(chain, code, weighted=False):
     return f"{chain}:{code}", "chain"
 
 
+# Files declared ISO-8859-8 often hold Windows-1255 bytes (niqqud, ₪). lxml with recover=True stops at the first such
+# byte and raises nothing: the rest of the file was silently lost. Windows-1255 reads every ISO-8859-8 Hebrew byte the same.
+HEBREW_DECL = re.compile(rb"""encoding\s*=\s*["']\s*iso[-_]?8859[-_]?8""", re.I)
+PARSE_ERRORS = []  # (file name, message): this run's files with XML errors that can leave parts unread
+HARMLESS = {"ERR_INVALID_CHAR", "ERR_NAME_REQUIRED", "ERR_ENTITYREF_SEMICOL_MISSING", "ERR_UNDECLARED_ENTITY"}
+
+
+def _head(src, n=512):
+    if hasattr(src, "peek"):
+        return src.peek(n)[:n]
+    pos = src.tell()
+    head = src.read(n)
+    src.seek(pos)
+    return head
+
+
 def iter_records(path, tags, require):
-    """Stream records: elements whose local tag is in `tags` and that contain a `require` field."""
+    """Stream records: elements whose local tag is in `tags` and that contain a `require` field. A SubChainName
+    applies to the stores inside its own SubChain section (a Stores file can hold several)."""
     src = open_xml(path)
+    ctx = None
     try:
+        enc = "windows-1255" if HEBREW_DECL.search(_head(src)) else None
         # no entities, DTDs or network: the files come from outside (a chain's portal), so they get no say
         ctx = etree.iterparse(src, events=("end",), recover=True, huge_tree=True, resolve_entities=False,
-                              load_dtd=False, no_network=True)
+                              load_dtd=False, no_network=True, encoding=enc)
         header = {}
         for _, el in ctx:
             t = local(el.tag)
@@ -248,20 +267,62 @@ def iter_records(path, tags, require):
                 if parent is not None:
                     while el.getprevious() is not None:
                         del parent[0]
-            elif len(el) == 0 and t in ("chainid", "chainname", "storeid", "subchainname"):
+            elif t == "subchainname" and len(el) == 0:
+                header[t] = (el.text or "").strip()
+            elif t == "subchain":
+                header.pop("subchainname", None)
+            elif len(el) == 0 and t in ("chainid", "chainname", "storeid"):
                 header.setdefault(t, (el.text or "").strip())
     except etree.XMLSyntaxError as e:
         log.warning("XML error in %s: %s", path, e)
+        PARSE_ERRORS.append((os.path.basename(path), str(e)))
     finally:
         src.close()
+    # recover=True raises nothing: after a bad byte in the declared encoding, a mismatched tag or a second root, the
+    # rest of the file may go unread. A bad character or a stray "&" loses nothing, so those aren't counted.
+    fatal = [e for e in (ctx.error_log if ctx is not None else [])
+             if e.level == etree.ErrorLevels.FATAL and e.type_name not in HARMLESS]
+    if fatal:
+        log.warning("%s: XML errors from line %d (%s), parts may be unread", path, fatal[0].line, fatal[0].message)
+        PARSE_ERRORS.append((os.path.basename(path), f"line {fatal[0].line}: {fatal[0].message}"))
 
 
 # ---------------------------------------------------------------- parsers
+UNKNOWN = ("unknown", "לא ידוע", "-", "0")
+
+
+def _known(v):
+    v = (v or "").strip()
+    return "" if v.lower() in UNKNOWN else v
+
+
+def _split_name(name, town_names):
+    """City Market Shops names a store "<company>, <street> <town>" and leaves Address and City "unknown". Split it
+    only when the text after the last comma ends with a town on the official list; otherwise the store stays
+    unplaced (never a guess)."""
+    head, sep, tail = name.rpartition(",")
+    if not sep or not head.strip():
+        return None
+    words = tail.split()
+    for n in (3, 2, 1):
+        if len(words) > n and " ".join(words[-n:]) in town_names:
+            return head.strip(), " ".join(words[:-n]), " ".join(words[-n:])
+    return None
+
+
 def index_stores(con, path, meta):
     rows, chain_names = [], {}
-    for el, header in iter_records(path, {"store", "branch"}, "storeid"):
+    try:
+        town_names = {r[0] for r in con.execute("SELECT name FROM towns")}
+    except Exception:  # an empty database before app.geo has fetched the list
+        town_names = set()
+    seen_ids = 0
+    # City Market Shops wraps each store once more: <Store><SubChainStoreXMLObject><StoreId>…
+    for el, header in iter_records(path, {"store", "branch", "subchainstorexmlobject"}, "storeid"):
         d = children(el)
         sid = d.get("storeid") or d.get("storenumber") or d.get("branchid")
+        if sid is not None:
+            seen_ids += 1
         if not sid or not sid.strip().lstrip("-").isdigit():
             continue
         chain = d.get("chainid") or header.get("chainid") or meta["chain"]
@@ -269,10 +330,18 @@ def index_stores(con, path, meta):
         if cname:
             chain_names[chain] = cname
         stype = d.get("storetype")
-        rows.append((chain, int(sid), d.get("storename") or d.get("branchname") or "",
-                     d.get("address") or "", d.get("city") or "",
+        name = (d.get("storename") or d.get("branchname") or "").strip()
+        address, city = _known(d.get("address")), _known(d.get("city"))
+        if not address and not city:
+            split = _split_name(name, town_names)
+            if split:
+                name, address, city = split
+        rows.append((chain, int(sid), name, address, city,
                      int(stype) if stype and stype.isdigit() else None,
                      d.get("subchainname") or header.get("subchainname") or ""))
+    if not rows:
+        log.warning("%s: no stores read (%d StoreId fields seen)", path, seen_ids)
+        PARSE_ERRORS.append((os.path.basename(path), "no stores read"))
     con.executemany(
         """INSERT INTO stores(chain_id, store_id, name, address, city, store_type, sub_chain)
            VALUES(?,?,?,?,?,?,?)
@@ -344,19 +413,45 @@ def write_names(con, names):
                     names)
 
 
-def _item_codes(el, promo_gift):
+ITEM_TERMS = ("discountedprice", "minqty", "discountrate")
+
+
+def _item_codes(el, promo_gift, terms=None):
+    """Item codes a promotion applies to. Items can carry their own DiscountedPrice / MinQty / DiscountRate (a
+    Shufersal "50% off jewellery" lists each piece at its own price): the promotion is stored with one set of terms,
+    so with `terms` (the promotion's own, from its first leaves) an item whose own terms differ is left out rather
+    than priced at another item's price."""
     codes = []
     for c in el.iter():
         t = local(c.tag)
-        if t == "item" or (t == "itemcode" and local(c.getparent().tag) != "item"):
-            if t == "item":
+        if t in ("item", "promotionitem") or (t == "itemcode" and local(c.getparent().tag) not in ("item", "promotionitem")):
+            if t != "itemcode":
                 f = children(c)
                 code, gift = f.get("itemcode"), f.get("isgiftitem", "0")
+                if terms and any(num(f.get(k)) is not None and num(terms.get(k)) is not None
+                                 and abs(num(f.get(k)) - num(terms.get(k))) > 0.005 for k in ITEM_TERMS):
+                    continue
             else:
                 code, gift = (c.text or "").strip(), promo_gift
             if code and (gift or "0").strip() != "1":
                 codes.append(code)
     return list(dict.fromkeys(codes))
+
+
+def _club_codes(v):
+    """ClubID -> club codes. Plain "0" / "2" (most chains, "0 - כלל הלקוחות" at Shufersal), Carrefour's
+    "(2=מועדון קרפור אשראי|2=מועדון אפליקציה)" and King Store's '("מועדון לקוחות=3" | …)'. A non-empty value with
+    no readable code is "?": not shown to be open to everyone, so it counts as club-only."""
+    v = (v or "").strip()
+    if not v:
+        return []
+    m = re.match(r"\d+(?!\s*=)", v)
+    if m and not re.search(r"=\s*\d|\d\s*=", v):
+        return [str(int(m.group(0)))]
+    found = [str(int(x)) for x in re.findall(r"(?<![\d.])(\d+)\s*=", v) + re.findall(r"=\s*(\d+)(?![\d.])", v)]
+    if "עובד" in v:  # StopMarket's "1=עובדים": the store's own code, but for its staff, never a shopper's club
+        found.append("staff")
+    return found or ["?"]
 
 
 def _promo_fields(el):
@@ -391,15 +486,16 @@ def _promo_fields(el):
     if len(groups) >= 2:
         per = [_item_codes(g, gift) for g in groups]
         later = set().union(*per[1:])
-        codes = [c for c in per[0] if c in later]
+        codes = [c for c in _item_codes(groups[0], gift, d) if c in later]
         listed = list(dict.fromkeys(c for p in per for c in p))
     else:
-        codes = listed = _item_codes(el, gift)
+        listed = _item_codes(el, gift)
+        codes = _item_codes(el, gift, d)
     club_ids = []
     for c in clubs:
-        m = re.match(r"\d+", c)
-        if m and str(int(m.group(0))) not in club_ids:
-            club_ids.append(str(int(m.group(0))))
+        for code in _club_codes(c):
+            if code not in club_ids:
+                club_ids.append(code)
     return {"d": d, "codes": codes, "listed": listed, "club_ids": club_ids, "spend": spend,
             "max_qty": min(caps) if caps else None,
             "start": date_int(d.get("promotionstartdate"), d.get("promotionstarthour"))
@@ -421,6 +517,9 @@ def _promo_skip(p, now_int):
         return "store-wide"
     if p["end"] and p["end"] < now_int:
         return "ended"
+    days = set(re.findall(r"[1-7]", d.get("promotiondays", "")))
+    if days and len(days) < 7:  # only on some weekdays ("1,3,4,5,6,7"): it would be counted on the others too
+        return "some days only"
     if not num(d.get("discountedprice")) and not num(d.get("discountrate")):
         return "no price"
     return None
@@ -552,6 +651,7 @@ def _run(con, dumps, only, confirm_always, rebuild_since=None):
     started = time.time()
     now_int = int(time.strftime("%Y%m%d%H%M"))
     set_status(con, running=True, started=int(started), error=None)
+    PARSE_ERRORS.clear()
     done = {r["path"]: r["size"] for r in con.execute("SELECT path, size FROM files")}
     found = scan(dumps)
     set_folders(con, found)
@@ -664,8 +764,11 @@ def _run(con, dumps, only, confirm_always, rebuild_since=None):
     cleanup(con)
     if plan or confirm_always or confirm_due(con):
         confirm(con, rebuild_since=rebuild_since)
+    # files with XML errors (or Stores files with no stores) show on /admin until a run has none
+    error = (f"{len(PARSE_ERRORS)} files with XML errors, parts may be unread; e.g. {PARSE_ERRORS[0][0]}: "
+             f"{PARSE_ERRORS[0][1]}" if PARSE_ERRORS else None)
     set_status(con, running=False, finished=int(time.time()), processed=len(plan),
-               rows=n_rows, seconds=int(time.time() - started))
+               rows=n_rows, seconds=int(time.time() - started), error=error)
     con.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # fold the write-ahead log back in; it otherwise grows by GBs
     log.info("done: %d files, %d rows in %ds", len(plan), n_rows, time.time() - started)
 
@@ -777,6 +880,12 @@ def update_stats(con):
     log.info("stats in %.0fs", time.time() - t)
 
 
+PLACEHOLDER = 0.10  # a price at or under this is a placeholder, not a price
+# City Market Shops' franchisees use the chain's internal codes for different items (code 49: "מיאסי" at one store,
+# bread crumbs at another, a grill rack at a third; 38% of its codes sold at 2+ stores): none of them is trusted
+UNTRUSTED_CODES = ("7290000000003:",)
+
+
 def judge_prices(rows, compared=True):
     """Outlier check for one product. rows: [(retailer, chain_id, store_id, price)] at fresh stores, without
     name-flagged pairs. Returns (typical price for products.median or None, [(chain_id, store_id, median shown)]).
@@ -790,11 +899,21 @@ def judge_prices(rows, compared=True):
     - 1 retailer, or a code each chain uses for its own item: judged within each retailer, against its own median,
       once it has trust.OUTLIER_MIN_STORES stores; with fewer the published price stands."""
     lo, hi = trust.OUTLIER
+    # ₪0.10 or less is a placeholder (a bag, a coupon line, Dor Alon's ₪0.01 bread dated 2015-01-01), never a price
+    tiny = [(ch, st, p) for _, ch, st, p in rows if p <= PLACEHOLDER]
+    if tiny:
+        rows = [r for r in rows if r[3] > PLACEHOLDER]
+        if not rows:
+            return None, tiny
+        typical, out = judge_prices(rows, compared)
+        return typical, out + tiny
     r0 = rows[0][0]
     if all(r[0] == r0 for r in rows):  # one retailer (most products): the common case, kept cheap
         m = statistics.median([r[3] for r in rows])
         if len(rows) < trust.OUTLIER_MIN_STORES:
-            return m, []
+            # too few stores to tell which is right: when they are 3x apart (₪29.90 and ₪370), none counts
+            ps = [r[3] for r in rows]
+            return m, ([(ch, st, m) for _, ch, st, _ in rows] if max(ps) > min(ps) * hi else [])
         return m, [(ch, st, m) for _, ch, st, p in rows if p < m * lo or p > m * hi]
     by = defaultdict(list)
     for r, ch, st, p in rows:
@@ -815,6 +934,8 @@ def judge_prices(rows, compared=True):
     for r, v in by.items():
         if len(v) >= trust.OUTLIER_MIN_STORES:
             out.extend((ch, st, med[r]) for ch, st, p in v if p < med[r] * lo or p > med[r] * hi)
+        elif max(p for _, _, p in v) > min(p for _, _, p in v) * hi:  # too few stores to tell, 3x apart: none counts
+            out.extend((ch, st, med[r]) for ch, st, _ in v)
     return (next(iter(med.values())) if len(med) == 1 else None), out
 
 
@@ -833,6 +954,8 @@ def build_price_flags(con, cutoff):
     def flush():
         if rows:
             med, fl = judge_prices(rows, cmp_cur)
+            if cur.startswith(UNTRUSTED_CODES):
+                med, fl = None, [(ch, st, med or 0) for _, ch, st, _ in rows]
             medians.append((cur, med))
             flags.extend((cur, ch, st, m) for ch, st, m in fl)
 

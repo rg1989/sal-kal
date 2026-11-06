@@ -13,7 +13,7 @@ import time
 from collections import defaultdict
 
 from . import commute, deal_terms, geo, trust
-from .chains import DELIVERY_DEFAULTS, ONLINE_HINTS, chain_name
+from .chains import DELIVERY_DEFAULTS, chain_name, clean_place, general_web_shop, store_kind, sub_brand
 
 try:
     from .indexer import is_global_code, normalize_name
@@ -141,6 +141,11 @@ def price_line(price, qty, promos, club=False, memo=None, deals_ok=True):
             continue
         cap = deal_cap(pr, memo)
         cost = trust.cost_with(price, qty, terms, cap)
+        if cost is not None and cost < 0.3 * price * qty - 0.005:  # over 70% off: a data error, never counted
+            if d and d not in seen:
+                seen.add(d)
+                not_counted.append(d)
+            continue
         if cost is not None:
             if cost < best - 0.005:
                 best, best_promo = cost, pr
@@ -160,23 +165,69 @@ def line_cost(price, qty, promos, club=False):
     return cost, promo
 
 
+def _kind(store):
+    return store_kind(store["chain_id"], store["name"], store["store_type"], store.get("sub_chain"))
+
+
 def _is_online(store):
-    if store["store_type"] in (2, 3):
-        return True
-    name = (store["name"] or "") + " " + (store["sub_chain"] or "")
-    return any(h in name for h in ONLINE_HINTS)
+    """The chain's web shop or online warehouse, or a branch that also takes online orders (StoreType 3). Never a
+    delivery app's listing, another brand's shop in the chain's file, or a test/closed venue."""
+    k = _kind(store)
+    return k == "online" or (k == "shop" and store["store_type"] == 3)
 
 
 def _is_physical(store):
-    return store["store_type"] in (None, 1, 3) and not (store["store_type"] is None and _is_online(store))
+    """A branch you can walk into (chains.store_kind)."""
+    return store["store_type"] in (None, 1, 3) and _kind(store) == "shop"
 
 
 def _online_rank(store):
     """0 = the chain's web shop (StoreType 2, or named as one), 1 = a branch that also takes online orders."""
-    if store["store_type"] == 2:
-        return 0
-    name = (store["name"] or "") + " " + (store["sub_chain"] or "")
-    return 0 if any(h in name for h in ONLINE_HINTS) else 1
+    return 0 if _kind(store) == "online" else 1
+
+
+def brands(con, stores=None):
+    """(chain, store) -> the branch's own brand (its SubChainName) where a chain runs several: Shufersal's "יוניברס" or
+    "Be", Netiv HaHesed's "בר-כל" and "שירה מרקט", Super Sapir's "נטו חיסכון". Shown with the chain's name, which
+    still groups and colours it."""
+    rows = stores.values() if stores is not None else [dict(r) for r in con.execute(
+        "SELECT chain_id, store_id, sub_chain FROM stores")]
+    he = {r[0]: (r[1] or "").strip() for r in con.execute("SELECT chain_id, name_he FROM chains")}
+    subs = defaultdict(set)
+    for st in rows:
+        b = sub_brand(st.get("sub_chain"))
+        if b:
+            subs[st["chain_id"]].add(b)
+    out = {}
+    for st in rows:
+        b = sub_brand(st.get("sub_chain"))
+        if b and len(subs[st["chain_id"]]) >= 2 and b != he.get(st["chain_id"]):
+            out[(st["chain_id"], st["store_id"])] = b
+    return out
+
+
+REGIONAL_KM = 30  # a chain with several web shops (Tiv Taam's "ליקוט", Shuk HaIr, Wolt Market): only one this near
+                  # you can be the one that serves you
+
+
+def online_store(cands, stores, loc, has_home):
+    """The online store that prices a chain's delivery for you, from its candidates (every online store in its files,
+    priced or not): its web shops, else its branches that also deliver. A chain with one web shop: that one. With
+    several (regional ones): the nearest within REGIONAL_KM of you, else the one web shop that names no place
+    (Mahsanei HaShuk's "97 אינטרנט", not "96 אינטרנט אילת"). Branches that deliver count only within REGIONAL_KM.
+    None when it can't be told: never the cheapest of several, never one far away."""
+    best = min((_online_rank(stores[sk]) for sk in cands), default=None)
+    if best is None:
+        return None
+    web = [sk for sk in cands if _online_rank(stores[sk]) == best]
+    priced = [sk for sk in web if (stores[sk]["last_price_ts"] or 0) > 0]
+    if best == 0 and len(web) == 1:
+        return priced[0] if priced else None
+    near = sorted((loc[sk][0], sk) for sk in priced if has_home and loc[sk][0] is not None and loc[sk][0] <= REGIONAL_KM)
+    if near:
+        return near[0][1]
+    general = [sk for sk in priced if general_web_shop(sk[0], stores[sk]["name"])] if best == 0 else []
+    return general[0] if len(general) == 1 else None
 
 
 def _rows(con, sql, args=()):
@@ -270,6 +321,8 @@ def compare(con, items, prefs=None, now_int=None, overrides=None, way=None):
     home = prefs.get("home") or None
     max_km = float(prefs["max_km"]) if home and prefs.get("max_km") else None
     coords = geo.store_coords(con) if home else {}
+    exact = geo.exact_stores(con) if home else set()  # the rest are at their town's point (geo.located)
+    own_brand = brands(con, stores)
     loc = {}
     for sk in stores:
         if sk in coords:
@@ -288,22 +341,17 @@ def compare(con, items, prefs=None, now_int=None, overrides=None, way=None):
     physical = {sk for sk, st in stores.items() if _is_physical(st) and near(sk)}
     online_by_chain = defaultdict(list)
     for sk, st in stores.items():
-        if _is_online(st) and (st["last_price_ts"] or 0) > 0:
+        if _is_online(st):
             online_by_chain[sk[0]].append(sk)
-    online_pick, online_stale = {}, {}  # chain -> fresh candidate stores / the out-of-date store that serves you
+    online_pick, online_stale = {}, {}  # chain -> [its online store, when current] / its out-of-date one
     for cid, sks in online_by_chain.items():
-        def rank(sk):
-            d = loc[sk][0]
-            return (_online_rank(stores[sk]), d is None, d or 0.0)
-        sks.sort(key=rank)
-        top = sks[0]
-        # with a home: the nearest web shop (stores without coordinates last); without one, any of them
-        group = [top] if loc[top][0] is not None else [sk for sk in sks if rank(sk)[:2] == rank(top)[:2]]
-        fresh_group = [sk for sk in group if (stores[sk]["last_price_ts"] or 0) >= cutoff]
-        if fresh_group:
-            online_pick[cid] = fresh_group
+        pick = online_store(sks, stores, loc, bool(home))
+        if pick is None:
+            continue
+        if (stores[pick]["last_price_ts"] or 0) >= cutoff:
+            online_pick[cid] = [pick]
         else:
-            online_stale[cid] = max(group, key=lambda sk: stores[sk]["last_price_ts"] or 0)
+            online_stale[cid] = pick
     online_set = {sk for v in online_pick.values() for sk in v}
     want = physical | online_set
 
@@ -450,10 +498,13 @@ def compare(con, items, prefs=None, now_int=None, overrides=None, way=None):
                 cur = stale_near.get(st["chain_id"])
                 if cur is None or (dist is not None and (cur["distance_km"] is None or dist < cur["distance_km"])):
                     stale_near[st["chain_id"]] = {"chain_id": st["chain_id"], "store_id": st["store_id"],
-                                                  "name": st["name"], "city": st["city"], "distance_km": dist,
+                                                  "name": st["name"], "city": clean_place(st["city"]), "distance_km": dist,
                                                   "last_price_ts": st["last_price_ts"]}
             continue
-        entry = {**st, **price_store(sk), "distance_km": dist, "lat": lat, "lon": lon}
+        entry = {**st, **price_store(sk), "distance_km": dist, "lat": lat, "lon": lon,
+                 "precision": ("exact" if sk in exact else "town") if lat is not None else None,
+                 "brand": own_brand.get(sk),
+                 "address": clean_place(st["address"]), "city": clean_place(st["city"])}
         if way is not None and sk in way:  # on my way, a branch's distance is how far off the route it is
             entry.update(distance_km=round(way[sk][0], 1), off_km=way[sk][0], at_km=way[sk][1])
         if sk in online_set:
@@ -576,7 +627,8 @@ def compare(con, items, prefs=None, now_int=None, overrides=None, way=None):
     every = sorted((e for g in by_chain.values() for e in g["store"] if not n or e["covered"]), key=order)
     branches = [{"chain_id": e["chain_id"], "chain": chain_name(e["chain_id"], names.get(e["chain_id"])),
                  "store_id": e["store_id"], "name": e["name"], "city": e["city"], "distance_km": e["distance_km"],
-                 "lat": e["lat"], "lon": e["lon"], "total": e["total"], "covered": e["covered"],
+                 "lat": e["lat"], "lon": e["lon"], "precision": e["precision"], "brand": e["brand"],
+                 "total": e["total"], "covered": e["covered"],
                  "missing": len(e["missing"]), "complete": e["complete"], "last_price_ts": e["last_price_ts"],
                  **({"off_km": e.get("off_km"), "at_km": e.get("at_km")} if way is not None else {})}
                 for e in every]
@@ -604,7 +656,8 @@ def _within(price, median):
 
 def _slim(e):
     out = {k: e.get(k) for k in ("chain_id", "store_id", "name", "address", "city", "store_type", "total",
-                                 "covered", "missing", "complete", "last_price_ts", "distance_km", "lat", "lon")}
+                                 "covered", "missing", "complete", "last_price_ts", "distance_km", "lat", "lon",
+                                 "precision", "brand")}
     if "at_km" in e:  # on my way
         out.update(off_km=e["off_km"], at_km=e["at_km"])
     return out

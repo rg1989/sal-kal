@@ -919,6 +919,7 @@ body[data-view="basket"] #lc-cta { display: none; }
   border-right: inherit; border-bottom: inherit; transform: translateX(-50%) rotate(45deg);
 }
 .price-pin b { font-size: 16px; font-weight: 700; }
+.price-pin.approx { border-style: dashed; }  /* placed at its town's point, not its address */
 .price-pin span { color: var(--muted); max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 .price-pin.best {
   z-index: 2; background: var(--tag); color: var(--tag-ink); border-color: var(--tag-edge); padding: 4px 11px 5px;
@@ -1399,6 +1400,18 @@ body.gated > .top, body.gated > .page, body.gated > .cart-bar, body.onboarding >
 .addr-fields label small { font-weight: 500; color: var(--muted); }
 .combo-need { margin: 6px 2px 0; font-size: 13.5px; font-weight: 600; color: var(--promo); }
 .combo.need .combo-box input { border-color: var(--promo); }
+.addr-map { position: relative; height: 200px; border-radius: 13px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); }
+.addr-map[hidden] { display: none; }
+.addr-map > .addr-map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }  /* MapLibre makes its container relative */
+.addr-map-pin {
+  position: absolute; left: 50%; top: 50%; box-sizing: border-box; width: 26px; height: 26px; margin: -31px 0 0 -13px; pointer-events: none;
+  border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--tag); border: 2px solid var(--tag-ink); box-shadow: 0 4px 10px -3px rgba(0, 0, 0, .5);
+}
+.addr-map-pin::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--tag-ink); }
+.addr-map-hint {
+  position: absolute; inset-inline: 8px; top: 8px; margin: 0; padding: 6px 10px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  background: color-mix(in srgb, var(--surface) 92%, transparent); color: var(--ink); pointer-events: none; text-align: center;
+}
 .addr-result { display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 14.5px; color: var(--ink-2); }
 .addr-result:empty { display: none; }
 .addr-result.ok { padding: 12px 14px; border-radius: 13px; background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-weight: 600; animation: view-in .3s ease-out; }
@@ -1933,7 +1946,7 @@ input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowe
 .pl-text { flex: 1; min-width: 0; display: grid; }
 .pl-text b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-text small { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pl-text small.pl-warn { color: var(--promo); font-weight: 600; }
+.pl-text small.pl-note { color: var(--muted); }  /* a rough pin is a fact, not an error: never red */
 .pl-btn {
   flex: none; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2);
   color: var(--ink); font: 600 13px var(--ui); cursor: pointer; display: inline-grid; place-items: center;
@@ -1996,3 +2009,53 @@ input[type="checkbox"]:not([switch]):disabled { opacity: .45; cursor: not-allowe
 .scroll-x.dragging * { cursor: grabbing; }
 .scroll-x img { -webkit-user-drag: none; }
 @media (hover: none) { .scroll-go { display: none; } }
+
+/* ================================================================ Price Watch (/prices) in the header
+   A shelf price tag in the bright yellow (--tag), its pointed end with a hole on the start side, beside the logo for
+   everyone (site.css draws the same tag on the public pages). The link is the tap area and carries the focus ring;
+   the tag is its inner span, clipped to the shape. Phones: the name on two lines; the narrowest: the icon alone
+   (the name stays for screen readers). */
+.top-start { display: flex; align-items: center; gap: 14px; min-width: 0; justify-self: start; }
+.top-start > * { flex: none; }
+.top-start .brand { white-space: nowrap; }
+@media (min-width: 901px) {  /* the logo and tag, and the buttons, keep their width; the search gives way */
+  .top { grid-template-columns: minmax(max-content, 1fr) minmax(0, 640px) minmax(max-content, 1fr); }
+}
+@media (min-width: 901px) and (max-width: 1199px) {  /* the cart button joins the header: a compact tag */
+  .top-start { gap: 10px; }
+  .pw-in { --pt: 12px; padding-inline: calc(var(--pt) + 9px) 10px; }
+  .pw-in svg { display: none; }
+  .pw-t { white-space: normal; width: min-content; font-size: 12.5px; line-height: 1.08; }
+}
+.pw-tag { display: inline-flex; align-items: center; flex: none; min-height: 44px; text-decoration: none; color: var(--tag-ink);
+  border-radius: 10px; -webkit-tap-highlight-color: transparent; }
+.pw-in { --pt: 14px; display: inline-flex; align-items: center; gap: 7px; height: 40px; padding-inline: calc(var(--pt) + 13px) 15px;
+  background: var(--tag); color: var(--tag-ink); font: 700 15px/1 var(--ui); letter-spacing: -.005em; white-space: nowrap;
+  border-radius: 8px; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .16);
+  clip-path: polygon(var(--pt) 0, 100% 0, 100% 100%, var(--pt) 100%, 0 50%);
+  -webkit-mask: radial-gradient(circle at calc(var(--pt) + 1px) 50%, transparent 3.3px, #000 3.9px);
+  mask: radial-gradient(circle at calc(var(--pt) + 1px) 50%, transparent 3.3px, #000 3.9px);
+  transition: transform .15s ease, filter .15s ease; }
+[dir="rtl"] .pw-in { clip-path: polygon(0 0, calc(100% - var(--pt)) 0, 100% 50%, calc(100% - var(--pt)) 100%, 0 100%);
+  -webkit-mask: radial-gradient(circle at calc(100% - var(--pt) - 1px) 50%, transparent 3.3px, #000 3.9px);
+  mask: radial-gradient(circle at calc(100% - var(--pt) - 1px) 50%, transparent 3.3px, #000 3.9px); }
+.pw-in svg { width: 18px; height: 18px; flex: none; }
+.pw-tag:hover .pw-in { filter: brightness(1.04) saturate(1.08); transform: translateY(-1px); }
+.pw-tag:active .pw-in { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) { .pw-in { transition: none; } .pw-tag:hover .pw-in { transform: none; } }
+@media (max-width: 640px) {
+  .top-start { gap: 8px; }
+  .pw-in { --pt: 12px; gap: 6px; padding-inline: calc(var(--pt) + 10px) 10px; }
+  .pw-in svg { width: 17px; height: 17px; }
+  .pw-t { white-space: normal; width: min-content; font-size: 12.5px; line-height: 1.08; }
+}
+@media (max-width: 430px) {  /* the name alone (the shape is the tag), so the address beside it keeps its words */
+  .top-start { gap: 6px; }
+  .pw-in { --pt: 11px; padding-inline: calc(var(--pt) + 9px) 9px; }
+  .pw-in svg { display: none; }
+}
+@media (max-width: 374px) {  /* the icon alone */
+  .pw-in { padding-inline: calc(var(--pt) + 8px) 9px; }
+  .pw-in svg { display: block; }
+  .pw-t { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}

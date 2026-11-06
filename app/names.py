@@ -334,6 +334,47 @@ _PCT = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
 _BARE = re.compile(r"(?<![\d.,*x×%])(\d{2,5})(?![\d.,%*x×])(?!\s*(?:גר|ג\b|גרם|מל|ל\b|ליטר|קג|יח|ml|gr?\b|kg|l\b|cm|"
                    r"מ\b|סמ|מטר|שקיקים|כמוסות|טבליות|דף|דפים|זוג))")
 _UNITS = {"x", "ml", "gr", "g", "kg", "l", "oz", "cm", "mm", "m", "mg", "cc", "lt", "ltr", "gb", "mah", "w", "v"}
+# a size grade: eggs, diapers, gloves, bags. M eggs aren't L eggs (7290001201589: "ביצים 12יח' M" at one chain,
+# "12 ביצי משק טריות L" at the rest). A letter right after a number is a unit (1.5L, 2 M), not a size.
+_SIZE_LAT = re.compile(r"(?<![a-z\d.,&])(?<!\d )(xxl|xl|xs|s|m|l)(?![a-z&+])")  # not M&M, not Shikma's S+ line
+_NOT_GRADE = re.compile(r"(?<![a-z])m\s*&?\s*m\s*s?(?![a-z])")  # M&M's, "M M'S"
+_SPACED = re.compile(r"(?<![a-z])(x{1,2})\s+l(?![a-z])")        # "X L" = XL
+_EXTRA = re.compile(r"(?<![א-ת])(?:אקסטר[הא][\s-]+(אקסטר[הא][\s-]+)?|א\.\s*)לא?רג(?![א-ת])")  # אקסטרה לארג' = XL
+_SIZE_HE = re.compile(r"(?<![א-ת])(?:ה|ו)?(קטנ(?:ה|ות|ימ)?|בינוני(?:ת|ות|ימ|יימ)?|גדול(?:ה|ות|ימ)?|ענק(?:ית|יות|יימ|ימ)?|גמבו"
+                      r"|מדיומ|לארג|לרג)"
+                      r"(?:\s+(מאוד|מאד|במיוחד))?(?![א-ת])")
+# The letters are grades; the Hebrew words are looser (shops call one size גדול and ענק alike), so each stands for
+# the grades it can mean, and two names clash only when no grade fits both
+_SIZE_OF = {"xs": {"xs"}, "s": {"s"}, "m": {"m"}, "l": {"l"}, "xl": {"xl"}, "xxl": {"xxl"},
+            "קטנ": {"xs", "s"}, "בינוני": {"m"}, "מדיומ": {"m"}, "לארג": {"l"}, "לרג": {"l"},
+            "גדול": {"l", "xl", "xxl"}, "ענק": {"l", "xl", "xxl"}, "גמבו": {"l", "xl", "xxl"}}
+
+
+def _sizes(low):
+    """The size grades a folded name states: S/M/L/XL/XXL ("X L" too), or in Hebrew קטן (XS/S), בינוני / מדיום (M),
+    לארג' (L), אקסטרה לארג' (XL), גדול / ענק / ג'מבו (L-XXL), גדול מאוד / במיוחד (XL/XXL). None for a name of two
+    sizes ("ענק ובינוני",
+    "עמק+בינוני")."""
+    out = set()
+    if "רג" in low:
+        low = _EXTRA.sub(lambda m: " xxl " if m.group(1) else " xl ", low)
+    if _SIZE_LAT_ANY.search(low):
+        low = _SPACED.sub(r"\1l", _NOT_GRADE.sub(" ", low))
+        for m in _SIZE_LAT.finditer(low):
+            out |= _SIZE_OF[m.group(1)]
+    for m in _SIZE_HE.finditer(low):
+        w = m.group(1)
+        if m.group(0).startswith("ו") and not w.startswith("ו") or low[max(0, m.start() - 1):m.start()] == "+":
+            return frozenset()  # "X and Y": a set of two sizes
+        stem = next(k for k in _HE_STEMS if w.startswith(k))
+        out |= {"xl", "xxl"} if stem == "גדול" and m.group(2) else _SIZE_OF[stem]
+    return frozenset(out)
+
+
+_HE_STEMS = ("קטנ", "בינוני", "גדול", "ענק", "גמבו", "מדיומ", "לארג", "לרג")
+
+
+_SIZE_LAT_ANY = re.compile(r"[xslm]")
 _CODE = re.compile(r"(?<![a-z\d])([a-z]{1,3})\s*-?\s*(\d{2,5})(?![\d.,])|(?<![\d.,])(\d{2,5})\s*-?\s*([a-z]{1,3})(?![a-z])")
 _DIGIT = re.compile(r"\d")
 _CUT = {19, 20, 21, 22, 39, 40}  # many chains cut names at 20 or 40 characters: the last word may be cut short
@@ -349,7 +390,7 @@ class _Name:
     which product it is (spec: not generic, not a flavour), flavours, fat percentages, model codes (K-300), other
     numbers, two neighbouring words run together (רד בול = רדבול)."""
     __slots__ = ("raw", "words", "cut", "size", "spec", "flav", "flav_any", "fl", "bk", "pct", "codes", "nums",
-                 "joined", "implied")
+                 "joined", "implied", "grades")
 
     def __init__(self, raw, generic=frozenset()):
         self.raw = raw
@@ -375,6 +416,7 @@ class _Name:
                 self.bk[k].append(w)
         digits = _DIGIT.search(low)
         self.pct = frozenset(_num(m.group(1)) for m in _PCT.finditer(low)) if "%" in low else frozenset()
+        self.grades = _sizes(low)
         codes = set()
         if digits and _LATIN.search(low):
             for m in _CODE.finditer(low):
@@ -408,7 +450,8 @@ AGREE, WEAK, NONE, CLASH = 3, 2, 1, 0
 
 def _link(a, b, generic=frozenset()):
     """How two names of one barcode relate:
-    CLASH  they name different flavours, fat percentages or model numbers (K-300 / K-400);
+    CLASH  they name different flavours, fat percentages, size grades (M / L, בינוני / גדול) or model numbers
+           (K-300 / K-400);
     AGREE  the same words, or two shared words (a shared number that isn't a pack size counts), a model code or a
            fat percentage, or one says nothing the other doesn't, or one shared word unless the next rule holds;
     NONE   nothing in common, or two short names sharing one word that each add their own rarer word: two variants
@@ -417,6 +460,8 @@ def _link(a, b, generic=frozenset()):
     if a.flav and b.flav and not (a.flav_any & b.flav_any):
         return CLASH
     if a.pct and b.pct and not (a.pct & b.pct):
+        return CLASH
+    if a.grades and b.grades and not (a.grades & b.grades):  # M eggs / L eggs, size 4 / size 5 bags
         return CLASH
     codes = a.codes & b.codes
     if a.codes and b.codes and not codes and {c[0] for c in a.codes} & {c[0] for c in b.codes}:
@@ -568,10 +613,15 @@ def odd_names(names, card_name="", generic=frozenset(), voter=None):
     win = _winning_flavours([nodes[i] for i in cons], card)
     if win is not None:
         cons = {i for i in cons if not nodes[i][0].flav or nodes[i][0].flav_any & win}
+    # a name with no grade ("ביצים") can join M and L names into one group: the grade most of it names wins
+    grade = _winning_grades([nodes[i] for i in cons], card)
+    if grade is not None:
+        cons = {i for i in cons if not nodes[i][0].grades or nodes[i][0].grades & grade}
     good = set(cons)
     known = set(win or ()).union(*(nodes[i][0].implied | nodes[i][0].flav for i in cons))
     rest = [i for i in range(n) if i not in groups[0]
-            and not (nodes[i][0].flav and win is not None and not nodes[i][0].flav_any & win)]
+            and not (nodes[i][0].flav and win is not None and not nodes[i][0].flav_any & win)
+            and not (nodes[i][0].grades and grade is not None and not nodes[i][0].grades & grade)]
     for i in rest:
         nm = nodes[i][0]
         if any(link(i, j) == WEAK for j in cons):
@@ -610,6 +660,20 @@ def _winning_flavours(group, card):
     flavoured = set().union(*(voters for nm, _, voters in group if nm.flav_any))
     win = {f for f, v in fv.items() if len(v) * 2 > len(flavoured)}
     return frozenset(win or (card.flav & set(fv)) or {f for f, v in fv.items() if len(v) > 1})
+
+
+def _winning_grades(group, card):
+    """The size grades that win inside a consensus group: those named by more than half of the retailers that name
+    one; with no majority, the card's; else those more than one retailer names. None: no grade named."""
+    gv = defaultdict(set)
+    for nm, _, voters in group:
+        for g in nm.grades:
+            gv[g] |= voters
+    if not gv:
+        return None
+    graded = set().union(*(voters for nm, _, voters in group if nm.grades))
+    win = {g for g, v in gv.items() if len(v) * 2 > len(graded)}
+    return frozenset(win or (card.grades & set(gv)) or {g for g, v in gv.items() if len(v) > 1}) or None
 
 
 def _chains(nodes, good):

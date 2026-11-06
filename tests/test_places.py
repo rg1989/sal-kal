@@ -58,6 +58,8 @@ tn = lambda q: [x["name"] for x in places.towns(q)]
 assert tn("רמת גנן") == ["רמת גן"] and tn("רמט גן") == ["רמת גן"], tn("רמט גן")
 assert tn("בארשבע") == ["באר שבע"]
 assert tn("רמת") == ["רמת גן"]
+assert places.norm("תל־אביב–יפו") == places.norm("תל אביב - יפו") == "תל אביב יפו"   # OpenStreetMap's maqaf and dash
+assert places.town_by_name("תל־אביב–יפו")["code"] == 5000 and places.town_by_name("") is None
 
 # spellings for OpenStreetMap: it knows דרך בגין as "מנחם בגין", so the bare surname is tried, and must be on the road
 names = places._street_names("דרך בגין")
@@ -91,4 +93,44 @@ assert places.locate(5000, 1, 120) == h and len(calls) == n                     
 h = places.locate(5000, 1, 132)
 assert h["precision"] == "house" and len(calls) == n + 1, (h, calls[n:])          # the spelling that works, at once
 assert places.locate(5000, 1)["precision"] == "street" and len(calls) == n + 1     # the street point is known too
+assert h["source"] == "osm" and "govmap" not in h
+
+# GovMap (the national address points): asked once per address, only an exact match counts, remembered with its source
+gm_calls, gm_answer = [], {}
+def gm(text):
+    gm_calls.append(text)
+    if gm_answer.get("fail"):
+        raise OSError("down")
+    return {"results": gm_answer.get(text, [])}
+places._govmap = gm
+places.govmap_key = lambda: None
+assert places.locate(5000, 10, 50)["source"] == "osm" and not gm_calls        # no key: never asked
+places.govmap_key = lambda: "key"
+ITM_PT = "POINT (178935.4 664512.2)"  # somewhere in Tel Aviv, in ITM
+WM = lambda lat, lon: f"POINT({lon * 6378137 * 3.141592653589793 / 180} {6378137 * __import__('math').log(__import__('math').tan((90 + lat) * 3.141592653589793 / 360))})"
+gm_answer["דיזנגוף 50 תל אביב - יפו"] = [{"type": "address", "text": "דיזנגוף 150 תל אביב-יפו", "shape": WM(32.09, 34.77)},  # 150 isn't 50
+                                         {"type": "street", "text": "דיזנגוף תל אביב-יפו", "shape": WM(32.08, 34.77)},
+                                         {"type": "address", "text": "דיזנגוף 50 תל אביב-יפו", "shape": WM(32.0776, 34.7741)}]
+n = len(calls)
+h = places.locate(5000, 10, 50)  # cached from OpenStreetMap before the key: GovMap is asked once now
+assert (h["precision"], h["source"], round(h["lat"], 4), round(h["lon"], 4)) == ("house", "govmap", 32.0776, 34.7741), h
+assert len(gm_calls) == 1 and len(calls) == n
+assert places.locate(5000, 10, 50) == h and len(gm_calls) == 1                # never asked twice
+gm_answer["דיזנגוף 52 תל אביב - יפו"] = [{"type": "address", "text": "דיזנגוף 52 רמת גן", "shape": WM(32.08, 34.81)}]   # another town
+h = places.locate(5000, 10, 52)
+assert h["source"] == "osm" and h.get("govmap") and len(gm_calls) == 2, h
+assert places.locate(5000, 10, 52) == h and len(gm_calls) == 2                # GovMap's "no" is remembered too
+gm_answer["דיזנגוף 54 תל אביב - יפו"] = [{"type": "address", "text": "דיזנגוף 54 תל אביב-יפו", "shape": WM(32.0780, 34.7742)},
+                                         {"type": "address", "text": "דיזנגוף 54 תל אביב - יפו", "shape": WM(32.0901, 34.7801)}]
+assert places.locate(5000, 10, 54)["source"] == "osm"                           # two places answer to it: not sure
+gm_answer["שד רוטשילד 3 תל אביב - יפו"] = [{"type": "address", "text": "שדרות רוטשילד 3 תל אביב - יפו", "centroid": ITM_PT}]
+h = places.locate(5000, 4, 3)                                                    # "שד רוטשילד" on the list
+assert h["source"] == "govmap" and abs(h["lat"] - 32.08) < 0.03 and abs(h["lon"] - 34.78) < 0.03, h
+gm_answer["fail"] = True
+h = places.locate(5000, 10, 56)
+assert h["source"] == "osm" and "govmap" not in h                               # GovMap down: OpenStreetMap, ask again later
+gm_answer.pop("fail")
+gm_answer["דיזנגוף 56 תל אביב - יפו"] = [{"type": "address", "text": "דיזנגוף 56 תל אביב-יפו", "shape": WM(32.0782, 34.7743)}]
+assert places.locate(5000, 10, 56)["source"] == "govmap"
+assert places._point("POINT (1 2)") is None and places._point("junk") is None
 print("ok")

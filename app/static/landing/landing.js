@@ -1,26 +1,13 @@
 'use strict';
-// The landing page: language (shared with the app), the video that plays while it's on screen, scroll reveals and the
+// The landing page (the language switch is site.js, shared with the Price Board): the video that plays while it's on screen, scroll reveals and the
 // live counts from the price files.
 (() => {
   const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-  const lang = () => (document.documentElement.lang === 'en' ? 'en' : 'he');
+  const lang = () => Site.lang();  // site.js: the language switch, shared with the Price Board
   let status = null;  // /api/status, once loaded
   const TITLE = { he: 'סל קל · השוואת מחירי סל בסופרמרקטים', en: 'Sal-Kal · Supermarket cart price comparison' };
-
-  function setLang(l) {
-    document.documentElement.lang = l;
-    document.documentElement.dir = l === 'he' ? 'rtl' : 'ltr';
-    try { localStorage.setItem('lang', l); } catch { /* private mode */ }
-    document.cookie = `lang=${l};path=/;max-age=31536000;samesite=lax`;
-    document.title = TITLE[l];
-    $$('.langs [data-lang]').forEach(b => b.setAttribute('aria-checked', b.dataset.lang === l));
-    renderLive();
-  }
-  $$('.langs [data-lang]').forEach(b => b.addEventListener('click', () => {
-    if (b.dataset.lang !== lang()) setLang(b.dataset.lang);
-    try { navigator.vibrate?.(10); } catch { /* not allowed yet */ }
-  }));
-  setLang(lang());
+  const retitle = () => { document.title = TITLE[lang()]; renderLive(); };
+  document.addEventListener('langchange', retitle);
 
   // the walkthrough plays only while it's in view (and never against prefers-reduced-motion)
   const v = $('#walk');
@@ -44,14 +31,15 @@
     const when = s.length >= 12 ? new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(8, 10), +s.slice(10, 12)) : null;
     const time = when ? when.toLocaleString(loc, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
     $('#live-text').textContent = lang() === 'he'
-      ? `${n(status.chains)} רשתות · ${n(status.stores)} סניפים${time ? ` · מחירים נכון ל־${time}` : ''}`
-      : `${n(status.chains)} chains · ${n(status.stores)} stores${time ? ` · prices as of ${time}` : ''}`;
+      ? `${n(status.chains)} רשתות · ${n(status.stores)} סניפים${time ? ` · עודכן ${time}` : ''}`
+      : `${n(status.chains)} chains · ${n(status.stores)} branches${time ? ` · updated ${time}` : ''}`;
     $('.live').hidden = false;
     $$('[data-stat]').forEach(el => { const v = status[el.dataset.stat]; if (v) el.textContent = n(v); });
   }
   fetch('/api/status', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
     if (d && d.products) { status = d; renderLive(); }
   }).catch(() => {});
+  retitle();
 
   // Signed in already: "/" is the app, not this page. The server sends the app to a signed-in visitor, but a landing
   // page from before signing in can come back without a reload (Back, or a phone resuming the installed app).

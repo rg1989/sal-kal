@@ -156,6 +156,22 @@ PAGE = re.compile(r"[a-z0-9_-]{1,24}")
 CTRL = re.compile(r"[\x00-\x1f\x7f]+")
 
 
+def town_of(p):
+    """The town an account shops from, by name: the official list's name for its code, else the saved name, else the
+    last part of the address (an address keeps the town's code in `town`, not its name)."""
+    pl = [x for x in (p.get("places") or []) if isinstance(x, dict)]
+    home = p.get("home") if isinstance(p.get("home"), dict) else (pl[0] if pl else {})
+    name = home.get("town_name") or (home.get("label") or "").split(",")[-1].strip() or None
+    try:  # the official spelling, so one town is one row however it was found
+        from . import places
+        t = places.town(home["town"]) if isinstance(home.get("town"), int) else places.town_by_name(name) if name else None
+        if t:
+            return t["name"]
+    except Exception:
+        pass
+    return name
+
+
 def _s(v, n=160):
     if v is None or isinstance(v, (dict, list)):
         return None
@@ -543,17 +559,18 @@ def overview(R):
     r = reader()
     kpi = _visit_kpis(r, R, R.t0, R.t1)
     prev = _visit_kpis(r, R, R.p0, R.t0)
-    daily = {d: {"day": d, "visitors": 0, "signed": 0, "visits": 0, "views": 0, "new_accounts": 0} for d in R.day_list}
+    daily = {d: {"day": d, "visitors": 0, "signed": 0, "visits": 0, "views": 0, "new_accounts": 0, "set_up": 0} for d in R.day_list}
     for x in r.execute(f"""SELECT day, count(DISTINCT vid) visitors, count(DISTINCT CASE WHEN uid IS NOT NULL THEN vid END) signed,
                                   count(*) visits, sum(views) views
                            FROM visits WHERE start >= ? AND start < ?{R.adm} GROUP BY day""", (R.t0, R.t1)):
         if x["day"] in daily:
             daily[x["day"]].update(visitors=x["visitors"], signed=x["signed"], visits=x["visits"], views=x["views"] or 0)
     if _has_u(r):
-        for (created,) in r.execute("SELECT created FROM u.users WHERE created >= ? AND created < ?", (R.t0, R.t1)):
+        for created, onboarded in r.execute("SELECT created, onboarded FROM u.users WHERE created >= ? AND created < ?", (R.t0, R.t1)):
             d = day_of(created)
             if d in daily:
                 daily[d]["new_accounts"] += 1
+                daily[d]["set_up"] += bool(onboarded)  # of the accounts made that day, those that have finished setup
     heat = [[0] * 24 for _ in range(7)]  # [Sunday..Saturday][hour]
     for x in r.execute(f"SELECT day, hour, count(*) n FROM visits WHERE start >= ? AND start < ?{R.adm} GROUP BY day, hour",
                        (R.t0, R.t1)):
@@ -676,8 +693,7 @@ def _prefs(r):
         club[cl] = club.get(cl, 0) + 1
         lg = u["lang"] or "he"
         lang[lg] = lang.get(lg, 0) + 1
-        home = p.get("home") or {}
-        t = home.get("town") or (home.get("label") or "").split(",")[-1].strip() or None
+        t = town_of(p)
         if t:
             towns[t] = towns.get(t, 0) + 1
     srt = lambda d: sorted(({"k": k, "n": n} for k, n in d.items()), key=lambda x: -x["n"])
@@ -800,7 +816,7 @@ def users(R):
         out.append({"id": u["id"], "name": u["name"], "email": u["email"], "avatar": u["avatar"], "created": u["created"],
                     "seen": max(u["seen"] or 0, (agg.get(u["id"]) or {}).get("last") or 0), "lang": u["lang"],
                     "onboarded": bool(u["onboarded"]), "providers": prov.get(u["id"], []),
-                    "town": home.get("town") or (home.get("label") or "").split(",")[-1].strip() or None,
+                    "town": town_of(p),
                     "km": p.get("max_km"), "mode": p.get("mode") or "store",
                     **{k: (agg.get(u["id"]) or {}).get(k) or 0 for k in ("visits", "days", "views")},
                     "visits_period": (per.get(u["id"]) or {}).get("visits") or 0,

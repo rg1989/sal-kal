@@ -77,9 +77,11 @@ def build(con):
         if cost is None:
             continue
         unit = cost / units
-        save = 1 - unit / typ
+        # the saving at this store, against its own shelf price (both the chain's published numbers); a deal price
+        # still at or above the typical price elsewhere saves the shopper nothing, so it isn't listed
+        save = 1 - unit / price
         # ponytail: outside 8–70% it's almost always a data error or a gift item
-        if not (0.08 <= save <= 0.7) or unit > price:
+        if not (0.08 <= save <= 0.7) or unit > price or unit >= typ:
             continue
         k = (key, chain, store)
         if k not in best or unit < best[k][4]:

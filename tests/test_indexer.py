@@ -16,6 +16,9 @@ from app import names as namesmod  # noqa: E402
 from app import trust  # noqa: E402
 
 logging.getLogger("indexer").setLevel(logging.CRITICAL)  # the failing-confirm case logs a traceback on purpose
+# the run fixtures below are dated 2026-11-05: judge freshness as of that day, or they go stale and the test fails
+_cutoff = trust.fresh_cutoff
+trust.fresh_cutoff = lambda now=None: _cutoff(now or time.mktime((2026, 11, 5, 12, 0, 0, 0, 0, -1)))
 
 NOW = int(time.strftime("%Y%m%d%H%M"))
 FAR = 299912312359  # a store whose prices never go stale
@@ -163,7 +166,11 @@ c.close()
 R = trust.OUTLIER_MIN_STORES
 assert ix.judge_prices([("A", "A", 1, 10.0), ("B", "B", 1, 12.0)]) == (11.0, [])
 assert ix.judge_prices([("A", "A", s, 10.0) for s in range(R)] + [("A", "A", 9, 99.0)])[1] == [("A", 9, 10.0)]
-assert ix.judge_prices([("A", "A", 1, 10.0), ("A", "A", 2, 99.0)]) == (54.5, []), "too few stores to judge"
+# too few stores to tell which is right: a normal spread stands, 3x apart (₪29.90 and ₪370) none counts
+assert ix.judge_prices([("A", "A", 1, 10.0), ("A", "A", 2, 25.0)]) == (17.5, [])
+assert ix.judge_prices([("A", "A", 1, 10.0), ("A", "A", 2, 99.0)]) == (54.5, [("A", 1, 54.5), ("A", 2, 54.5)])
+# ₪0.10 or less is a placeholder: flagged, and left out of the typical price
+assert ix.judge_prices([("A", "A", 1, 0.01), ("A", "A", 2, 12.9), ("A", "A", 3, 12.9)]) == (12.9, [("A", 1, 0.01)])
 # a store far off the consensus is flagged even at a chain that agrees otherwise
 assert ix.judge_prices([("A", "A", 1, 32.0), ("A", "A", 2, 10.0), ("A", "A", 3, 33.0), ("B", "B", 1, 30.0)])[1] == [
     ("A", 2, 31.0)]

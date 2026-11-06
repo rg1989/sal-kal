@@ -2,16 +2,21 @@
 
 The lists come from data.gov.il (Population and Immigration Authority / CBS settlement and street codes) and are kept
 in places.db next to the price DB, so picking is instant and never calls an outside service. Only the address you
-finally choose is located on the map: one OpenStreetMap (Nominatim) lookup per new address, cached for good.
+finally choose is located on the map, once per address, and kept with where it came from (`source`):
+  1. GovMap (the Survey of Israel's national address points), when a key is set (`./set-login.sh govmap <key>`):
+     exact house points for official addresses, many of which OpenStreetMap doesn't number;
+  2. else OpenStreetMap (Nominatim): the house, a house a few doors away, the street, or the town centre.
 Nominatim is strict about load (1 request/second, no autocomplete), which is why the picking happens here.
 
 Run once (also runs by itself the first time a list is needed):  python -m app.places [--refresh]
 """
 import argparse
 import json
+import math
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
 import urllib.parse
@@ -19,12 +24,14 @@ import urllib.request
 
 from . import db as dbmod
 from . import geo
+from . import guard
 
 API = "https://data.gov.il/api/3/action/datastore_search"
 TOWNS_RID = "5c78e9fa-c2e2-4771-93ff-7f400a12f7ba"    # רשימת ישובים: code, Hebrew name, English name
 STREETS_RID = "9ad3862c-8391-4b2f-84a4-2d4c68625f4b"  # רשימת רחובות: town code, street code, street name
 REFRESH_DAYS = 90
 NOMINATIM = "https://nominatim.openstreetmap.org"
+GOVMAP = "https://www.govmap.gov.il/api/search-service/api-search"  # GovMap API's search (govmap.search in its JS API)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS towns(code INTEGER PRIMARY KEY, name TEXT, name_en TEXT, norm TEXT, skel TEXT, streets INTEGER);
@@ -57,7 +64,7 @@ FINALS = str.maketrans("ךםןףץ", "כמנפצ")
 def norm(s):
     """Hebrew for matching: no quotes, geresh or punctuation, final letters as regular ones, and the doubled vav/yod
     of full spelling folded (קריית = קרית, שכונת = שכונת), so either spelling finds the official name."""
-    s = re.sub(r"[\"'׳״`()\[\].,/\\-]+", " ", (s or "").lower()).translate(FINALS)
+    s = re.sub(r"[\"'׳״`()\[\].,/\\\-\u05be\u2010-\u2015]+", " ", (s or "").lower()).translate(FINALS)  # maqaf, dashes too
     s = s.replace("יי", "י").replace("וו", "ו")
     return " ".join(s.split())
 
@@ -192,10 +199,31 @@ def refresh(force=False):
         return True
 
 
+NORM_V = "2"  # bump when norm() changes: the stored names are normalised again once
+
+
 def ready():
     c = con()
     if not c.execute("SELECT 1 FROM towns LIMIT 1").fetchone():
         refresh(force=True)
+    if (c.execute("SELECT v FROM meta WHERE k='norm'").fetchone() or [None])[0] != NORM_V:
+        with _lock, c:
+            c.executemany("UPDATE towns SET norm=? WHERE code=?", [(norm(n), k) for k, n in c.execute("SELECT code, name FROM towns").fetchall()])
+            c.executemany("UPDATE streets SET norm=? WHERE town=? AND code=?",
+                          [(norm(n), t, k) for t, k, n in c.execute("SELECT town, code, name FROM streets").fetchall()])
+            c.execute("INSERT OR REPLACE INTO meta VALUES('norm', ?)", (NORM_V,))
+
+
+def town_by_name(name):
+    """A town's official entry from a name spelled another way (OpenStreetMap's "תל־אביב–יפו"), or None."""
+    ready()
+    cn = norm(name)
+    if not cn:
+        return None
+    for code, n in con().execute("SELECT code, norm FROM towns"):
+        if n == cn or n.replace(" ", "") == cn.replace(" ", ""):
+            return town(code)
+    return None
 
 
 def town(code):
@@ -327,6 +355,115 @@ def _near(hit, centre, km=20):
     return centre is None or geo.km(float(hit["lat"]), float(hit["lon"]), *centre) <= km
 
 
+# ---------------------------------------------------------------- GovMap: the national address points
+def govmap_key():
+    from . import auth
+    return ((auth.config().get("govmap") or {}).get("key") or "").strip() or None
+
+
+def _govmap(text):
+    """One GovMap address search, as the GovMap JS API makes it from sal-kal.com (the key is registered to that
+    domain): {results: [{text, type, centroid|shape: 'POINT (x y)'}]}."""
+    from . import auth
+    key = govmap_key()
+    base = (auth.config().get("base_url") or "https://sal-kal.com").rstrip("/")
+    body = json.dumps({"apiKey": key, "searchText": text, "language": "he", "maxResults": 8, "isAccurate": False}).encode()
+    req = urllib.request.Request(GOVMAP, data=body, headers={"Content-Type": "application/json", "Origin": base,
+                                                             "Referer": base + "/", "User-Agent": geo.UA})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+
+# Israeli Transverse Mercator (EPSG:2039) on GRS80, and Israel 1993 -> WGS84 (EPSG's 7 parameters, position vector)
+_ITM = dict(lat0=math.radians(31.7343936111111), lon0=math.radians(35.2045169444444), k0=1.0000067,
+            x0=219529.584, y0=626907.39, a=6378137.0, f=1 / 298.257222101)
+_TOWGS84 = (-24.0024, -17.1032, -17.8444, -0.33077, -1.85269, 1.66969, 5.4248)
+
+
+def _itm_to_wgs84(x, y):
+    p = _ITM
+    a, f, k0 = p["a"], p["f"], p["k0"]
+    e2 = f * (2 - f)
+    ep2 = e2 / (1 - e2)
+    e4, e6 = e2 * e2, e2 * e2 * e2
+    meridian = lambda ph: a * ((1 - e2 / 4 - 3 * e4 / 64 - 5 * e6 / 256) * ph - (3 * e2 / 8 + 3 * e4 / 32 + 45 * e6 / 1024) * math.sin(2 * ph)
+                               + (15 * e4 / 256 + 45 * e6 / 1024) * math.sin(4 * ph) - (35 * e6 / 3072) * math.sin(6 * ph))
+    m = meridian(p["lat0"]) + (y - p["y0"]) / k0
+    mu = m / (a * (1 - e2 / 4 - 3 * e4 / 64 - 5 * e6 / 256))
+    e1 = (1 - math.sqrt(1 - e2)) / (1 + math.sqrt(1 - e2))
+    ph1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * math.sin(2 * mu) + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * math.sin(4 * mu)
+           + (151 * e1 ** 3 / 96) * math.sin(6 * mu) + (1097 * e1 ** 4 / 512) * math.sin(8 * mu))
+    s1, c1, t1 = math.sin(ph1), math.cos(ph1), math.tan(ph1)
+    n1 = a / math.sqrt(1 - e2 * s1 * s1)
+    r1 = a * (1 - e2) / (1 - e2 * s1 * s1) ** 1.5
+    T, C = t1 * t1, ep2 * c1 * c1
+    d = (x - p["x0"]) / (n1 * k0)
+    lat = ph1 - (n1 * t1 / r1) * (d ** 2 / 2 - (5 + 3 * T + 10 * C - 4 * C * C - 9 * ep2) * d ** 4 / 24
+                                  + (61 + 90 * T + 298 * C + 45 * T * T - 252 * ep2 - 3 * C * C) * d ** 6 / 720)
+    lon = p["lon0"] + (d - (1 + 2 * T + C) * d ** 3 / 6 + (5 - 2 * C + 28 * T - 3 * C * C + 8 * ep2 + 24 * T * T) * d ** 5 / 120) / c1
+    # geodetic (Israel 1993) -> geocentric -> 7-parameter shift -> geodetic (WGS84, same ellipsoid size to a few mm)
+    n = a / math.sqrt(1 - e2 * math.sin(lat) ** 2)
+    X, Y, Z = n * math.cos(lat) * math.cos(lon), n * math.cos(lat) * math.sin(lon), n * (1 - e2) * math.sin(lat)
+    tx, ty, tz, rx, ry, rz, ds = _TOWGS84
+    rx, ry, rz = list(math.radians(v / 3600) for v in _TOWGS84[3:6])
+    k = 1 + ds * 1e-6
+    X2 = tx + k * (X - rz * Y + ry * Z)
+    Y2 = ty + k * (rz * X + Y - rx * Z)
+    Z2 = tz + k * (-ry * X + rx * Y + Z)
+    wa, wf = 6378137.0, 1 / 298.257223563
+    we2 = wf * (2 - wf)
+    lon2 = math.atan2(Y2, X2)
+    pr = math.hypot(X2, Y2)
+    lat2 = math.atan2(Z2, pr * (1 - we2))
+    for _ in range(6):
+        nn = wa / math.sqrt(1 - we2 * math.sin(lat2) ** 2)
+        lat2 = math.atan2(Z2 + we2 * nn * math.sin(lat2), pr)
+    return math.degrees(lat2), math.degrees(lon2)
+
+
+def _point(wkt):
+    """'POINT (x y)' in GovMap's coordinates (Web Mercator, or ITM) as (lat, lon)."""
+    m = re.match(r"\s*POINT\s*\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s*\)", str(wkt or ""), re.I)
+    if not m:
+        return None
+    x, y = float(m.group(1)), float(m.group(2))
+    if x > 1_000_000:  # Web Mercator (EPSG:3857)
+        return math.degrees(2 * math.atan(math.exp(y / 6378137)) - math.pi / 2), x / 6378137 * 180 / math.pi
+    if 100_000 < x < 300_000 and 350_000 < y < 850_000:
+        return _itm_to_wgs84(x, y)
+    return None
+
+
+def _govmap_house(t, s, number, centre=None):
+    """The house from GovMap, only when exactly one address point is this street, this number and this town (any
+    word order, the street type and a dropped first name allowed); None when GovMap doesn't have it or isn't sure.
+    Raises when GovMap can't be asked (no key, down, refused): then nothing is remembered about it."""
+    res = _govmap(f"{s['name']} {number} {t['name']}")
+    towns = {norm(c) for c in _city_names(t["name"])}
+    core = [w for w in norm(s["name"]).split() if len(w) > 1 and w not in STREET_WORDS] or norm(s["name"]).split()
+    pts = []
+    for r in (res or {}).get("results") or []:
+        if r.get("type") != "address":
+            continue
+        words = norm(r.get("text")).split()
+        text = " ".join(words)
+        if str(number) not in words or not any(f" {tn} " in f" {text} " for tn in towns):
+            continue
+        if not all(c in words for c in core):
+            continue
+        # no other house number in it ("3" must not match "13", nor "3 ... 5")
+        if [w for w in words if w.isdigit() and w != str(number)]:
+            continue
+        ll = _point(r.get("centroid") or r.get("shape"))
+        if ll and (centre is None or geo.km(*ll, centre["lat"], centre["lon"]) <= 25):
+            pts.append(ll)
+    if not pts:
+        return None
+    if any(geo.km(*pts[0], *q) > 0.05 for q in pts[1:]):  # two different places answer to it: not sure
+        return None
+    return {"lat": pts[0][0], "lon": pts[0][1]}
+
+
 def locate(town_code, street_code=None, number=None):
     """Coordinates for an address picked from the lists: the house when OpenStreetMap has it, else the street, else
     the town centre. {label, lat, lon, precision: house|street|town, town, street, number}. Cached."""
@@ -338,9 +475,15 @@ def locate(town_code, street_code=None, number=None):
     key = f"{town_code}:{street_code or ''}:{number or ''}"
     c = con()
     got = _memo(c, key)
-    # a street that wasn't found is asked again the next day (OpenStreetMap gets fixed; so do the spellings here)
-    if got and not (got["v"]["precision"] == "town" and s and time.time() - got["at"] > 86400):
-        return got["v"]
+    gov = bool(s and number and govmap_key())
+    again = False
+    if got:
+        v = got["v"]
+        # a street that wasn't found is asked again the next day (OpenStreetMap gets fixed; so do the spellings here);
+        # an address OpenStreetMap had no house for is asked of GovMap once, when GovMap is set up
+        again = v["precision"] == "town" and s and time.time() - got["at"] > 86400
+        if not again and not (gov and v["precision"] != "house" and not v.get("govmap")):
+            return v
     # the town centre: to check street hits are in the right town, and the last resort. Kept, with the spelling of the
     # town OpenStreetMap knows, so each new address costs only the street lookups (Nominatim: 1 request/second)
     centre = (_memo(c, f"centre:{town_code}") or {}).get("v")
@@ -351,9 +494,23 @@ def locate(town_code, street_code=None, number=None):
                 centre = {"lat": float(res[0]["lat"]), "lon": float(res[0]["lon"]), "city": city}
                 _keep(c, f"centre:{town_code}", centre)
                 break
-    hit, precision, near = (centre, "town", None)
+    hit, precision, near, source, asked = (centre, "town", None, "osm", False)
     at = (centre["lat"], centre["lon"]) if centre else None
-    if s:
+    if gov:
+        try:
+            with guard.outside("govmap"):
+                g = _govmap_house(t, s, number, centre)
+            asked = True  # GovMap answered: asked once, whatever it said
+            if g:
+                hit, precision, source = g, "house", "govmap"
+        except Exception as e:  # down, refused, busy: OpenStreetMap as before, GovMap asked another time
+            print("govmap failed:", e, file=sys.stderr)
+        if got and source != "govmap" and not again:  # cached from OpenStreetMap and GovMap has nothing better: keep it, noted
+            v = {**got["v"], "govmap": asked} if asked else got["v"]
+            if asked:
+                _keep(c, key, v)
+            return v
+    if s and source != "govmap":
         # the spelling and town name that found this street before: one request for a new house number, not eight
         via = (_memo(c, f"via:{town_code}:{s['code']}") or {}).get("v")
         found = None  # (point on the street, spelling, city, words the road must have) when the house isn't on the map
@@ -403,7 +560,9 @@ def locate(town_code, street_code=None, number=None):
         raise LookupError("not found")
     label = ", ".join(p for p in (" ".join(str(x) for x in (s["name"] if s else "", number or "") if x), t["name"]) if p)
     out = {"label": label, "lat": float(hit["lat"]), "lon": float(hit["lon"]), "precision": precision,
-           "town": t["code"], "street": s["code"] if s else None, "number": number}
+           "town": t["code"], "street": s["code"] if s else None, "number": number, "source": source}
+    if asked:
+        out["govmap"] = True
     if near:
         out["near"] = near
     _keep(c, key, out)
@@ -455,10 +614,47 @@ def reverse(lat, lon):
             "town_name": (tt or {}).get("name") or city, "street_name": (ss or {}).get("name") or road}
 
 
+def upgrade_saved(user_db=None):
+    """Saved places that aren't an exact house (located before GovMap was set up, or when it was down): located again
+    (GovMap is asked once per address, through the same cache) and moved to the house when it's found now. Places
+    whose pin the person placed themselves are left alone. Returns how many moved."""
+    path = user_db or os.environ.get("BASKET_USER_DB") or os.path.join(os.path.dirname(os.path.abspath(dbmod.DB_PATH)), "user.db")
+    u = sqlite3.connect(path, timeout=60)
+    moved = 0
+    for uid, raw in u.execute("SELECT id, prefs FROM users").fetchall():
+        try:
+            p = json.loads(raw or "{}")
+        except ValueError:
+            continue
+        spots = [x for x in (p.get("places") or []) if isinstance(x, dict)] + [p[k] for k in ("home", "work") if isinstance(p.get(k), dict)]
+        changed = False
+        for x in spots:
+            if x.get("precision") in ("house", "pin", "gps") or not (x.get("town") and x.get("street") and x.get("number")):
+                continue
+            try:
+                h = locate(int(x["town"]), int(x["street"]), int(x["number"]))
+            except Exception as e:
+                print("user", uid, "not located:", e, file=sys.stderr)
+                continue
+            if h["precision"] == "house":
+                x.update(lat=h["lat"], lon=h["lon"], precision="house", source=h.get("source"))
+                x.pop("near", None)
+                changed = True
+                moved += 1
+        if changed:
+            with u:
+                u.execute("UPDATE users SET prefs=? WHERE id=?", (json.dumps(p, ensure_ascii=False), uid))
+    return moved
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true")
+    ap.add_argument("--upgrade-saved", action="store_true", help="move saved places to the house where it's found now")
     a = ap.parse_args()
+    if a.upgrade_saved:
+        print("saved places moved to the house:", upgrade_saved())
+        return
     changed = refresh(force=a.refresh)
     c = con()
     print("towns", c.execute("SELECT count(*) FROM towns").fetchone()[0],

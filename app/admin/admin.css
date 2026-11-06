@@ -60,8 +60,18 @@ main { max-width: 1320px; margin: 0 auto; padding: 20px 16px 64px; transition: o
 main.busy { opacity: .55; }
 
 /* ---------------------------------------------------------------- blocks */
-.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); align-items: start; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); align-items: stretch; }
 .grid.wide { grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); }
+/* cards side by side are one height (admin.js fitLayout holds a long list to its neighbours' height and scrolls it) */
+.grid > .card { display: flex; flex-direction: column; }
+.grid.measure { align-items: start; }
+.card > .cb { flex: 1 1 auto; min-height: 0; }
+.card > .cb:has(> .chart, > .heat, > .funnel) { display: flex; flex-direction: column; }
+.cb > .chart, .cb > .heat, .cb > .funnel { flex: 1; }
+.cb > .funnel { align-content: space-evenly; }
+.card.capped > .cb { overflow: auto; overscroll-behavior: contain; margin-inline-end: -8px; padding-inline-end: 8px; scrollbar-width: thin; }
+.cb > .heat { grid-template-rows: auto repeat(7, minmax(18px, 1fr)); }  /* a taller card: taller cells, labels on their rows */
+.cb > .heat .c { aspect-ratio: auto; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 16px; min-width: 0; }
 .card.full { grid-column: 1 / -1; }
 .card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; }

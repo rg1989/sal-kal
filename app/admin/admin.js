@@ -73,7 +73,7 @@ const tipRows = (title, rows) => `<div class="tl">${esc(title)}</div>` + rows.ma
   `<div class="row">${color ? `<span class="key" style="background:${color}"></span>` : ''}<span class="tv">${esc(v)}</span> <span class="muted">${esc(label)}</span></div>`).join('');
 
 // ---------------------------------------------------------------- building blocks
-const card = (title, sub, body, cls = '') => `<section class="card ${cls}"><h2>${esc(title)}</h2>${sub ? `<p class="sub">${esc(sub)}</p>` : ''}${body}</section>`;
+const card = (title, sub, body, cls = '') => `<section class="card ${cls}"><h2>${esc(title)}</h2>${sub ? `<p class="sub">${esc(sub)}</p>` : ''}<div class="cb">${body}</div></section>`;
 const empty = (text = 'Nothing yet') => `<p class="empty">${esc(text)}</p>`;
 
 function kpi(label, v, prev, { f = compact, invert = false, alert = false } = {}) {
@@ -84,7 +84,7 @@ function kpi(label, v, prev, { f = compact, invert = false, alert = false } = {}
       const ch = Math.round((v - prev) / prev * 100);
       d = ch === 0 ? '<div class="d">no change</div>'
         : `<div class="d ${(ch > 0) !== invert ? 'up' : 'down'}">${ch > 0 ? '▲' : '▼'} ${Math.abs(ch)}%</div>`;
-    } else d = '<div class="d">—</div>';
+    }  // zero then and zero now: nothing to compare, so no line (like the tiles that have no earlier value)
   }
   return `<div class="kpi${alert ? ' alert' : ''}"><div class="l">${esc(label)}</div><div class="v">${esc(f(v))}</div>${d}</div>`;
 }
@@ -190,10 +190,12 @@ const VIEWS = {
       kpi('Products added', k.adds, p.adds), kpi('Checkouts opened', k.checkouts, p.checkouts),
       kpi('Median visit', k.visit_median, p.visit_median, { f: dur }),
       kpi('Bounced visits', k.bounce, p.bounce, { f: v => v == null ? '—' : Math.round(v * 100) + '%', invert: true }),
-      kpi('Searches with no results', k.zero_rate, p.zero_rate, { f: v => v == null ? '—' : Math.round(v * 100) + '%', invert: true, alert: k.zero_rate > .2 }),
+      kpi('Empty searches', k.zero_rate, p.zero_rate, { f: v => v == null ? '—' : Math.round(v * 100) + '%', invert: true, alert: k.zero_rate > .2 }),
       kpi('Errors', (k.js_errors || 0) + (k.server_errors || 0), (p.js_errors || 0) + (p.server_errors || 0), { invert: true, alert: (k.js_errors || 0) + (k.server_errors || 0) > 0 }),
     ].join('');
-    const pts = d.daily.map(x => ({ label: dayLabel(x.day), v: { signed: x.signed, anon: Math.max(0, x.visitors - x.signed), acc: x.new_accounts } }));
+    const pts = d.daily.map(x => ({ label: dayLabel(x.day), v: { signed: x.signed, anon: Math.max(0, x.visitors - x.signed),
+      setup: x.set_up || 0, nosetup: Math.max(0, x.new_accounts - (x.set_up || 0)) } }));
+    const accTotal = d.daily.reduce((s, x) => s + x.new_accounts, 0), setTotal = d.daily.reduce((s, x) => s + (x.set_up || 0), 0);
     const live = d.live.length ? table([
       { h: 'Who', f: v => v.uid ? `${he(v.name || `#${v.uid}`)}` : '<span class="muted">Not signed in</span>' },
       { h: 'Now on', f: v => esc(v.here ? pageName(v.here.split(':')[0]) : '—') },
@@ -202,7 +204,8 @@ const VIEWS = {
     ], d.live) : empty('Nobody in the last 5 minutes');
     return `<p class="note" style="margin:0 0 8px">${esc(ST.days === 1 ? 'Today so far' : `The last ${ST.days} days`)} · change vs ${esc(prevName())}</p><div class="kpis">${tiles}</div><div class="grid wide">
       ${card('Visitors per day', `Unique browsers, ${periodName()}`, columns(pts, [{ key: 'signed', label: 'Signed in', color: 'var(--s1)' }, { key: 'anon', label: 'Not signed in', color: 'var(--s2)' }], { title: 'Visitors per day' }))}
-      ${card('New accounts per day', '', columns(pts, [{ key: 'acc', label: 'New accounts', color: 'var(--s1)' }], { height: 150, title: 'New accounts per day' }))}
+      ${card('New accounts per day', accTotal ? `${num(accTotal)} ${accTotal === 1 ? 'account' : 'accounts'} ${periodName()} · ${num(setTotal)} finished setup` : `None ${periodName()}`,
+        columns(pts, [{ key: 'setup', label: 'Finished setup', color: 'var(--s1)' }, { key: 'nosetup', label: 'Not finished', color: 'var(--s2)' }], { title: 'New accounts per day' }))}
       ${card('How far new browsers got', `Seen for the first time ${periodName()}; share of them that did each`, funnelHTML(d.funnel))}
       ${card('When people visit', 'Visits by weekday and hour', heatmap(d.heat))}
       ${card('Here now', 'Active in the last 5 minutes', live, 'full')}
@@ -221,7 +224,7 @@ const VIEWS = {
     return `<div class="grid">
       ${card('Rage clicks', 'Tapped 3+ times in a second on the same spot: something looked like it should respond', clicks(d.rage))}
       ${card('Dead clicks', 'Tapped something that looks tappable (a photo, an icon, a label) and nothing happened', clicks(d.dead))}
-      ${card('Searches with no results', 'What people want that the catalogue doesn’t find', table([
+      ${card('Empty searches', 'What people want that the catalogue doesn’t find', table([
         { h: 'Search', cls: 'wrap', f: r => he(r.q) }, { h: 'Times', n: 1, f: r => num(r.n) }, { h: 'People', n: 1, f: r => num(r.people) },
         { h: 'Last', n: 1, f: r => esc(when(r.last)) }], d.zero))}
       ${card('Searched again after no results', 'The words they tried next', table([
@@ -442,6 +445,50 @@ const VIEWS = {
       </div>`;
   },
 };
+
+// ---------------------------------------------------------------- one layout for every tab: no ragged gaps
+// Tiles: balanced rows, the last tile widened to the row's end. Card grids: the last card widened to its row's end; cards
+// side by side one height; a card much taller than its neighbours that holds a list or table is held to their height
+// and scrolls inside (its title stays). Runs after every render (the main area's children change) and on resize.
+const SCROLLS = '.tw, .bars, .timeline, .cartlist, .facts';
+function fitLayout() {
+  for (const k of $$('#main .kpis')) {
+    const tiles = [...k.children];
+    tiles.forEach(t => { t.style.gridColumn = ''; });
+    const n = tiles.length; if (!n) continue;
+    const per = Math.max(1, Math.floor((k.clientWidth + 10) / (150 + 10))), rows = Math.ceil(n / per), cols = Math.ceil(n / rows);
+    k.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    if (n % cols) tiles[n - 1].style.gridColumn = `span ${cols - n % cols + 1}`;
+  }
+  for (const g of $$('#main .grid')) {
+    const cards = [...g.children].filter(c => c.classList.contains('card'));
+    cards.forEach(c => { if (c.dataset.span) { c.style.gridColumn = ''; delete c.dataset.span; } c.style.height = ''; c.classList.remove('capped'); });
+    const cols = getComputedStyle(g).gridTemplateColumns.split(' ').filter(Boolean).length;
+    // runs of half-width cards between full-width ones: the last of a run fills what's left of its row
+    let run = [];
+    const close = () => { const r = run.length % cols; if (cols > 1 && r) { const c = run.at(-1); c.style.gridColumn = `span ${cols - r + 1}`; c.dataset.span = '1'; } run = []; };
+    for (const c of cards) { if (c.classList.contains('full')) close(); else run.push(c); }
+    close();
+    if (cols < 2) continue;
+    g.classList.add('measure');  // natural heights
+    const rows = new Map();
+    for (const c of cards) { const top = Math.round(c.getBoundingClientRect().top); rows.set(top, [...(rows.get(top) || []), c]); }
+    const caps = [];
+    for (const row of rows.values()) {
+      if (row.length < 2) continue;
+      const hs = row.map(c => c.offsetHeight), order = hs.map((h, i) => i).sort((x, y) => hs[y] - hs[x]);
+      const tall = row[order[0]], target = Math.max(hs[order[1]], 280);
+      if (hs[order[0]] > target + 40 && tall.querySelector(`.cb :is(${SCROLLS})`)) caps.push([tall, target]);
+    }
+    g.classList.remove('measure');
+    for (const [c, h] of caps) { c.style.height = `${h}px`; c.classList.add('capped'); }
+  }
+}
+let fitTimer = 0;
+const fitSoon = () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitLayout, 60); };
+new MutationObserver(fitSoon).observe($('#main'), { childList: true, subtree: true });
+addEventListener('resize', fitSoon);
+document.addEventListener('toggle', fitSoon, true);  // a chart's table opened or closed
 
 // ---------------------------------------------------------------- routing and controls
 let seq = 0, shown = '';
