@@ -201,4 +201,49 @@ assert live.execute("SELECT count(*) FROM price_moves").fetchone()[0] == 0
 assert setting("moves_since") == str(D[9]) and setting("history_since") == str(D[1])
 assert [tuple(r) for r in ph(MILK, A)][:2] == [(D[1], 5.0, 5.5), (D[2], 5.4, 5.5)]
 backfill.remove(os.environ["BASKET_DB"])
+# ---------------------------------------------------------------- 5. weekly samples before the daily days
+W2 = os.path.join(TMP, "work2")
+parts2 = os.path.join(W2, "parts")
+S1, S2, S3 = 20241201, 20241208, 20241229   # S2 -> S3: 21 days, a gap in the archive
+
+
+def fetch_as(v, files, created, sample):
+    by_chain = {}
+    for f in files:
+        by_chain.setdefault(f[0], []).append(f)
+    listing = [(f"x/price_full_file_{ch}.csv", 1000, created) for ch in by_chain]
+
+    @contextlib.contextmanager
+    def opener(_v, path, _spool):
+        yield io.StringIO(kaggle_csv(by_chain[path.split("_")[-1][:-4]]), newline="")
+    return backfill.fetch_version(v, parts2, listing, opener, sample)
+
+
+iso = lambda d: f"{d // 10000}-{d // 100 % 100:02d}-{d % 100:02d}T03:30:00Z"
+fetch_as(101, day_files(S1, a_milk=("4.00", "4.50")), iso(S1), True)
+fetch_as(108, day_files(S2, c=False, a_milk=("4.20", "4.50")), iso(S2), True)   # C missing from this sample
+fetch_as(129, day_files(S3, a_milk=("4.20", "4.50")), iso(S3), True)
+for v, d in ((201, D[1]), (202, D[2]), (204, D[4])):                             # then daily days
+    fetch_as(v, day_files(d, a_milk=("5.00", "5.50")), iso(d), False)
+with open(os.path.join(W2, "plan.json"), "w") as f:
+    json.dump({"samples": [[S1, 101], [S2, 108], [S3, 129]]}, f)
+backfill.build(W2, os.environ["BASKET_DB"], until=D[2])
+s2 = sqlite3.connect(os.path.join(W2, "stage.db"))
+H2 = lambda key, ch: s2.execute("SELECT day, mn FROM out_h WHERE key=? AND chain_id=? ORDER BY day", (key, ch)).fetchall()
+assert [r[0] for r in s2.execute("SELECT day FROM samples ORDER BY day")] == [S1, S2, S3]
+# A: weekly points, then after the gap every series ended a week after S2 and started again at S3; then daily
+assert H2(MILK, A) == [(S1, 4.0), (S2, 4.2), (20241215, None), (S3, 4.2), (D[1], 5.0)], H2(MILK, A)
+# C wasn't in the S2 sample: it ends there (nothing is held between samples)
+assert H2(MILK, C)[:3] == [(S1, 5.1), (S2, None), (S3, 5.1)], H2(MILK, C)
+# weekly samples never make price changes (a week can't date one); the first daily day, 3 days after the last
+# sample, can (board.collect takes an old price up to 4 days old)
+assert s2.execute("SELECT count(*) FROM out_m WHERE day < ?", (D[1],)).fetchone()[0] == 0
+assert set(s2.execute("SELECT key, chain_id, was, now FROM out_m WHERE day = ?", (D[1],)).fetchall()) == \
+    {(MILK, A, 4.2, 5.0), (MILK, A, 4.5, 5.5)}
+backfill.apply(W2, os.environ["BASKET_DB"])
+live = dbmod.connect()
+src = backfill.source(live)
+assert src["weekly"] == [S1, S3] and src["daily_from"] == D[1], src
+assert src["history_last"] == backfill.next_day(L, -1) and src["last"] == src["history_last"], src
+backfill.remove(os.environ["BASKET_DB"])
 print("backfill ok")

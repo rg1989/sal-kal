@@ -65,7 +65,8 @@ const HE = {
   'In your cart': 'בסל שלך', 'sold by weight': 'נמכר במשקל', 'Price at {chains}': 'מחיר ב־{chains}',
   'cheapest first': 'מהזול ליקר', 'More expensive': 'יקר יותר', 'Not sold within {n} km': 'לא נמכר ברדיוס {n} ק״מ',
   'Not on sale right now': 'לא נמכר כרגע', 'Price history': 'היסטוריית מחירים', 'Tracking since {day}.': 'במעקב מאז {day}.',
-  'Before {day}: from {source} ({license}), adapted.': 'לפני {day}: מתוך {source} ({license}), בעיבוד.',
+  'Up to {day}: from {source} ({license}), adapted.': 'עד {day}: מתוך {source} ({license}), בעיבוד.',
+  'Weekly before {day}.': 'שבועי לפני {day}.',
   'Cheapest shelf price over time at each chain': 'מחיר המדף הזול לאורך זמן בכל רשת',
   'From {price} at {chain}': 'החל מ־{price} ב{chain}',
   // ---- statuses of a price

@@ -25,9 +25,11 @@ the files with Sefi Erlich's [israeli-supermarket-scarpers](https://github.com/O
 Anything else is shown greyed out, with the reason, and never counted. Stores missing items show "N of M" with no
 estimate. The price files don't bind the till price; the shelf tag does.
 
-Price history from before Sal-Kal recorded it (back to October 2024) can be loaded with `python -m app.backfill`
-from Sefi Erlich's daily archive of the same files ([OpenIsraeliSupermarkets on Kaggle](https://www.kaggle.com/datasets/erlichsefi/israeli-supermarkets-2024),
-CC BY-NC-SA 3.0 IGO), under the same rules; charts that show it name the source.
+Price history and price changes from before Sal-Kal recorded them (weekly from October 2025, daily from
+29 October 2026; the archive goes back to October 2024) come from Sefi Erlich's daily archive of the same files
+([OpenIsraeliSupermarkets on Kaggle](https://www.kaggle.com/datasets/erlichsefi/israeli-supermarkets-2024),
+CC BY-NC-SA 3.0 IGO), loaded with `python -m app.backfill` under the same rules; the charts and the Price Board
+that show them name the source. We run his downloader with our fixes in [app/scraper_fixes.py](app/scraper_fixes.py).
 
 ## Features
 - **Carts** you name and keep (weekly shop, Shabbat…), switchable from a cart that follows you on every page.

@@ -65,6 +65,7 @@ SOURCE = {"by": "Sefi Erlich, OpenIsraeliSupermarkets",
           "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/"}
 RAW_GAP_DAYS = 4       # as app.board: a change is dated only when the old price is at most this old
 BRIDGE_DAYS = RAW_GAP_DAYS  # a chain with no current file for this long keeps its series; longer ends them
+SAMPLE_GAP = 9         # weekly samples further apart than this (a gap in the archive) end every series in between
 STALE_DAYS = 3         # a file dated this long before its version was published is an old one still on the portal
 UA = "sal-kal-backfill/1 (+https://sal-kal.com)"
 PRICE_MOVES = """CREATE TABLE IF NOT EXISTS price_moves(key TEXT, chain_id TEXT, day INTEGER, was REAL, now REAL,
@@ -355,7 +356,7 @@ class BundleOpener:
             self.z.close()
 
 
-def fetch_version(v, parts, files=None, opener=None):
+def fetch_version(v, parts, files=None, opener=None, sample=False):
     """Download one version's PriceFull CSVs into parts/v<N>.gz and its index parts/v<N>.json. Returns the index."""
     os.makedirs(parts, exist_ok=True)
     meta_path = os.path.join(parts, f"v{v}.json")
@@ -406,7 +407,7 @@ def fetch_version(v, parts, files=None, opener=None):
         for p in (tmp, tmp + ".zip"):
             with contextlib.suppress(FileNotFoundError):
                 os.remove(p)
-    meta = {"version": v, "created": created, "csv_files": len(files), "bytes": got,
+    meta = {"version": v, "created": created, "sample": sample, "csv_files": len(files), "bytes": got,
             "downloaded": opener.read if own else got, "source_files": pw.files,
             "blocks": blocks, "days": sorted({ts // 10000 for _, _, ts in blocks}), "rows": rows,
             "seconds": int(time.time() - t0)}
@@ -416,6 +417,86 @@ def fetch_version(v, parts, files=None, opener=None):
     log.info("v%d (%s): %d CSVs, %.1f GB (%.2f GB downloaded), %d branch-days, %d prices in %ds", v, created,
              len(files), got / 1e9, meta["downloaded"] / 1e9, len(blocks), rows, meta["seconds"])
     return meta
+
+
+def version_day(v, cache):
+    """The day a version was published (YYYYMMDD, from its files' creation time), None when there is no such version."""
+    k = str(v)
+    if k not in cache:
+        try:
+            files = version_files(v)
+            cache[k] = int(min(f[2] for f in files)[:10].replace("-", "")) if files else None
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            cache[k] = None
+    return cache[k]
+
+
+def has_zip(v):
+    try:
+        with _get(f"{API}/download/{DATASET}?datasetVersionNumber={v}", 60):
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        raise
+
+
+def plan_weekly(work, start, weeks):
+    """One version a week: published on `start`, then 7 days earlier each time (the nearest day with a zip when that
+    day has none). Saved oldest first in work/plan.json: [[day, version], ...]."""
+    path = os.path.join(work, "versions.json")
+    cache = json.load(open(path)) if os.path.exists(path) else {}
+    v_ref = current_version()
+    d_ref = version_day(v_ref, cache)
+    out = []
+    for k in range(weeks):
+        target = next_day(start, -7 * k)
+        v = v_ref - (_date(d_ref) - _date(target)).days  # about one version a day
+        found = None
+        for _ in range(40):  # walk to the version published that day (some days have none, some two)
+            d = version_day(v, cache)
+            if d is None:
+                v -= 1
+                continue
+            gap = (_date(d) - _date(target)).days
+            if gap == 0:
+                found = v
+                break
+            if abs(gap) == 1 and found is None and d < target:
+                found = v
+            v -= gap if abs(gap) > 1 else (1 if gap > 0 else -1)
+            if found and gap < 0:
+                break
+        for cand in [found, found and found - 1, found and found + 1]:
+            if cand and version_day(cand, cache) and has_zip(cand):
+                out.append([version_day(cand, cache), cand])
+                break
+        else:
+            log.warning("no version with a zip near %d", target)
+        with open(path, "w") as f:
+            json.dump(cache, f)
+    out = sorted({tuple(x) for x in out})
+    with open(os.path.join(work, "plan.json"), "w") as f:
+        json.dump({"samples": [list(x) for x in out]}, f)
+    log.info("weekly plan: %d samples, %s .. %s", len(out), out[0] if out else None, out[-1] if out else None)
+    return out
+
+
+def fetch_weekly(work, start, weeks, jobs=2):
+    """fetch for the weekly plan, oldest first (so build can follow it)."""
+    parts = os.path.join(work, "parts")
+    os.makedirs(parts, exist_ok=True)
+    plan = plan_weekly(work, start, weeks)
+    todo = [v for _, v in plan if not os.path.exists(os.path.join(parts, f"v{v}.json"))]
+    with ProcessPoolExecutor(max(1, jobs)) as ex:
+        jobs_ = {ex.submit(fetch_version, v, parts, None, None, True): v for v in todo}
+        for f, v in jobs_.items():
+            try:
+                f.result()
+            except Exception as e:  # noqa: BLE001
+                log.error("v%d: %s", v, e)
 
 
 def fetch(work, first=FIRST_VERSION, last=None, jobs=2):
@@ -473,6 +554,8 @@ CREATE TABLE IF NOT EXISTS out_h(key TEXT, chain_id TEXT, day INTEGER, mn REAL, 
 CREATE TABLE IF NOT EXISTS out_m(key TEXT, chain_id TEXT, day INTEGER, was REAL, now REAL, stores INTEGER, ts INTEGER,
   PRIMARY KEY(key, chain_id, day, was, now)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS done(day INTEGER PRIMARY KEY, stores INTEGER, pairs INTEGER, rows INTEGER, moves INTEGER);
+-- the days that were weekly samples (history only), not whole days
+CREATE TABLE IF NOT EXISTS samples(day INTEGER PRIMARY KEY, version INTEGER);
 """
 
 
@@ -495,6 +578,7 @@ def metas(work):
 def ready_until(ms):
     """The last day every fetched version has finished: up to the first version not fetched yet, and not the newest
     day there (the next version can still bring that day's late files)."""
+    ms = [m for m in ms if not m.get("sample")]
     if not ms:
         return None
     vs = [m["version"] for m in ms]
@@ -607,17 +691,18 @@ def load_block(s, chain, store, ts, prices):
     return moves
 
 
-def build_day(s, rules, day, blocks, names):
+def build_day(s, rules, day, blocks, names, at=None, moves_on=True, bridge_from=None):
     """One day: load the branches' files, then judge every barcode with the live rules and write history rows and
     branch price changes. blocks: [(chain, store, ts, prices)] (each branch's last file that day); names:
     [(chain, key, ts, name)]."""
     raw = {}  # key -> [(chain, store, was, now, ts)]
     for chain, store, ts, prices in sorted(blocks, key=lambda b: b[2]):
         for key, was, now, _was_ts in load_block(s, chain, store, ts, prices):
-            raw.setdefault(key, []).append((chain, store, was, now, ts))
+            if moves_on:  # a weekly sample can't date a change: no price changes from it
+                raw.setdefault(key, []).append((chain, store, was, now, ts))
     s.executemany("""INSERT INTO nm VALUES(?,?,?,?) ON CONFLICT(key, chain_id, name) DO UPDATE SET ts=excluded.ts
                      WHERE excluded.ts > nm.ts""", [(k, c, n, ts) for c, k, ts, n in names])
-    end = _day_end(day)
+    end = at or _day_end(day)  # a weekly sample is judged at its version's newest file, as the indexer would then
     cutoff, ncut = trust.fresh_cutoff(end), trust.names_cutoff(end)
     fresh = {(c, st) for c, st, ts in s.execute("SELECT chain_id, store_id, ts FROM sts") if ts >= cutoff}
     observed = {c for c, _ in fresh}
@@ -675,10 +760,12 @@ def build_day(s, rules, day, blocks, names):
     # had one within BRIDGE_DAYS
     # (dated the chain's first day without one)
     last_seen = dict(s.execute("SELECT chain_id, day FROM chain_seen"))
-    held = {c for c, d in last_seen.items() if c not in observed and d >= next_day(day, -BRIDGE_DAYS)}
+    since = next_day(day, -BRIDGE_DAYS) if bridge_from is None else bridge_from
+    held = {c for c, d in last_seen.items() if c not in observed and d >= since}
     ended = [(k, c) for k, c in s.execute("SELECT key, chain_id FROM hl WHERE seen < ?", (day,)) if c not in held]
     s.executemany("INSERT OR REPLACE INTO out_h VALUES(?,?,?,NULL,NULL,0)",
-                  [(k, c, day if c in observed else min(day, next_day(last_seen.get(c, day)))) for k, c in ended])
+                  [(k, c, day if c in observed or not moves_on else min(day, next_day(last_seen.get(c, day))))
+                   for k, c in ended])
     s.executemany("DELETE FROM hl WHERE key=? AND chain_id=?", ended)
     s.executemany("""INSERT INTO out_m VALUES(?,?,?,?,?,?,?) ON CONFLICT(key, chain_id, day, was, now)
                      DO UPDATE SET stores=stores+excluded.stores, ts=min(ts, excluded.ts)""",
@@ -703,12 +790,16 @@ def build(work, live_path=None, until=None):
         return 0
     # the first day is the first version's own: the earlier late files it carries are loaded into that day (a day
     # built from them alone would have a few branches, and the next day would look like a wave of changes)
-    created = [int(m["created"].replace("-", "")) for m in ms if m.get("created")]
-    first = min(created) if created else min(d for m in ms for d in m["days"])
-    done = s.execute("SELECT max(day) FROM done").fetchone()[0]
-    day = next_day(done) if done else first
+    daily = [m for m in ms if not m.get("sample")]
+    created = [int(m["created"].replace("-", "")) for m in daily if m.get("created")]
+    first = min(created) if created else min(d for m in daily for d in m["days"])
     parts = os.path.join(work, "parts")
-    n = 0
+    n = build_samples(s, rules, work, ms, first)
+    if n < 0:  # a weekly sample isn't fetched yet: the days after it wait
+        return 0
+    done = s.execute("SELECT max(day) FROM done").fetchone()[0]
+    day = next_day(done) if done and done >= first else first
+    ms = daily
     while day <= stop:
         t0 = time.time()
         on = (lambda d: d <= day) if day == first else (lambda d: d == day)
@@ -733,6 +824,55 @@ def build(work, live_path=None, until=None):
                  day, len(blocks), fresh, rows, ended, moves, time.time() - t0)
         day = next_day(day)
         n += 1
+    return n
+
+
+def build_samples(s, rules, work, ms, first_daily):
+    """The weekly samples in work/plan.json before the first daily day, oldest first: each is one version's last
+    file per branch, judged at that version's newest file; history rows only. A series not in a sample ends there;
+    a gap of more than SAMPLE_GAP days ends every series. Returns the samples built, or -1 when one isn't fetched."""
+    path = os.path.join(work, "plan.json")
+    if not os.path.exists(path):
+        return 0
+    plan = [(d, v) for d, v in json.load(open(path))["samples"] if d < first_daily]
+    by_v = {m["version"]: m for m in ms}
+    done = {r[0] for r in s.execute("SELECT day FROM done")}
+    prev, n = None, 0
+    for day, v in plan:
+        if day in done:
+            prev = day
+            continue
+        m = by_v.get(v)
+        if m is None:
+            log.info("build: waiting for weekly sample v%d (%d)", v, day)
+            return -1
+        t0 = time.time()
+        if prev and (_date(day) - _date(prev)).days > SAMPLE_GAP:
+            # the archive has nothing for weeks (its publishing stopped): every series ends where the next sample
+            # would have been, and starts again here, rather than being drawn across the gap
+            end = next_day(prev, 7)
+            s.execute("INSERT OR REPLACE INTO out_h SELECT key, chain_id, ?, NULL, NULL, 0 FROM hl", (end,))
+            s.execute("DELETE FROM hl")
+        best = {}
+        for ch, st, ts in m["blocks"]:
+            if best.get((ch, st), 0) < ts:
+                best[(ch, st)] = ts
+        newest = max(best.values(), default=day * 10000 + 2359)
+        blocks, names = [], []
+        for rec in read_part(os.path.join(work, "parts", f"v{v}.gz"), newest):
+            if rec[0] == "F":
+                if best.get((rec[1], rec[2])) == rec[3]:
+                    blocks.append(rec[1:])
+            else:
+                names.append(rec[1:])
+        # a chain missing from a sample ends there (nothing is held between weekly samples)
+        fresh, rows, ended, _ = build_day(s, rules, day, blocks, names, at=_epoch(newest), moves_on=False,
+                                          bridge_from=next_day(day))
+        s.execute("INSERT OR REPLACE INTO samples VALUES(?,?)", (day, v))
+        s.commit()
+        log.info("%d (weekly, v%d): %d branch files, %d current branches, %d history rows, %d ended (%.0fs)",
+                 day, v, len(blocks), fresh, rows, ended, time.time() - t0)
+        prev, n = day, n + 1
     return n
 
 
@@ -807,7 +947,12 @@ def _apply(c, work, moves=True):
             put_setting(c, "history_since", str(min(hf, h_since)))
         if mf:
             put_setting(c, "moves_since", str(min(mf, m_since)))
+        wf, wl = c.execute("SELECT min(day), max(day) FROM bf.samples").fetchone() \
+            if c.execute("SELECT 1 FROM bf.sqlite_master WHERE name='samples'").fetchone() else (None, None)
+        daily_from = c.execute("SELECT min(day) FROM bf.done WHERE day NOT IN (SELECT day FROM bf.samples)").fetchone()[0] \
+            if wf else hf
         put_setting(c, "backfill", json.dumps({**SOURCE, "history": [hf, ht], "moves": [mf, mt],
+                                               "weekly": [wf, wl] if wf else None, "daily_from": daily_from,
                                                "until": h_since, "applied": int(time.time()),
                                                "rows": h + e, "moves_rows": m}))
     c.execute("DETACH DATABASE bf")
@@ -847,7 +992,13 @@ def source(c):
         d = json.loads(v)
     except ValueError:
         return None
-    return {k: d.get(k) for k in ("by", "url", "license", "license_url", "until", "history", "moves")}
+    out = {k: d.get(k) for k in ("by", "url", "license", "license_url", "until", "history", "moves", "weekly",
+                                 "daily_from")}
+    # the last day archive data is shown for: charts (history) and the Price Board (history and price changes)
+    h, m = (d.get("history") or [None, None]), (d.get("moves") or [None, None])
+    out["history_last"] = next_day(d["until"], -1) if d.get("until") and h[0] else h[1]
+    out["last"] = max(x for x in (out["history_last"], m[1], 0) if x) or None
+    return out
 
 
 def status(work):
@@ -872,12 +1023,17 @@ def main():
     ap.add_argument("--to", dest="last", type=int, default=None, help="last Kaggle version (default the newest)")
     ap.add_argument("--jobs", type=int, default=2, help="versions downloaded at once (one process each)")
     ap.add_argument("--until", type=int, default=None, help="build: last day (YYYYMMDD)")
+    ap.add_argument("--weekly-from", type=int, default=None,
+                    help="fetch: one version a week, published this day (YYYYMMDD) and every 7 days before it")
+    ap.add_argument("--weeks", type=int, default=52, help="fetch --weekly-from: how many")
     ap.add_argument("--no-moves", action="store_true", help="apply: history only, no branch price changes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
     work = work_dir(a.work)
     os.makedirs(work, exist_ok=True)
-    if a.step == "fetch":
+    if a.step == "fetch" and a.weekly_from:
+        fetch_weekly(work, a.weekly_from, a.weeks, a.jobs)
+    elif a.step == "fetch":
         fetch(work, a.first, a.last, a.jobs)
     elif a.step == "build":
         build(work, a.db, a.until)

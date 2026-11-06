@@ -1461,9 +1461,10 @@ function historySource(hist, series) {
   const s = hist?.source;
   if (!s?.until || !series.some(sr => sr.points.some(p => p[0] < s.until))) return '';
   const a = (href, text) => `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
-  const day = dayDate(s.until).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' });
-  return `<p class="trend-note">${t('Before {day}: from {source} ({license}), adapted.',
-    { day, source: a(s.url, s.by), license: a(s.license_url, s.license) })}</p>`;
+  const long = d => dayDate(d).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' });
+  const weekly = s.weekly && s.daily_from ? ' ' + t('Weekly before {day}.', { day: long(s.daily_from) }) : '';
+  return `<p class="trend-note">${t('Up to {day}: from {source} ({license}), adapted.',
+    { day: long(s.history_last || s.history?.[1] || s.until), source: a(s.url, s.by), license: a(s.license_url, s.license) })}${weekly}</p>`;
 }
 
 $('#view-product').addEventListener('click', e => {
