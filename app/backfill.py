@@ -698,18 +698,22 @@ def build(work, live_path=None, until=None):
     if not stop:
         log.info("build: nothing fetched yet")
         return 0
-    first = min(d for m in ms for d in m["days"])
+    # the first day is the first version's own: the earlier late files it carries are loaded into that day (a day
+    # built from them alone would have a few branches, and the next day would look like a wave of changes)
+    created = [int(m["created"].replace("-", "")) for m in ms if m.get("created")]
+    first = min(created) if created else min(d for m in ms for d in m["days"])
     done = s.execute("SELECT max(day) FROM done").fetchone()[0]
     day = next_day(done) if done else first
     parts = os.path.join(work, "parts")
     n = 0
     while day <= stop:
         t0 = time.time()
-        with_day = [m for m in ms if day in m["days"]]
+        on = (lambda d: d <= day) if day == first else (lambda d: d == day)
+        with_day = [m for m in ms if any(on(d) for d in m["days"])]
         best = {}  # (chain, store) -> (ts, version): the branch's last file that day across versions
         for m in with_day:
             for ch, st, ts in m["blocks"]:
-                if ts // 10000 == day and best.get((ch, st), (0,))[0] < ts:
+                if on(ts // 10000) and best.get((ch, st), (0,))[0] < ts:
                     best[(ch, st)] = (ts, m["version"])
         blocks, names = [], []
         end_ts = day * 10000 + 2359
