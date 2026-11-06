@@ -182,6 +182,7 @@ const outcome = b => b === 'add' ? '<span class="chip good">added</span>' : b ==
 const VIEWS = {
   async overview() {
     const d = await get('overview');
+    showLive(d.live);  // the header pill from the same answer: no second request
     const k = d.kpi, p = d.prev;
     const tiles = [
       kpi('Visitors', k.visitors, p.visitors), kpi('Visits', k.visits, p.visits), kpi('Signed-in people', k.users, p.users),
@@ -443,34 +444,65 @@ const VIEWS = {
 };
 
 // ---------------------------------------------------------------- routing and controls
-let seq = 0;
-async function render() {
-  const my = ++seq, [tab, arg] = (location.hash.slice(1) || 'overview').split('/');
-  const view = VIEWS[tab] ? tab : 'overview';
+let seq = 0, shown = '';
+const viewOf = () => { const [tab, arg] = (location.hash.slice(1) || 'overview').split('/'); return [VIEWS[tab] ? tab : 'overview', arg]; };
+// silent: the periodic update. No busy state; the page is replaced only when something changed, keeping the window's and
+// each card's scroll, open tables and switches; a failed update leaves the page as it was (signed out still says so).
+async function render(silent = false) {
+  const my = ++seq, [view, arg] = viewOf();
   $$('#tabs a').forEach(a => a.setAttribute('aria-current', a.hash === `#${view === 'user' ? 'users' : view}` ? 'page' : 'false'));
   const main = $('#main');
-  main.classList.add('busy');
-  $('#refresh').classList.add('spin');
+  if (!silent) { main.classList.add('busy'); $('#refresh').classList.add('spin'); }
+  const tips = TIPS;
   try {
     TIPS = [];
     const html = await VIEWS[view](arg);
     if (my !== seq) return;
-    main.innerHTML = html;
+    if (silent && html === shown) { TIPS = tips; return; }
+    const keep = silent && saveState(main), y = scrollY;
+    main.innerHTML = shown = html;
+    if (keep) {
+      if (typeof fitLayout === 'function') fitLayout();  // the card layout now, not 60 ms later: no jump on every update
+      restoreState(main, keep); scrollTo(0, y);
+    }
   } catch (e) {
     if (my !== seq) return;
+    if (silent && !e.status) { TIPS = tips; return; }
+    shown = '';
     main.innerHTML = e.status ? `<div class="msg"><h1>Signed out</h1><p>Sign in on the shop with the owner’s Google account, then come back.</p><p><a href="/">Go to Sal-Kal</a></p></div>`
       : `<div class="msg"><h1>Couldn’t load this</h1><p class="mono">${esc(e.message)}</p></div>`;
   } finally {
     if (my === seq) { main.classList.remove('busy'); $('#refresh').classList.remove('spin'); }
   }
 }
+// what the reader has opened or scrolled, keyed by card title (cards keep their titles from one update to the next)
+function saveState(main) {
+  const st = {};
+  for (const c of main.querySelectorAll('.card')) {
+    const k = c.querySelector('h2')?.textContent;
+    if (k) st[k] = { open: [...c.querySelectorAll('details')].map(d => d.open), on: [...c.querySelectorAll('input[type=checkbox]')].map(i => i.checked),
+      scroll: [...c.querySelectorAll('*')].map((x, i) => x.scrollTop && [i, x.scrollTop]).filter(Boolean) };
+  }
+  return st;
+}
+function restoreState(main, st) {
+  for (const c of main.querySelectorAll('.card')) {
+    const s = st[c.querySelector('h2')?.textContent]; if (!s) continue;
+    c.querySelectorAll('details').forEach((d, i) => { if (s.open[i] != null) d.open = s.open[i]; });
+    c.querySelectorAll('input[type=checkbox]').forEach((x, i) => {
+      if (s.on[i] != null && x.checked !== s.on[i]) { x.checked = s.on[i]; x.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+    const all = c.querySelectorAll('*');
+    for (const [i, top] of s.scroll) if (all[i]) all[i].scrollTop = top;
+  }
+}
+function showLive(r) {
+  const el = $('#live-pill');
+  el.hidden = false;
+  el.querySelector('span').textContent = r.length === 1 ? '1 here now' : `${r.length} here now`;
+}
 async function livePill() {
-  try {
-    const r = await get('live');
-    const el = $('#live-pill');
-    el.hidden = false;
-    el.querySelector('span').textContent = r.length === 1 ? '1 here now' : `${r.length} here now`;
-  } catch { /* the page shows the error */ }
+  try { showLive(await get('live')); } catch { /* the page shows the error */ }
 }
 function setRange(days) {
   ST.days = days;
@@ -484,5 +516,36 @@ $('#refresh').addEventListener('click', () => { render(); livePill(); });
 addEventListener('hashchange', render);
 setRange([1, 7, 30, 90].includes(ST.days) ? ST.days : 7);
 render();
-livePill();
-setInterval(() => { if (document.visibilityState === 'visible') livePill(); }, 30000);
+if (viewOf()[0] !== 'overview') livePill();
+
+// ---------------------------------------------------------------- keeping the open tab current
+// Only while this browser tab is in view, and only the page on screen (each page asks for its own data; on the overview
+// the header pill comes with the page's). Every 10 s; the price data changes at most every 30 min, so its page every
+// minute; reports never (cached 15 min, and a form may be half filled). Not while a chart's tooltip is up, text is
+// selected or a field has focus. A slow update makes the next one wait 20x as long, so a busy server is never hurried.
+const EVERY = { data: 60, reports: 0 }, BASE = 10;
+let last = Date.now(), wait = BASE, timer = 0;
+function idle() {
+  return tip.hidden && !String(getSelection()).trim() && !$('#main').classList.contains('busy')
+    && !document.activeElement?.closest?.('#main input:not([type=checkbox]), #main textarea, #main select');
+}
+async function tick() {
+  timer = 0;
+  if (document.visibilityState !== 'visible') return;  // picked up again when the tab comes back
+  const [view] = viewOf(), every = EVERY[view] ?? BASE, t0 = Date.now();
+  if (idle()) {
+    if (every && t0 - last >= every * 1000 - 500) { await render(true); last = Date.now(); }
+    if (view !== 'overview') await livePill();
+    wait = Math.max(BASE, (Date.now() - t0) / 1000 * 20);
+  }
+  if (document.visibilityState === 'visible') schedule();
+}
+function schedule() { clearTimeout(timer); timer = setTimeout(tick, wait * 1000); }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') { clearTimeout(timer); timer = 0; } else if (!timer) tick();
+});
+// a page just opened (a tab, the range, the switch, the refresh button) is fresh: the next update is a full period away
+addEventListener('hashchange', () => { last = Date.now(); schedule(); });
+document.addEventListener('click', e => { if (e.target.closest?.('#range button, #refresh')) { last = Date.now(); schedule(); } });
+$('#mine').addEventListener('change', () => { last = Date.now(); schedule(); });
+schedule();
