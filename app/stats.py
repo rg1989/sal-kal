@@ -147,7 +147,11 @@ def parse_ua(ua, touch=False):
 # ---------------------------------------------------------------- cleaning what a browser sends
 ID = re.compile(r"[A-Za-z0-9_-]{10,40}")
 WEB_KINDS = {"view", "dwell", "search", "filter", "add", "remove", "cart", "compare", "click", "rage", "dead", "error",
-             "api_fail", "toast", "perf", "onboard", "dialog", "signin_click"}
+             "api_fail", "toast", "perf", "onboard", "dialog", "signin_click", "gps", "addr"}
+# "Script error." with no file is a script from another origin, mostly a browser's own (Firefox for iPhone throws one
+# whenever a dialog opens): it says nothing about Sal-Kal's code, so it isn't kept or counted
+FOREIGN_ERROR = "Script error."
+OURS = f"NOT (kind='error' AND a='{FOREIGN_ERROR}' AND coalesce(b, '')='')"
 PAGE = re.compile(r"[a-z0-9_-]{1,24}")
 CTRL = re.compile(r"[\x00-\x1f\x7f]+")
 
@@ -409,6 +413,8 @@ def ingest(body, *, uid, admin, ua, country, city, via, ip):
         ts = now - max(0.0, min(900.0, (sent - t) / 1000))
         page = e.get("p") if isinstance(e.get("p"), str) and PAGE.fullmatch(e.get("p")) else None
         kind = e["k"]
+        if kind == "error" and _s(e.get("a")) == FOREIGN_ERROR and not _s(e.get("b")):
+            continue
         views += kind == "view"
         rows.append((ts, day_of(ts), sid, vid, uid, adm, "web", kind, page,
                      _s(e.get("a")), _s(e.get("b")), _num(e.get("n")), _data(e.get("d"))))
@@ -511,7 +517,7 @@ def _visit_kpis(r, R, t0, t1):
     lens = sorted(x[0] for x in r.execute(f"SELECT last - start FROM visits WHERE start >= ? AND start < ?{R.adm}", (t0, t1)))
     ev = r.execute(f"""SELECT sum(kind='search') searches, sum(kind='search' AND n=0) zero, sum(kind='add') adds,
                               count(DISTINCT CASE WHEN kind='view' AND page='basket' THEN sid END) checkouts,
-                              sum(kind='error') js_errors, sum(kind IN ('rage', 'dead')) stuck
+                              sum(kind='error' AND {OURS}) js_errors, sum(kind IN ('rage', 'dead')) stuck
                        FROM events WHERE ts >= ? AND ts < ?{R.adm}""", (t0, t1)).fetchone()
     d0, d1 = day_of(t0), day_of(t1 - 1)
     s5 = r.execute("SELECT coalesce(sum(n), 0) FROM requests WHERE day BETWEEN ? AND ? AND status >= 500", (d0, d1)).fetchone()[0]
@@ -700,7 +706,7 @@ def stuck(R):
                       WHERE e.ts >= ? AND e.ts < ?{R.adm_e} AND e.kind='search' AND e.n=0 AND e.a IS NOT NULL
                       ORDER BY e.ts DESC LIMIT 40""")
     errors = q(f"""SELECT a message, b source, page, count(*) n, count(DISTINCT vid) people, max(ts) last FROM events WHERE {W}
-                   AND kind='error' GROUP BY a, b ORDER BY n DESC LIMIT 30""")
+                   AND kind='error' AND {OURS} GROUP BY a, b ORDER BY n DESC LIMIT 30""")
     api = q(f"""SELECT a path, cast(n AS INTEGER) status, count(*) n, count(DISTINCT vid) people, max(ts) last FROM events WHERE {W}
                 AND kind='api_fail' GROUP BY a, n ORDER BY n DESC LIMIT 30""")
     toasts = q(f"""SELECT a message, page, count(*) n, count(DISTINCT vid) people, max(ts) last FROM events WHERE {W}
@@ -773,9 +779,9 @@ def users(R):
         FROM visits WHERE uid IS NOT NULL GROUP BY uid""")}
     per = {x["uid"]: dict(x) for x in r.execute("""
         SELECT uid, count(*) visits FROM visits WHERE uid IS NOT NULL AND start >= ? AND start < ? GROUP BY uid""", (R.t0, R.t1))}
-    evs = {x["uid"]: dict(x) for x in r.execute("""
+    evs = {x["uid"]: dict(x) for x in r.execute(f"""
         SELECT uid, sum(kind='search') searches, sum(kind='add') adds, sum(kind='view' AND page='basket') checkouts,
-               sum(kind IN ('rage', 'dead', 'error')) trouble FROM events WHERE uid IS NOT NULL GROUP BY uid""")}
+               sum(kind IN ('rage', 'dead', 'error') AND {OURS}) trouble FROM events WHERE uid IS NOT NULL GROUP BY uid""")}
     lastv = {x["uid"]: dict(x) for x in r.execute("""
         SELECT uid, device, os, browser, country, city FROM visits v WHERE uid IS NOT NULL
         AND start = (SELECT max(start) FROM visits w WHERE w.uid=v.uid)""")}

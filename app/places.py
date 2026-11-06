@@ -116,6 +116,42 @@ def _loose(qwords, name_words):
     return (left, other, -sum(map(len, hit)))
 
 
+def _dist(a, b):
+    """Edit distance with swapped neighbours counting once (optimal string alignment)."""
+    prev2, prev = None, list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb))
+            if prev2 is not None and i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[-1]
+
+
+def _typo(qwords, name_words):
+    """The last pass, when nothing is spelled like the list: every typed word of 2+ letters starts a word of the name
+    with at most one slip (two in words of 7+ letters): a letter missing, extra, wrong or two swapped. Words of under
+    3 letters must be exact. Returns the slips counted, or None. "רמת גנן" finds רמת גן, "הרזל" finds הרצל."""
+    total = 0
+    for q in qwords:
+        if len(q) < 2:
+            continue
+        allow = 0 if len(q) < 3 else 1 if len(q) < 7 else 2
+        best = None
+        for w in name_words:
+            if w.startswith(q):
+                best = 0
+                break
+            if allow and len(w) >= len(q) - allow and (w[0] == q[0] or w[0] == q[1] or w[1:2] == q[0] or w[1:2] == q[1:2]):
+                d = min(_dist(q, w[:k]) for k in range(max(1, len(q) - allow), len(q) + allow + 1))
+                best = d if best is None else min(best, d)
+        if best is None or best > allow:
+            return None
+        total += best
+    return (total, max(0, len(name_words) - len(qwords))) if any(len(q) >= 2 for q in qwords) else None
+
+
 def title(s):
     return " ".join(w[:1].upper() + w[1:].lower() if not w.startswith("'") else w for w in (s or "").split())
 
@@ -184,6 +220,11 @@ def towns(q, limit=12):
             hits.append((0 if n.startswith(hq) else 1, -size, code, name, en))
         elif eq and re.search(r"[a-z]", q.lower()) and _match(eq.split(), sk.split()):
             hits.append((0 if sk.startswith(eq) else 1, -size, code, name, en))
+    if not hits and hq:  # a slip of the finger: the nearest spellings, fewest slips first
+        for code, name, en, n, sk, size in rows:
+            d = _typo(hq.split(), n.split()) or _typo([hq.replace(" ", "")], [n.replace(" ", "")])  # or a space left out
+            if d is not None:
+                hits.append((d[0], -size, code, name, en))
     hits.sort()
     return [{"code": h[2], "name": h[3], "en": h[4]} for h in hits[:limit]]
 
@@ -207,6 +248,12 @@ def streets(town_code, q="", limit=60):
         # a left-over word (a first name) only when nothing fits better: "יגאל אלון" shouldn't add "סמ אלון"
         most = 0 if exact or (loose and loose[0][0][0] == 0) else 1
         named = exact + [r for k, r in loose if k[0] <= most]
+        if not exact and not (loose and loose[0][0][0] == 0):  # a slip of the finger beats guessing a first name
+            seen = {r[0] for r in named}
+            near = [(d, r) for r in rows if r[0] not in seen and not (t and r[1] == t["name"])
+                    for d in [_typo(qw, r[2].split())] if d is not None]
+            near.sort(key=lambda x: (x[0], x[1][1]))
+            named = [r for d, r in near] + named
     return {"total": len(named), "streets": [{"code": r[0], "name": r[1]} for r in named[:limit]],
             "no_streets": len(rows) > 0 and all(t and r[1] == t["name"] for r in rows)}
 

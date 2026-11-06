@@ -199,39 +199,15 @@
 <!-- first sign-in: where you shop from, how far, and what carts are -->
 <section class="onboard" id="onboard" hidden aria-live="polite">
   <div class="ob-top">
-    <button class="icon ob-back" id="ob-back" type="button" data-i18n-aria="Back"><svg class="flip" viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    <ol class="ob-dots" id="ob-dots" aria-hidden="true"><li></li><li></li><li></li></ol>
+    <span></span>
     <button class="lang-btn" type="button" data-lang-toggle></button>
   </div>
-  <div class="ob-steps" id="ob-steps">
-    <div class="ob-step" data-step="0">
-      <p class="ob-kicker" data-i18n="Step 1 of 3">Step 1 of 3</p>
+  <div class="ob-steps">
+    <div class="ob-step">
       <h2 data-i18n="Where do you shop from?">Where do you shop from?</h2>
       <div class="addr" id="ob-addr"></div>
+      <button class="primary big ob-go" id="ob-next" type="button" data-i18n="Start shopping">Start shopping</button>
     </div>
-    <div class="ob-step" data-step="1" hidden>
-      <p class="ob-kicker" data-i18n="Step 2 of 3">Step 2 of 3</p>
-      <h2 data-i18n="How far will you go?">How far will you go?</h2>
-      <div class="ob-map" id="ob-map"><div class="ob-map-canvas" id="ob-map-canvas"></div><p class="ob-count" id="ob-count"></p></div>
-      <div class="radius-picker" id="ob-radius" role="radiogroup" data-i18n-aria="Distance"></div>
-    </div>
-    <div class="ob-step" data-step="2" hidden>
-      <p class="ob-kicker" data-i18n="Step 3 of 3">Step 3 of 3</p>
-      <h2 data-i18n="Carts">Carts</h2>
-      <ol class="ob-how">
-        <li><span class="ob-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 9.6 10.5 5.8M15.5 9.6 13.5 5.8"/><path d="M4.6 9.6h14.8l-1.55 7.4a2.1 2.1 0 0 1-2.05 1.66H8.2A2.1 2.1 0 0 1 6.15 17z"/></g></svg></span>
-          <span><strong data-i18n="A cart is a list you name">A cart is a list you name</strong><small data-i18n="Weekly shop, Shabbat, a party — keep as many as you like.">Weekly shop, Shabbat, a party — keep as many as you like.</small></span></li>
-        <li><span class="ob-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/></g></svg></span>
-          <span><strong data-i18n="Add products">Add products</strong><small data-i18n="Search by name or barcode.">Search by name or barcode.</small></span></li>
-        <li><span class="ob-ico tag" aria-hidden="true"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V11M10 19V6M15 19v-6M20 19V9"/></g></svg></span>
-          <span><strong data-i18n="Compare">Compare</strong><small id="ob-compare-text"></small></span></li>
-      </ol>
-      <label class="ob-name"><span data-i18n="Name your first cart">Name your first cart</span>
-        <input id="ob-cart" maxlength="80" dir="auto" autocomplete="off" enterkeyhint="done"></label>
-    </div>
-  </div>
-  <div class="ob-foot">
-    <button class="primary big" id="ob-next" type="button" data-i18n="Continue">Continue</button>
   </div>
 </section>
 

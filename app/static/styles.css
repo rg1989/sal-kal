@@ -1306,27 +1306,11 @@ body.gated > .top, body.gated > .page, body.gated > .cart-bar, body.onboarding >
   padding: env(safe-area-inset-top) 0 0;
 }
 .ob-top {
-  position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 10px;
+  position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; align-items: center; gap: 10px;
   padding: 12px 16px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px);
 }
-.ob-dots { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; justify-content: center; }
-.ob-dots li { width: 26px; height: 5px; border-radius: 3px; background: var(--line); transition: background .25s, width .25s; }
-.ob-dots li.done { background: var(--accent-edge); }
-.ob-dots li.on { width: 44px; background: var(--accent); }
 .ob-steps { width: min(560px, 100%); margin: 0 auto; padding: 8px 16px 24px; flex: 1; }
 .ob-step h2 { font-size: clamp(26px, 6vw, 34px); line-height: 1.12; letter-spacing: -.02em; margin: 0 0 20px; }
-.ob-kicker { margin: 8px 0 6px; font-size: 12.5px; font-weight: 700; color: var(--muted); letter-spacing: .04em; }
-.ob-step.from-next { animation: ob-next .36s cubic-bezier(.2, .8, .2, 1); }
-.ob-step.from-prev { animation: ob-prev .36s cubic-bezier(.2, .8, .2, 1); }
-@keyframes ob-next { from { opacity: 0; transform: translateX(28px); } }
-@keyframes ob-prev { from { opacity: 0; transform: translateX(-28px); } }
-[dir="rtl"] .ob-step.from-next { animation-name: ob-prev; }
-[dir="rtl"] .ob-step.from-prev { animation-name: ob-next; }
-.ob-foot {
-  position: sticky; bottom: 0; padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
-  background: linear-gradient(to top, var(--paper) 70%, transparent);
-}
-.ob-foot .primary { display: block; width: min(528px, 100%); margin: 0 auto; }
 .primary.big {
   padding: 15px 20px; font-size: 16.5px; font-weight: 700; border-radius: 14px; background: var(--tag); color: var(--tag-ink);
   box-shadow: 0 10px 24px -12px color-mix(in srgb, var(--tag-edge) 90%, transparent);
@@ -1338,18 +1322,6 @@ body.gated > .top, body.gated > .page, body.gated > .cart-bar, body.onboarding >
   content: ""; position: absolute; inset: 0; margin: auto; width: 20px; height: 20px; border-radius: 50%;
   border: 2.5px solid color-mix(in srgb, var(--tag-ink) 25%, transparent); border-top-color: var(--tag-ink); animation: spin .7s linear infinite;
 }
-.ob-map { position: relative; height: 260px; border-radius: var(--r-lg); overflow: hidden; background: var(--surface-2); margin-bottom: 14px; border: 1px solid var(--line); }
-.ob-map-canvas { position: absolute; inset: 0; }
-.ob-map.nomap .ob-map-canvas { display: none; }
-.ob-map.nomap { height: auto; min-height: 60px; }
-.ob-count {
-  position: absolute; inset-inline-start: 10px; top: 10px; z-index: 2; margin: 0; padding: 6px 12px; border-radius: 999px; font-size: 13.5px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); border: 1px solid var(--line); color: var(--ink-2);
-}
-.ob-map.nomap .ob-count { position: static; display: inline-block; margin: 12px; }
-.ob-count strong { color: var(--ink); }
-.ob-count .spin { margin: 0; }
-.ob-map .maplibregl-ctrl-attrib { font-size: 10px; opacity: .75; }
 .radius-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 8px; }
 .radius-picker button {
   display: grid; justify-items: center; align-content: center; gap: 1px; min-height: 60px; padding: 8px 4px; border: 1.5px solid var(--line);
@@ -1361,20 +1333,11 @@ body.gated > .top, body.gated > .page, body.gated > .cart-bar, body.onboarding >
 .radius-picker button:hover { border-color: var(--line-strong); }
 .radius-picker [aria-checked="true"] { background: var(--accent); border-color: var(--accent-edge); color: var(--tag-ink); box-shadow: 0 6px 16px -8px var(--accent-edge); }
 .radius-picker [aria-checked="true"] small { color: inherit; opacity: .75; }
-.ob-how { list-style: none; margin: 0 0 22px; padding: 0; display: grid; gap: 10px; }
-.ob-how li { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 14px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px; }
-.ob-how strong { display: block; font-size: 16px; }
-.ob-how small { display: block; color: var(--ink-2); font-size: 14px; margin-top: 2px; }
-.ob-ico { width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 26%, var(--surface)); color: var(--tag-ink); }
-.ob-ico.tag { background: var(--accent); }
-.ob-ico svg { width: 24px; height: 24px; }
-:root[data-theme="dark"] .ob-ico:not(.tag) { color: var(--ink); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ob-ico:not(.tag) { color: var(--ink); } }
-.ob-name { display: grid; gap: 8px; font-weight: 600; font-size: 14px; color: var(--ink-2); }
-.ob-name input, .combo-box input, .num-step input {
+.ob-go { display: block; width: 100%; margin-top: 22px; }
+.combo-box input, .num-in {
   width: 100%; border: 1.5px solid var(--line-strong); background: var(--surface); border-radius: 13px; padding: 13px 14px; font-size: 16px; color: var(--ink);
 }
-.ob-name input:focus, .combo-box input:focus, .num-step input:focus { outline: none; border-color: var(--accent-edge); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.combo-box input:focus, .num-in:focus { outline: none; border-color: var(--accent-edge); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 
 /* ================================================================ the address picker */
 .addr { display: grid; gap: 12px; }
@@ -1387,7 +1350,7 @@ body.gated > .top, body.gated > .page, body.gated > .cart-bar, body.onboarding >
 .addr-gps.busy .spin { display: inline-block; } .addr-gps.busy svg { display: none; }
 .addr-or { display: flex; align-items: center; gap: 12px; margin: 2px 0; color: var(--muted); font-size: 12.5px; }
 .addr-or::before, .addr-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.addr-fields { display: grid; grid-template-columns: minmax(0, 1fr) 132px; gap: 12px; }
+.addr-fields { display: grid; grid-template-columns: minmax(0, 1fr) 104px; gap: 12px; }
 .addr-fields .combo { grid-column: 1 / -1; }
 .addr-fields .combo[data-field="street"] { grid-column: 1; }
 .addr-fields label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 2px 6px; }
@@ -1407,6 +1370,8 @@ body.gated > .top, body.gated > .page, body.gated > .cart-bar, body.onboarding >
   overflow: auto; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 22px 44px -18px rgba(0, 0, 0, .45);
   overscroll-behavior: contain; animation: pop-in .14s ease-out;
 }
+/* in the address picker the list opens in place and pushes what's below down: it never covers the next field or the button */
+.addr .combo-list { position: static; margin-top: 6px; max-height: min(264px, 40vh); box-shadow: 0 10px 24px -16px rgba(0, 0, 0, .35); }
 .combo-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 11px 12px; border-radius: 9px; cursor: pointer; font-size: 15.5px; }
 .combo-list li small { color: var(--muted); font-size: 12.5px; }
 .combo-list li[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
@@ -1414,12 +1379,11 @@ body.gated > .top, body.gated > .page, body.gated > .cart-bar, body.onboarding >
 .combo-list li[aria-selected="true"]:hover { background: color-mix(in srgb, var(--accent) 38%, var(--surface)); }
 .combo-list .combo-none, .combo-list .combo-more { color: var(--muted); cursor: default; font-size: 13.5px; }
 .combo-list .combo-none:hover, .combo-list .combo-more:hover { background: none; }
-.num-step { display: grid; grid-template-columns: 38px minmax(0, 1fr) 38px; align-items: center; border: 1.5px solid var(--line-strong); border-radius: 13px; background: var(--surface); overflow: hidden; }
-.num-step input { border: 0; border-radius: 0; text-align: center; padding: 13px 0; font: 700 18px var(--num); box-shadow: none !important; }
-.num-step input:disabled { background: var(--surface-2); }
-.num-step button { height: 100%; min-height: 48px; border: 0; background: var(--surface-2); font-size: 20px; color: var(--ink-2); padding: 0; }
-.num-step button:disabled { color: var(--line-strong); cursor: not-allowed; }
-.num-step:focus-within { border-color: var(--accent-edge); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.num-in { text-align: center; font: 700 18px var(--num); padding-inline: 8px; }
+.num-in:disabled { background: var(--surface-2); border-style: dashed; }
+.addr-fields label small { font-weight: 500; color: var(--muted); }
+.combo-need { margin: 6px 2px 0; font-size: 13.5px; font-weight: 600; color: var(--promo); }
+.combo.need .combo-box input { border-color: var(--promo); }
 .addr-result { display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 14.5px; color: var(--ink-2); }
 .addr-result:empty { display: none; }
 .addr-result.ok { padding: 12px 14px; border-radius: 13px; background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-weight: 600; animation: view-in .3s ease-out; }
@@ -1589,7 +1553,6 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
 }
 
 /* maplibre-gl.css loads later and would make the onboarding map relative with no height (blank) */
-.ob-map > .ob-map-canvas, .ob-map > .ob-map-canvas.maplibregl-map { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 /* seven distance buttons in one row down to 340px wide */
 @media (max-width: 400px) { .radius-picker { grid-template-columns: repeat(auto-fit, minmax(38px, 1fr)); gap: 5px; } .radius-picker button { padding-inline: 2px; min-height: 56px; } .radius-picker b { font-size: 20px; } }
@@ -1705,7 +1668,6 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
   .seg.small button { min-height: 40px; }
   .cmp-picks label { min-height: 44px; padding-inline: 14px; }
   .cmp-picks input { width: 18px; height: 18px; }
-  .num-step { grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .lang-btn { height: 44px; }
   .fee-check { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; cursor: pointer; }
   .fee-table .fee-check input[type="checkbox"] { width: 24px; height: 24px; }
@@ -1719,9 +1681,8 @@ html, body { overflow-x: clip; }  /* nothing may make the phone page scroll side
   .nl-place { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nl-km { flex: none; color: var(--muted); font-weight: 600; font-size: 13px; }
   .near > #near-label { display: flex; min-width: 0; }
-  /* the house number keeps room for three digits beside its − and + */
-  .addr-fields { grid-template-columns: minmax(0, 1fr) 132px; }
-  .num-step { grid-template-columns: 42px minmax(0, 1fr) 42px; }
+  /* the house number: four digits */
+  .addr-fields { grid-template-columns: minmax(0, 1fr) 96px; }
   .live-cart .cart-name { min-height: 44px; }
 }
 

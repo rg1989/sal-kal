@@ -43,6 +43,22 @@ assert found("שדרות בן גוריון") == ["שדרות בן גוריון"]
 assert found("מנחם ב") == ["בייליס מנחם מנדל"], found("מנחם ב")  # one letter doesn't stand for a word yet
 assert "תל אביב - יפו" not in found("")
 
+# a slip of the finger still finds it, but only when nothing is spelled like the list
+assert found("דיזנגוב")[0] == "דיזנגוף", found("דיזנגוב")
+assert found("רוטשילט") == ["שד רוטשילד"], found("רוטשילט")
+assert "הרצל" in found("הרזל")
+assert found("בנבנישתיי") == ["בנבנישתי"]
+assert found("דיזנגוף")[0] == "דיזנגוף" and "דיזנגוב" not in found("דיזנגוף")
+assert places._typo(["הר"], ["הצ"]) is None  # two letters must be exact
+assert places._dist("abcd", "abdc") == 1
+with c:
+    c.execute("INSERT INTO towns VALUES(8600, 'רמת גן', 'RAMAT GAN', ?, ?, 900)", (places.norm("רמת גן"), places.skel("RAMAT GAN")))
+    c.execute("INSERT INTO towns VALUES(9000, 'באר שבע', 'BEER SHEVA', ?, ?, 800)", (places.norm("באר שבע"), places.skel("BEER SHEVA")))
+tn = lambda q: [x["name"] for x in places.towns(q)]
+assert tn("רמת גנן") == ["רמת גן"] and tn("רמט גן") == ["רמת גן"], tn("רמט גן")
+assert tn("בארשבע") == ["באר שבע"]
+assert tn("רמת") == ["רמת גן"]
+
 # spellings for OpenStreetMap: it knows דרך בגין as "מנחם בגין", so the bare surname is tried, and must be on the road
 names = places._street_names("דרך בגין")
 assert names == [("דרך בגין", None), ("בגין", ["בגינ"])], names

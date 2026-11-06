@@ -153,9 +153,11 @@ window.addEventListener('pageshow', e => { if (e.persisted) { ssoReady(); BotChe
 
 // ---------------------------------------------------------------- the address picker
 // Town and street come from Israel's official lists (the server's places module), so only real ones can be chosen;
-// the house number is a number stepper. "Use my location" asks the phone and names the address it finds.
-function AddressPicker(root, { home, onPick, compact }) {
-  const st = { town: null, street: null, number: null, home: home || null, seq: 0, noStreets: false };
+// "Use my location" asks the phone and names the address it finds. Nothing typed is ever thrown away: a name that
+// is the only fit (or exactly a name on the list) is taken as chosen, otherwise the field says to pick from the list.
+// The town alone is already an address (its centre); street and number only make it exact.
+function AddressPicker(root, { home, onPick }) {
+  const st = { town: null, street: null, number: null, home: home || null, seq: 0, noStreets: false, pending: null };
   if (home?.town) {
     st.town = { code: home.town, name: home.town_name || (home.label.split(', ').at(-1)) };
     if (home.street) st.street = { code: home.street, name: home.street_name || '' };
@@ -168,58 +170,69 @@ function AddressPicker(root, { home, onPick, compact }) {
     <div class="addr-fields">
       <div class="combo" data-field="town">
         <label for="${root.id}-town">${t('City or town')}</label>
-        <div class="combo-box"><input id="${root.id}-town" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${root.id}-town-list" autocomplete="off" dir="auto" placeholder="${esc(t('Start typing — e.g. Ramat Gan'))}" enterkeyhint="next">
+        <div class="combo-box"><input id="${root.id}-town" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${root.id}-town-list" aria-describedby="${root.id}-town-need" autocomplete="off" dir="auto" placeholder="${esc(t('Start typing — e.g. Ramat Gan'))}" enterkeyhint="next">
           <button type="button" class="combo-clear" tabindex="-1" aria-label="${esc(t('Clear'))}">${SVG.x}</button></div>
+        <p class="combo-need" id="${root.id}-town-need" hidden></p>
         <ul class="combo-list" id="${root.id}-town-list" role="listbox" hidden></ul>
       </div>
       <div class="combo" data-field="street">
-        <label for="${root.id}-street">${t('Street')}</label>
-        <div class="combo-box"><input id="${root.id}-street" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${root.id}-street-list" autocomplete="off" dir="auto" placeholder="${esc(t('Choose a street'))}" enterkeyhint="next" disabled>
+        <label for="${root.id}-street">${t('Street')} <small>${t('optional')}</small></label>
+        <div class="combo-box"><input id="${root.id}-street" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${root.id}-street-list" aria-describedby="${root.id}-street-need" autocomplete="off" dir="auto" placeholder="${esc(t('Choose a street'))}" enterkeyhint="next" disabled>
           <button type="button" class="combo-clear" tabindex="-1" aria-label="${esc(t('Clear'))}">${SVG.x}</button></div>
+        <p class="combo-need" id="${root.id}-street-need" hidden></p>
         <ul class="combo-list" id="${root.id}-street-list" role="listbox" hidden></ul>
       </div>
       <div class="num-field">
         <label for="${root.id}-num">${t('Number')}</label>
-        <div class="num-step"><button type="button" data-num="-1" aria-label="${esc(t('One less'))}" disabled>−</button>
-          <input id="${root.id}-num" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" disabled>
-          <button type="button" data-num="1" aria-label="${esc(t('One more'))}" disabled>+</button></div>
+        <input id="${root.id}-num" class="num-in" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" enterkeyhint="done" disabled>
       </div>
     </div>
     <div class="addr-result" aria-live="polite"></div>`;
   const $r = s => root.querySelector(s);
-  const townIn = $r('[data-field="town"] input'), streetIn = $r('[data-field="street"] input'), numIn = $r('.num-field input');
+  const townIn = $r('[data-field="town"] input'), streetIn = $r('[data-field="street"] input'), numIn = $r('.num-in');
+  const combos = {};
 
+  // chosen values are written into the fields; text typed and not (yet) chosen stays as typed
   function paint() {
-    townIn.value = st.town ? st.town.name : townIn === document.activeElement ? townIn.value : '';
-    streetIn.disabled = !st.town || st.noStreets;
+    if (st.town) townIn.value = st.town.name;
+    streetIn.disabled = numIn.disabled = st.noStreets;
     streetIn.placeholder = st.noStreets ? t('No street names here') : t('Choose a street');
-    streetIn.value = st.street ? st.street.name : streetIn === document.activeElement ? streetIn.value : '';
-    const numOn = !!st.street;
-    numIn.disabled = !numOn;
-    root.querySelectorAll('[data-num]').forEach(b => { b.disabled = !numOn; });
-    numIn.value = st.number || '';
+    if (st.street) streetIn.value = st.street.name;
+    else if (st.noStreets) streetIn.value = '';
+    numIn.value = st.noStreets ? '' : st.number || '';
     root.querySelectorAll('.combo').forEach(c => c.classList.toggle('chosen', !!(c.dataset.field === 'town' ? st.town : st.street)));
+  }
+  function need(field, text) {
+    const c = $r(`[data-field="${field}"]`), p = c.querySelector('.combo-need');
+    c.classList.toggle('need', !!text);
+    p.hidden = !text;
+    p.textContent = text || '';
   }
   function result(state, text) {
     const el = $r('.addr-result');
     el.className = `addr-result ${state || ''}`;
     el.innerHTML = state === 'busy' ? `<span class="spin" aria-hidden="true"></span>${t('Finding it on the map…')}`
-      : state === 'ok' ? `<span class="loc-pin" aria-hidden="true"></span><bdi>${esc(st.home.label)}</bdi>${pinNote(st.home)}`
+      : state === 'ok' ? `<span class="loc-pin" aria-hidden="true"></span><bdi>${esc(st.home.label)}</bdi>${text ? `<small class="warn">${esc(text)}</small>` : pinNote(st.home)}`
       : state === 'err' ? esc(text) : '';
   }
-  // list boxes: type to filter, arrows + Enter, tap to choose; what you type is only a filter, never the value
+  // list boxes: type to filter, arrows + Enter, tap to choose
   function combo(field, input, load, choose) {
     const list = $r(`#${root.id}-${field}-list`);
-    let items = [], active = -1, seq = 0;
+    let items = [], active = -1, seq = 0, shown = '';
+    const fetch = async () => {
+      const my = ++seq, q = input.value.trim();
+      const got = await load(q);
+      return my === seq ? { ...got, q } : null;
+    };
     const show = async () => {
-      const my = ++seq;
-      const got = await load(input.value.trim());
-      if (my !== seq) return;
+      const got = await fetch();
+      if (!got || document.activeElement !== input) return;
       items = got.items;
+      shown = got.q;
       active = items.length ? 0 : -1;
       list.innerHTML = items.length ? items.map((x, i) => `<li role="option" id="${root.id}-${field}-o${i}" data-i="${i}" aria-selected="${i === active}"><bdi>${esc(x.name)}</bdi>${x.sub ? `<small>${esc(x.sub)}</small>` : ''}</li>`).join('')
         + (got.more ? `<li class="combo-more" aria-disabled="true">${esc(t('Type to see more'))}</li>` : '')
-        : `<li class="combo-none" aria-disabled="true">${esc(input.value.trim() ? t('No match — check the spelling') : t('Start typing'))}</li>`;
+        : `<li class="combo-none" aria-disabled="true">${esc(got.none || (got.q ? t('No match — check the spelling') : t('Start typing')))}</li>`;
       list.hidden = false;
       input.setAttribute('aria-expanded', 'true');
       input.setAttribute('aria-activedescendant', active >= 0 ? `${root.id}-${field}-o${active}` : '');
@@ -231,9 +244,35 @@ function AddressPicker(root, { home, onPick, compact }) {
       li?.scrollIntoView({ block: 'nearest' });
       input.setAttribute('aria-activedescendant', li ? li.id : '');
     };
+    const pick = x => { need(field, null); hide(); choose(x); };
+    // left without choosing: the only fit, or the name typed in full, counts as chosen; otherwise say so
+    const settle = async () => {
+      const q = input.value.trim(), chosen = field === 'town' ? st.town : st.street;
+      if (chosen || !q) { if (!q && field === 'street') need(field, null); return chosen ? 'picked' : 'empty'; }
+      const got = q === shown ? { items, q } : await fetch();
+      if (!got || input.value.trim() !== q || (field === 'town' ? st.town : st.street)) return 'picked';
+      const same = got.items.filter(x => normName(x.name) === normName(q));
+      const x = same.length === 1 ? same[0] : got.items.length === 1 ? got.items[0] : null;
+      if (x) { Usage.ev('addr', { a: 'auto', b: field }); pick(x); return 'picked'; }
+      const how = got.items.length ? 'unpicked' : 'nomatch';
+      Usage.ev('addr', { a: how, b: field });
+      need(field, got.items.length ? (field === 'town' ? t('Tap your town in the list') : t('Tap the street in the list'))
+        : t('No match — check the spelling'));
+      return how;
+    };
     const debounced = debounce(show, 120);
-    input.addEventListener('focus', () => { input.select(); show(); });
-    input.addEventListener('input', () => { if (field === 'town') st.town = null; else st.street = null; unpick(); debounced(); });
+    input.addEventListener('focus', async () => {
+      input.select();
+      if (field === 'street' && !st.town && townIn.value.trim()) await combos.town.settle();  // the town typed in full counts
+      show();
+    });
+    input.addEventListener('input', () => {
+      need(field, null);
+      if (field === 'town') { if (st.town) { st.town = null; st.street = null; st.number = null; streetIn.value = ''; paint(); } }
+      else if (st.street) { st.street = null; paint(); }
+      unpick();
+      debounced();
+    });
     input.addEventListener('keydown', e => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -242,65 +281,66 @@ function AddressPicker(root, { home, onPick, compact }) {
         mark();
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (items[active]) { choose(items[active]); hide(); }
+        if (items[active] && !list.hidden && shown === input.value.trim()) pick(items[active]); else settle();
       } else if (e.key === 'Escape') { hide(); }
     });
     list.addEventListener('pointerdown', e => e.preventDefault());  // keep focus in the input while tapping a row
     list.addEventListener('click', e => {
       const li = e.target.closest('[data-i]'); if (!li) return;
-      choose(items[+li.dataset.i]);
-      hide();
+      pick(items[+li.dataset.i]);
     });
-    input.addEventListener('blur', () => { setTimeout(hide, 120); setTimeout(paint, 130); });  // typed text that wasn't chosen goes away
+    input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) { hide(); settle(); } }, 120));
     input.closest('.combo').querySelector('.combo-clear').addEventListener('click', () => {
-      if (field === 'town') { st.town = st.street = null; st.number = null; } else { st.street = null; st.number = null; }
+      if (field === 'town') { st.town = st.street = null; st.number = null; streetIn.value = ''; need('street', null); }
+      else st.street = null;
+      input.value = '';
+      need(field, null);
       unpick(); paint(); input.focus();
+      if (field === 'street' && st.town) locate();  // back to the town alone
     });
-    return { show, hide };
+    combos[field] = { show, settle };
   }
   combo('town', townIn, async q => {
     const r = await api('/api/places/towns?q=' + encodeURIComponent(q), { quiet: true }).catch(() => []);
     return { items: r.map(x => ({ ...x, sub: L() === 'en' && x.en ? x.en : '' })) };
-  }, async x => {
+  }, x => {
     haptic('select');
     const changed = !st.town || st.town.code !== x.code;
     st.town = { code: x.code, name: x.name };
-    if (changed) { st.street = null; st.number = null; st.home = null; }
-    const s = await api(`/api/places/streets?town=${x.code}`, { quiet: true }).catch(() => null);
-    st.noStreets = !!s?.no_streets;
+    if (changed) { st.street = null; st.number = null; st.noStreets = false; streetIn.value = ''; need('street', null); }
     paint();
-    if (st.noStreets) locate();
-    else if (changed) setTimeout(() => streetIn.focus(), 30);
+    if (!changed) return;
+    if (!st.quiet && document.activeElement === townIn) streetIn.focus();  // in the tap: phones keep the keyboard
+    locate();  // the town alone is enough to go on; a street makes it exact
+    api(`/api/places/streets?town=${x.code}`, { quiet: true }).then(s => {
+      if (st.town?.code !== x.code || !s?.no_streets) return;
+      st.noStreets = true;
+      if (document.activeElement === streetIn) streetIn.blur();
+      paint();
+    }).catch(() => {});
   });
   combo('street', streetIn, async q => {
-    if (!st.town) return { items: [] };
+    if (!st.town) return { items: [], none: t('Choose the town first') };
     const r = await api(`/api/places/streets?town=${st.town.code}&q=${encodeURIComponent(q)}`, { quiet: true }).catch(() => ({ streets: [] }));
     return { items: r.streets, more: r.total > r.streets.length };
   }, x => {
     haptic('select');
     st.street = { code: x.code, name: x.name };
     paint();
+    if (!st.quiet && document.activeElement === streetIn) numIn.focus();  // in the tap: the number pad opens at once
     locate();
-    if (matchMedia('(pointer: fine)').matches) setTimeout(() => numIn.focus(), 30);
   });
-  const relocate = debounce(() => locate(), 650);
-  root.addEventListener('click', e => {
-    const b = e.target.closest('[data-num]');
-    if (b) {
-      haptic('tap');
-      st.number = Math.max(1, Math.min(9999, (st.number || 0) + +b.dataset.num));
-      unpick();
-      paint();
-      relocate();
-    }
-    if (e.target.closest('[data-gps]')) fromGps(e.target.closest('[data-gps]'));
-  });
+  const relocate = debounce(() => locate(), 500);
+  root.addEventListener('click', e => { if (e.target.closest('[data-gps]')) fromGps(e.target.closest('[data-gps]')); });
   numIn.addEventListener('input', () => {
     numIn.value = numIn.value.replace(/\D+/g, '').replace(/^0+/, '').slice(0, 4);
     st.number = numIn.value ? +numIn.value : null;
+    if (!st.street) return;  // kept for the street, once it's chosen
     unpick();
     relocate();
   });
+  numIn.addEventListener('focus', () => { if (!st.street && streetIn.value.trim()) combos.street.settle(); });
+  numIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); numIn.blur(); locate(); } });
 
   // the address shown changed: what was picked before no longer counts (Save / Continue wait for the new one)
   function unpick() {
@@ -309,59 +349,119 @@ function AddressPicker(root, { home, onPick, compact }) {
     result('');
     onPick?.(null);
   }
-  async function locate() {
-    if (!st.town) return;
+  function locate() {
+    if (!st.town) return Promise.resolve(null);
     const my = ++st.seq;
     unpick();
     result('busy');
-    const qs = new URLSearchParams({ town: st.town.code });
-    if (st.street) qs.set('street', st.street.code);
-    if (st.street && st.number) qs.set('number', st.number);
-    try {
-      const h = await api('/api/places/locate?' + qs);
-      if (my !== st.seq) return;
-      if (h.precision === 'town' && st.street) {  // never a town-centre point standing in for a street: it looks real on the map
-        result('err', t('Couldn’t find this street on the map. Use your current location instead.'));
-        haptic('error');
-        return;
+    const ask = (street, number) => {
+      const qs = new URLSearchParams({ town: st.town.code });
+      if (street) qs.set('street', street.code);
+      if (street && number) qs.set('number', number);
+      return api('/api/places/locate?' + qs, { quiet: true });
+    };
+    const run = (async () => {
+      let h = null, note = '';
+      try { h = await ask(st.street, st.number); } catch { h = null; }
+      if (my !== st.seq) return null;
+      // a street that isn't on the map: the town centre, said so (never a town-centre point that looks like the street)
+      if (st.street && (!h || h.precision === 'town')) {
+        try { h = await ask(null); note = t('Street not found on the map: placed in the town centre. You can change it later.'); } catch { h = null; }
+        if (my !== st.seq) return null;
+        if (h) Usage.ev('addr', { a: 'fallback' });
       }
-      st.home = { ...h, town_name: st.town.name, street_name: st.street?.name || null };
-      result('ok');
-      haptic('success');
+      if (!h) { result('err', t('Couldn’t find this address on the map just now. Try again in a minute.')); haptic('error'); return null; }
+      const exact = !note;
+      st.home = { ...h, town_name: st.town.name, street_name: exact ? st.street?.name || null : null };
+      result('ok', note);
+      if (exact && st.street) haptic('success');
       onPick?.(st.home);
-    } catch {
-      if (my === st.seq) { result('err', t('Couldn’t find this address on the map just now. Try again in a minute.')); haptic('error'); }
-    }
+      return st.home;
+    })();
+    st.pending = run.finally(() => { if (st.pending === run) st.pending = null; });
+    return run;
   }
   async function fromGps(btn) {
+    if (btn.classList.contains('busy')) return;
     btn.classList.add('busy');
-    const pos = await new Promise(ok => navigator.geolocation.getCurrentPosition(p => ok(p), () => ok(null),
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }));
-    if (!pos) { btn.classList.remove('busy'); result('err', t('Location isn’t available. Allow it in your browser, or choose the address below.')); haptic('error'); return; }
-    try {
-      const h = await api(`/api/places/reverse?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
-      st.town = h.town ? { code: h.town, name: h.town_name } : null;
-      st.street = h.street ? { code: h.street, name: h.street_name } : null;
-      st.number = h.number || null;
-      st.home = h;
-      paint();
-      result('ok');
-      haptic('success');
-      onPick?.(st.home);
-    } catch { result('err', t('That location isn’t an address in Israel we can use. Choose it below instead.')); haptic('error'); }
-    btn.classList.remove('busy');
+    btn.setAttribute('aria-busy', 'true');
+    const my = ++st.seq;
+    const run = (async () => {
+      let why = null;
+      const pos = await new Promise(ok => navigator.geolocation.getCurrentPosition(p => ok(p),
+        e => { why = e?.code === 1 ? 'denied' : e?.code === 3 ? 'timeout' : 'unavailable'; ok(null); },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }));
+      if (my !== st.seq) return null;
+      if (!pos) {
+        Usage.ev('gps', { a: why });
+        result('err', why === 'denied' ? t('Location is off for this site. Choose your town below.') : t('Couldn’t get your location. Choose your town below.'));
+        haptic('error');
+        townIn.focus();
+        return null;
+      }
+      try {
+        const h = await api(`/api/places/reverse?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`, { quiet: true });
+        if (my !== st.seq) return null;
+        st.town = h.town ? { code: h.town, name: h.town_name } : null;
+        st.street = h.street ? { code: h.street, name: h.street_name } : null;
+        st.number = h.number || null;
+        st.home = h;
+        need('town', null); need('street', null);
+        paint();
+        result('ok');
+        haptic('success');
+        Usage.ev('gps', { a: 'ok', b: h.precision });
+        onPick?.(st.home);
+        return h;
+      } catch {
+        if (my !== st.seq) return null;
+        Usage.ev('gps', { a: 'outside' });
+        result('err', t('That location isn’t an address in Israel we can use. Choose your town below.'));
+        haptic('error');
+        townIn.focus();
+        return null;
+      }
+    })();
+    st.pending = run.finally(() => { btn.classList.remove('busy'); btn.removeAttribute('aria-busy'); if (st.pending === run) st.pending = null; });
+    return run;
   }
   paint();
   if (st.home) result('ok');
-  return { get home() { return st.home; } };
+  return {
+    get home() { return st.home; },
+    // the address, once what's under way has finished (a lookup, or a name typed and not chosen); null with the
+    // field that's missing shown and focused
+    async ready() {
+      st.quiet = true;  // finishing up: no jumping to the next field
+      try {
+        const q = townIn.value.trim();
+        if (!st.town && q) await combos.town.settle();
+        // a street typed and not chosen while the list has it: one tap on it (a street not on the list is left out)
+        if (st.town && !st.street && !st.noStreets && streetIn.value.trim() && await combos.street.settle() === 'unpicked') {
+          Usage.ev('addr', { a: 'blocked', b: 'street' });
+          streetIn.focus();
+          return null;
+        }
+        if (st.pending) await st.pending;
+        if (st.home) return st.home;
+        if (st.town) return await locate();  // a lookup that failed: once more
+        if (!q) need('town', gps ? t('Choose your town, or use your location') : t('Choose your town'));
+        Usage.ev('addr', { a: 'blocked', b: q ? 'town' : 'empty' });
+        haptic('error');
+        townIn.focus();
+        return null;
+      } finally { st.quiet = false; }
+    },
+  };
 }
+const normName = s => String(s || '').toLowerCase().replace(/["'׳״`()\[\].,/\\-]+/g, ' ').replace(/[ךםןףץ]/g, c => ({ ך: 'כ', ם: 'מ', ן: 'נ', ף: 'פ', ץ: 'צ' })[c]).replace(/\s+/g, ' ').trim();
 
 // How exact a located address is, said plainly when it isn't the house itself.
 const roughPin = h => h && (h.precision === 'street' || (h.precision === 'town' && h.street));
 function pinNote(h) {
   if (h.precision === 'near') return `<small>${h.near ? t('No. {n} isn’t on the map: placed at no. {m}', { n: h.number, m: h.near }) : t('Placed a few doors away')}</small>`;
-  if (h.precision === 'street') return `<small class="warn">${h.number ? t('This number isn’t on the map: the pin is somewhere on the street') : t('Add the house number: the pin is somewhere on the street')}</small>`;
-  if (h.precision === 'town') return `<small class="warn">${h.street ? t('Not the exact address — edit it') : t('Placed in the town centre')}</small>`;
+  if (h.precision === 'street') return h.number ? `<small class="warn">${t('This number isn’t on the map: the pin is somewhere on the street')}</small>` : `<small>${t('Add the house number to be exact')}</small>`;
+  if (h.precision === 'town') return h.street ? `<small class="warn">${t('Not the exact address — edit it')}</small>` : `<small>${t('Town centre: add a street to be exact')}</small>`;
   return '';
 }
 
@@ -474,8 +574,10 @@ $('#loc-body').addEventListener('click', e => {
   }
 });
 
-// ---------------------------------------------------------------- first sign-in: three short steps
-const OB = { step: 0, home: null, km: 5, map: null, picker: null };
+// ---------------------------------------------------------------- first sign-in: one screen, the address
+// Only the address is asked (the town alone will do). The distance starts at 5 km and the first cart is made for you:
+// both are changed later in the app (the address pill, the cart).
+const OB = { home: null, km: 5, picker: null, t0: 0 };
 function startOnboarding() {
   document.body.classList.remove('booting', 'gated');
   document.body.classList.add('onboarding');
@@ -483,102 +585,39 @@ function startOnboarding() {
   $('#onboard').hidden = false;
   OB.home = ME.prefs?.home || null;
   OB.km = ME.prefs?.max_km || 5;
-  OB.picker = AddressPicker($('#ob-addr'), { home: OB.home, onPick: h => { OB.home = h; obButtons(); } });
-  $('#ob-cart').value = t('Weekly shop');
-  obShow(0, 0);
+  OB.t0 = Date.now();
+  obPicker();
+  Usage.view('onboard', '1');
+  Usage.ev('onboard', { a: '1' });
 }
-function obShow(step, dir = 1) {
-  const prev = OB.step;
-  OB.step = step;
-  $$('#ob-steps .ob-step').forEach(s => {
-    const n = +s.dataset.step;
-    s.hidden = n !== step;
-    s.classList.remove('from-next', 'from-prev');
-    if (n === step && dir && prev !== step) { void s.offsetWidth; s.classList.add(dir > 0 ? 'from-next' : 'from-prev'); }
-  });
-  $$('#ob-dots li').forEach((li, i) => { li.classList.toggle('on', i === step); li.classList.toggle('done', i < step); });
-  $('#ob-back').style.visibility = step ? 'visible' : 'hidden';
-  if (prev !== step || !OB.seen) { OB.seen = true; Usage.view('onboard', String(step + 1)); Usage.ev('onboard', { a: String(step + 1) }); }
-  if (step === 1) obRadius();
-  if (step === 2) $('#ob-compare-text').textContent = t('See where each cart costs least within {n} km of {place}.', { n: OB.km, place: OB.home.label.split(',')[0] });
-  obButtons();
-  $('#onboard').scrollTop = 0;
+function obPicker() {
+  OB.picker = AddressPicker($('#ob-addr'), { home: OB.home, onPick: h => { OB.home = h; obReady(); } });
+  obReady();
 }
-function obButtons() {
-  const b = $('#ob-next');
-  b.textContent = OB.step === 2 ? t('Start shopping') : t('Continue');
-  b.disabled = OB.step === 0 && !OB.home;
-}
-async function obRadius() {
-  radiusPicker($('#ob-radius'), OB.km, km => { OB.km = km; saveObPrefs().then(obMapData); }, false);
-  await saveObPrefs();
-  const canvas = $('#ob-map-canvas');
-  try {
-    await loadMapLib();
-    if (!OB.map) {
-      if (maplibregl.getRTLTextPluginStatus() === 'unavailable') maplibregl.setRTLTextPlugin('/static/vendor/mapbox-gl-rtl-text.js', false);
-      OB.map = new maplibregl.Map({ container: canvas, style: await mapStyle(), center: [OB.home.lon, OB.home.lat], zoom: 12,
-        attributionControl: { compact: true }, interactive: false });
-      OB.map.once('load', () => canvas.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));  // the credit folds into its (i)
-      OB.map.on('style.load', () => {
-        const C = mapColors(), empty = { type: 'FeatureCollection', features: [] };
-        OB.map.addSource('r', { type: 'geojson', data: empty });
-        OB.map.addLayer({ id: 'rf', type: 'fill', source: 'r', paint: { 'fill-color': C.dot, 'fill-opacity': .08 } });
-        OB.map.addLayer({ id: 'rl', type: 'line', source: 'r', paint: { 'line-color': C.dot, 'line-width': 1.6, 'line-dasharray': [2, 2] } });
-        OB.map.addSource('s', { type: 'geojson', data: empty });
-        OB.map.addLayer({ id: 's', type: 'circle', source: 's', paint: { 'circle-radius': 4, 'circle-color': C.dot, 'circle-stroke-color': C.bg, 'circle-stroke-width': 1.5 } });
-        obMapData();
-      });
-      const pin = document.createElement('div');
-      pin.className = 'home-pin';
-      pin.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 9.2 10 4l6.5 5.2M5.5 8v7.5h9V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      OB.pin = new maplibregl.Marker({ element: pin }).setLngLat([OB.home.lon, OB.home.lat]).addTo(OB.map);
-    } else { OB.map.resize(); obMapData(); }
-  } catch { canvas.closest('.ob-map').classList.add('nomap'); obMapData(); }
-}
-function saveObPrefs() {
-  return api('/api/settings', { method: 'PUT', body: { prefs: { home: OB.home, max_km: OB.km } }, quiet: true }).catch(() => null);
-}
-let obSeq = 0;
-async function obMapData() {
-  const my = ++obSeq;
-  $('#ob-count').innerHTML = `<span class="spin" aria-hidden="true"></span>`;
-  const d = await api('/api/stores/near', { quiet: true }).catch(() => null);
-  if (my !== obSeq || !d) return;
-  const chains = new Set(d.stores.map(x => x.chain)).size;
-  $('#ob-count').innerHTML = d.total ? t('{branches} of {chains} {where}', { branches: `<strong>${plural(d.total, 'branch')}</strong>`, chains: `<strong>${plural(chains, 'chain')}</strong>`, where: t('within {n} km', { n: OB.km }) })
-    : t('No stores within {n} km', { n: OB.km });
-  if (!OB.map?.getSource('s')) return;
-  OB.pin.setLngLat([OB.home.lon, OB.home.lat]);
-  OB.map.getSource('r').setData(circle(OB.home.lat, OB.home.lon, OB.km));
-  OB.map.getSource('s').setData({ type: 'FeatureCollection', features: d.stores.map(x => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [x.lon, x.lat] } })) });
-  const dx = OB.km / (111.32 * Math.cos(OB.home.lat * Math.PI / 180)), dy = OB.km / 110.574;
-  OB.map.fitBounds([[OB.home.lon - dx, OB.home.lat - dy], [OB.home.lon + dx, OB.home.lat + dy]], { padding: 18, duration: reduced() ? 0 : 700 });
-}
+function obReady() { $('#ob-next').classList.toggle('ready', !!OB.home); }
 $('#ob-next').addEventListener('click', async () => {
-  if (OB.step < 2) { haptic('select'); return obShow(OB.step + 1, 1); }
   const b = $('#ob-next');
-  b.disabled = true;
+  if (b.classList.contains('busy')) return;
   b.classList.add('busy');
-  const name = $('#ob-cart').value.trim() || t('Weekly shop');
+  b.setAttribute('aria-busy', 'true');
   try {
-    await saveObPrefs();
+    const home = await OB.picker.ready();  // what's being looked up, or typed and not chosen, is finished first
+    if (!home) return;
+    OB.home = home;
+    await api('/api/settings', { method: 'PUT', body: { prefs: { home, max_km: OB.km } } });
     const carts = await api('/api/carts');
     if (!carts.length) {
-      const c = await api('/api/carts', { method: 'POST', body: { name } });
+      const c = await api('/api/carts', { method: 'POST', body: { name: t('Weekly shop') } });
       local.set('cart', c.id);
     }
     const r = await api('/api/me', { method: 'PUT', body: { onboarded: true, lang: L() } });
     ME.user = r.user;
     haptic('success');
-    Usage.ev('onboard', { a: 'done' });
+    Usage.ev('onboard', { a: 'done', n: Math.round((Date.now() - OB.t0) / 1000), b: home.precision });
     goShop();
   } catch { toast(t('Couldn’t save — try again'), null, null, 'error'); }
-  b.disabled = false;
-  b.classList.remove('busy');
+  finally { b.classList.remove('busy'); b.removeAttribute('aria-busy'); }
 });
-$('#ob-back').addEventListener('click', () => { haptic('tap'); if (OB.step) obShow(OB.step - 1, -1); });
-$('#ob-cart').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#ob-next').click(); } });
 
 // ---------------------------------------------------------------- the account sheet
 function initials(name) {
@@ -687,11 +726,10 @@ function setLang(l, save = true) {
   renderLangButtons();
   renderAccountButton();
   if (!$('#gate').hidden) renderGate();
-  if (!$('#onboard').hidden) { const keep = OB.home; OB.picker = AddressPicker($('#ob-addr'), { home: keep, onPick: h => { OB.home = h; obButtons(); } }); obShow(OB.step, 0); if (OB.map) restyleOb(); }
+  if (!$('#onboard').hidden) obPicker();
   if (appStarted) relabel();
   if (save && ME.user) api('/api/me', { method: 'PUT', body: { lang: l }, quiet: true }).catch(() => {});
 }
-async function restyleOb() { OB.map.setStyle(await mapStyle(), { diff: false }); }
 $$('[data-lang-toggle]').forEach(b => b.addEventListener('click', () => setLang(L() === 'he' ? 'en' : 'he')));
 $('#lang-btn').addEventListener('click', e => {
   e.stopPropagation();

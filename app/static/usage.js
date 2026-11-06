@@ -205,7 +205,9 @@ const Usage = (() => {
     ev('error', { a: msg, b: src });
   }
   const where = (f, l, c) => f ? `${String(f).replace(location.origin, '').split('?')[0]}:${l || 0}:${c || 0}` : '';
-  addEventListener('error', e => { if (e instanceof ErrorEvent) error(e.message, where(e.filename, e.lineno, e.colno)); });
+  // "Script error." with no file is another origin's script, mostly the browser's own (Firefox for iPhone, each time a
+  // dialog opens): nothing in it is about this page
+  addEventListener('error', e => { if (e instanceof ErrorEvent && (e.filename || e.message !== 'Script error.')) error(e.message, where(e.filename, e.lineno, e.colno)); });
   addEventListener('unhandledrejection', e => {
     const r = e.reason;
     const st = (r && r.stack || '').split('\n').find(l => /\/static\//.test(l)) || '';
