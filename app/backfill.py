@@ -361,6 +361,9 @@ def fetch_version(v, parts, files=None, opener=None, sample=False):
     """Download one version's PriceFull CSVs into parts/v<N>.gz and its index parts/v<N>.json. Returns the index."""
     os.makedirs(parts, exist_ok=True)
     meta_path = os.path.join(parts, f"v{v}.json")
+    if os.path.exists(meta_path):  # fetched meanwhile (by another run, or copied in from another machine)
+        with open(meta_path) as f:
+            return json.load(f)
     t0 = time.time()
     if files is None:
         try:
@@ -485,12 +488,15 @@ def plan_weekly(work, start, weeks):
     return out
 
 
-def fetch_weekly(work, start, weeks, jobs=2):
-    """fetch for the weekly plan, oldest first (so build can follow it)."""
+def fetch_weekly(work, start, weeks, jobs=2, newest_first=False):
+    """fetch for the weekly plan, oldest first (so build can follow it), or newest first (a second machine helping
+    from the other end: a version already there when its turn comes is skipped)."""
     parts = os.path.join(work, "parts")
     os.makedirs(parts, exist_ok=True)
     plan = plan_weekly(work, start, weeks)
     todo = [v for _, v in plan if not os.path.exists(os.path.join(parts, f"v{v}.json"))]
+    if newest_first:
+        todo.reverse()
     with ProcessPoolExecutor(max(1, jobs)) as ex:
         jobs_ = {ex.submit(fetch_version, v, parts, None, None, True): v for v in todo}
         for f, v in jobs_.items():
@@ -535,8 +541,8 @@ STAGE = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-1500000;
-PRAGMA mmap_size=4000000000;
+PRAGMA cache_size=-CACHE_KB;
+PRAGMA mmap_size=MMAP_BYTES;
 -- every branch's newest barcode prices (its last full file so far) and when that file was published
 CREATE TABLE IF NOT EXISTS last(key TEXT, chain_id TEXT, store_id INTEGER, price REAL,
   PRIMARY KEY(key, chain_id, store_id)) WITHOUT ROWID;
@@ -561,8 +567,10 @@ CREATE TABLE IF NOT EXISTS samples(day INTEGER PRIMARY KEY, version INTEGER);
 
 
 def stage(work):
+    """stage.db; its page cache is BACKFILL_CACHE_MB (default 1500; less on a small server, slower)."""
+    mb = int(os.environ.get("BACKFILL_CACHE_MB", "1500"))
     c = sqlite3.connect(os.path.join(work, "stage.db"), timeout=60)
-    c.executescript(STAGE)
+    c.executescript(STAGE.replace("CACHE_KB", str(mb * 1000)).replace("MMAP_BYTES", str(mb * 2_700_000)))
     return c
 
 
@@ -1027,13 +1035,14 @@ def main():
     ap.add_argument("--weekly-from", type=int, default=None,
                     help="fetch: one version a week, published this day (YYYYMMDD) and every 7 days before it")
     ap.add_argument("--weeks", type=int, default=52, help="fetch --weekly-from: how many")
+    ap.add_argument("--newest-first", action="store_true", help="fetch --weekly-from: from the newest end")
     ap.add_argument("--no-moves", action="store_true", help="apply: history only, no branch price changes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
     work = work_dir(a.work)
     os.makedirs(work, exist_ok=True)
     if a.step == "fetch" and a.weekly_from:
-        fetch_weekly(work, a.weekly_from, a.weeks, a.jobs)
+        fetch_weekly(work, a.weekly_from, a.weeks, a.jobs, a.newest_first)
     elif a.step == "fetch":
         fetch(work, a.first, a.last, a.jobs)
     elif a.step == "build":
