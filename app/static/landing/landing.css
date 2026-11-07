@@ -173,6 +173,8 @@ html[dir="rtl"] .board-links .arrow { transform: scaleX(-1); }
 
 .btn.install svg { width: 18px; height: 18px; }
 .cta-row .btn.install { padding: 13px 20px; }
+/* "or run it yourself" (/download) right after Try: the "or" quiet and not underlined (an inline-block stops the line) */
+.btn.yourself i { display: inline-block; font-style: normal; font-weight: 500; color: var(--muted); margin-inline-end: .3em; }
 
 
 /* ---------------------------------------------------------------- on my way (new): right after the hero */
