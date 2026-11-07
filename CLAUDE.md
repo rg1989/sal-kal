@@ -154,8 +154,8 @@ against the chains' raw files. Fixes, live 21:19:
   - Landing claims corrected.
   - Fonts are self-hosted (app/static/fonts, OFL; CSP font-src 'self'), so no page load reaches Google.
 - **Still open:**
-  - Cloudflare Web Analytics (beacon) is on for the zone and runs on every page through the CSP nonce, despite "no
-    outside trackers" (owner to switch off).
+  - Cloudflare Web Analytics (beacon) was on for the zone and ran on every page through the CSP nonce, despite "no
+    outside trackers" (owner to switch off). On 2026-11-07 no beacon script was found in the served pages.
   - City Market barcodes sold under another product's name (30 rows).
   - Card names that are only numbers.
   - The 30-day ▲/▼ arrows and product history charts still use the cheapest-branch series, which moves when branches
@@ -323,7 +323,10 @@ installed app (display-mode standalone / navigator.standalone) to /app before an
 autoplaying walkthrough video + phone/laptop mockups in app/static/landing/ (recorded with Playwright from a test server
 and a demo account at Tel Aviv City Hall, never a real home), live counts from /api/status, the law (section 30,
 price-transparency regulations) linked. Credit: "Built by Roman Grinevich" (LinkedIn) + GitHub (rg1989/sal-kal) in the
-landing footer, the app footer and the account sheet. Mobile audit script (overflow, clipped text, overlaps, small targets)
+landing footer, the app footer and the account sheet. Hero (2026-11-07, per user): no "New · Shop on your way to work"
+pill; in dark mode the marked heading words are plain yellow (light letters over the yellow band were hard to read).
+The values band ends with "Or on your own computer, privately" (#own) -> /download; the Price Watch links include
+"Where the weekly basket costs least" (/prices#basket). Mobile audit script (overflow, clipped text, overlaps, small targets)
 lives in the session scratchpad; fixes landed in styles.css (fee cards on phones, onboarding map height, radius row, pins).
 Phones (styles.css "made for a thumb" block, <=640px): every control >=44px tall, or 40px with a ::after hit area past its
 edges; labels never wrap (short labels: "Club prices", "Cheapest per chain", "Waze" / "Google Maps" with full aria-labels);
@@ -344,9 +347,14 @@ pwa-192/512 rounded, icon-512 + pwa-maskable-192 full-bleed for Android's mask).
 route, no-cache): it stores /static only (?v= URLs as is, other files refreshed in the background; never /api, /auth,
 /admin, photos or /static/landing). "/" and "/app" always come from the network, with a "No connection" page offline.
 Kill switch: deploy a sw.js that calls self.registration.unregister(). Install buttons: any [data-install] element
-(the sign-in page's button, shown signed out) and a row in the account sheet. Chrome/Edge/Samsung open their own install
-dialog once Chrome offers it (beforeinstallprompt, held by pwa.js; Chrome waits for a tap and ~30 s on the page).
-Before that, Android gets the steps sheet (#install: browser menu ⋮ › Install app). iPhone/iPad and Mac Safari always
+(the sign-in page's button, shown signed out; the landing hero) and a row in the account sheet. Only on a phone browser
+that can install (per user, 2026-11-07: never a button that wouldn't work): Android phones (UA "Mobile") in a real
+browser, Safari on iPhone, Chrome/Edge on iPhone from iOS 16.4. Never on computers (Mac Safari's Add to Dock included),
+tablets (iPads, Android without "Mobile"), Firefox on iPhone, or in-app browsers (Facebook, Instagram, TikTok, Telegram,
+the Google app..., any Android "; wv)" web view, an iOS web view without "Safari/"). pwa.js `phone`; checked with 23
+user agents (scratchpad check_install.py). Chrome/Edge/Samsung open their own install
+dialog once Chrome offers it (beforeinstallprompt, held by pwa.js on phones only; Chrome waits for a tap and ~30 s on
+the page). Before that, Android gets the steps sheet (#install: browser menu ⋮ › Install app). iPhones always
 get the steps. /app?install opens the steps (for pages without #install, e.g. the landing page). Hidden once installed
 (display-mode, or getInstalledRelatedApps via related_applications in the manifests). Needs https (sal-kal.com or the
 Tailscale URL); http://omarchy:8080 can't install.
@@ -482,8 +490,13 @@ takeShare() asks (confirmSheet, safe) and POSTs it as the opener's own cart (a c
 _write_items names unnamed lines from products. Limits: 24k-char link, 40 KB inflated, 400 lines, keys checked.
 Left: category ranking could prefer each category's core words; the price files' own
 UnitOfMeasurePrice field isn't indexed (would give official unit prices); the shop-from-a-list feature was skipped.
-Self-install on your own computer (2026-11-06, per user: for non-developers; NOT linked from the landing page or the
-app yet, only README "Install it on your own computer" and the unlinked page /download). One line or one file:
+Self-install on your own computer (2026-11-06, per user: for non-developers). "Run it yourself" (2026-11-07, per user):
+/download is linked from the landing page (values band #own + footer) and Price Watch's footer, still not from the app.
+The page uses site.css + download.css (the shared header and footer; setup.css is only the /setup wizard now):
+requirements, steps per computer, after installing (open, /setup, update, folder), and what stays on the computer vs
+what goes out (chain portals see your IP; Nominatim the address once; OSRM points; OpenFreeMap tiles; Overpass hours;
+photo sites a barcode; data.gov.il lists; installing: uv/Python/repo from GitHub, PyPI, Chromium). Keep that list true
+when local mode gains an outside call. One line or one file:
 `curl -fsSL https://sal-kal.com/install.sh | bash` (Mac/Linux), Sal-Kal-Setup.cmd / `irm …/install.ps1 | iex` (Windows),
 served by server.py from app/install/ (also /download/Sal-Kal-Mac.zip with an executable .command). The installer
 fetches uv 0.13.0 (sha256-checked), Python 3.12, this repo's main branch from GitHub (so changes reach users only

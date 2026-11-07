@@ -1,25 +1,20 @@
 'use strict';
-// sal-kal.com/download: the installer for the computer you're on (Windows, Mac or Linux), and the language.
+// sal-kal.com/download, "Run it yourself": shows the steps for the computer you're on (Windows, Mac or Linux) and
+// copies the install lines. The language switch is site.js's, as on every public page.
 (() => {
   const $$ = s => [...document.querySelectorAll(s)];
-  const lang = () => (document.documentElement.lang === 'en' ? 'en' : 'he');
   const site = location.origin;
   const CMD = { sh: `curl -fsSL ${site}/install.sh | bash`, ps: `irm ${site}/install.ps1 | iex` };
 
-  function setLang(l) {
-    document.documentElement.lang = l;
-    document.documentElement.dir = l === 'he' ? 'rtl' : 'ltr';
-    try { localStorage.setItem('lang', l); } catch { /* private mode */ }
-    document.cookie = `lang=${l};path=/;max-age=31536000;samesite=lax`;
-    document.title = l === 'en' ? 'Sal-Kal on your own computer' : 'סל קל על המחשב שלכם · Sal-Kal';
-    $$('.langs [data-lang]').forEach(b => b.setAttribute('aria-checked', b.dataset.lang === l));
-  }
-  $$('.langs [data-lang]').forEach(b => b.addEventListener('click', () => setLang(b.dataset.lang)));
-  setLang(lang());
+  const title = () => {
+    document.title = document.documentElement.lang === 'en' ? 'Run Sal-Kal yourself · Sal-Kal' : 'הריצו את סל קל בעצמכם · Sal-Kal';
+  };
+  title();
+  document.addEventListener('langchange', title);
 
   function setOs(os) {
     $$('.oses [data-os]').forEach(b => b.setAttribute('aria-checked', b.dataset.os === os));
-    document.body.dataset.os = os;  // setup.css shows this computer's version in every slot
+    document.body.dataset.os = os;  // download.css shows this computer's version in every slot
   }
   $$('.oses [data-os]').forEach(b => b.addEventListener('click', () => setOs(b.dataset.os)));
   const ua = navigator.userAgent, plat = navigator.userAgentData?.platform || navigator.platform || '';
@@ -28,9 +23,9 @@
 
   $$('[data-cmd]').forEach(c => { c.textContent = CMD[c.dataset.cmd]; });
   $$('.cmd .copy').forEach(b => b.addEventListener('click', async () => {
-    const text = b.parentElement.querySelector('code').textContent;
-    try { await navigator.clipboard.writeText(text); } catch {
-      const r = document.createRange(); r.selectNodeContents(b.parentElement.querySelector('code'));
+    const code = b.parentElement.querySelector('code');
+    try { await navigator.clipboard.writeText(code.textContent); } catch {  // no clipboard (http, old browser): select it
+      const r = document.createRange(); r.selectNodeContents(code);
       getSelection().removeAllRanges(); getSelection().addRange(r);
       return;
     }

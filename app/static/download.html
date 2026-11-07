@@ -3,98 +3,190 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="robots" content="noindex">
-<title>סל קל על המחשב שלכם · Sal-Kal</title>
-<meta name="description" content="התקנת סל קל על המחשב שלכם: Mac, Windows או Linux. חינם וקוד פתוח.">
+<title>הריצו את סל קל בעצמכם · Sal-Kal</title>
+<meta name="description" content="סל קל על המחשב שלכם: Mac, Windows או Linux, בלי חשבון ובלי כניסה. הסלים, המקומות והמחירים נשמרים אצלכם.">
+<meta property="og:title" content="הריצו את סל קל בעצמכם · Sal-Kal">
+<meta property="og:description" content="סל קל על המחשב שלכם, בלי חשבון ובלי כניסה.">
+<meta property="og:image" content="https://sal-kal.com/static/landing/walkthrough-poster.jpg">
+<meta property="og:url" content="https://sal-kal.com/download">
 <meta name="theme-color" content="#EEF0EC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121715" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD23F'/%3E%3Cg fill='none' stroke='%231C2321' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.3 13 14 8.2M20.7 13 18 8.2'/%3E%3Cpath d='M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z'/%3E%3Cpath d='M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/fonts/fonts.css">
-<link rel="stylesheet" href="/static/setup.css">
+<link rel="stylesheet" href="/static/site.css">
+<link rel="stylesheet" href="/static/download.css">
 <script>try{if(localStorage.getItem("lang")==="en"){document.documentElement.lang="en";document.documentElement.dir="ltr"}}catch(e){}</script>
 </head>
-<body>
-<header class="top">
-  <a class="logo" href="/about" aria-label="Sal-Kal">
+<body data-page="download">
+<header class="bar">
+  <a class="logo" href="/" aria-label="Sal-Kal">
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" class="tile"/><g class="ink" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 13 14 8.2M20.7 13 18 8.2"/><path d="M7.5 13h17l-1.8 8.4a2.4 2.4 0 0 1-2.35 1.9h-8.7a2.4 2.4 0 0 1-2.35-1.9z"/><path d="M13 16.6v3.4M16 16.6v3.4M19 16.6v3.4"/></g></svg>
     <span lang="he">סל קל</span><span lang="en">Sal-Kal</span>
   </a>
-  <div class="langs" role="radiogroup" aria-label="Language / שפה">
-    <button type="button" role="radio" data-lang="he" lang="he">עברית</button>
-    <button type="button" role="radio" data-lang="en" lang="en">English</button>
+  <div class="bar-end">
+    <a class="pw-tag" href="/prices"><span class="pw-in"><svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M10.2 2.8h5.4a1.6 1.6 0 0 1 1.6 1.6v5.4a1.6 1.6 0 0 1-.47 1.13l-6.3 6.3a1.6 1.6 0 0 1-2.26 0l-5.4-5.4a1.6 1.6 0 0 1 0-2.26l6.3-6.3a1.6 1.6 0 0 1 1.13-.47z"/><circle cx="13.6" cy="6.4" r="1.4"/></g></svg><span class="pw-t"><span lang="he">מעקב מחירים</span><span lang="en">Price Watch</span></span></span></a>
+    <div class="langs" role="radiogroup" aria-label="Language / שפה">
+      <button type="button" role="radio" data-lang="he" lang="he"><i class="flag il" aria-hidden="true"></i>עברית</button>
+      <button type="button" role="radio" data-lang="en" lang="en"><i class="flag us" aria-hidden="true"></i>English</button>
+    </div>
+    <a class="btn ghost" href="/app" data-open-app><span lang="he">כניסה</span><span lang="en">Sign in</span></a>
   </div>
 </header>
 
 <main class="dl">
-  <h1><span lang="he">סל קל על המחשב שלכם</span><span lang="en">Sal-Kal on your own computer</span></h1>
-  <p class="lede"><span lang="he">אותה אפליקציה, רצה אצלכם: העגלות והכתובת נשארות במחשב.</span><span lang="en">The same app, running at home: your carts and address stay on your computer.</span></p>
+  <section class="dl-hero">
+    <h1><span lang="he">הריצו את סל קל <mark>בעצמכם.</mark></span><span lang="en">Run <span class="nb">Sal-Kal</span> <mark>yourself.</mark></span></h1>
+    <p class="lede"><span lang="he">אותה אפליקציה, על המחשב שלכם, בלי חשבון ובלי כניסה. הסלים, המקומות והמחירים נשמרים בו.</span><span lang="en">The same app, on your own computer, with no account and no sign-in. Your carts, places and prices are kept on it.</span></p>
+    <ul class="need">
+      <li><b><span lang="he">חיבור אינטרנט בישראל</span><span lang="en">Internet in Israel</span></b><span><span lang="he">חלק מהרשתות עונות רק לחיבור מישראל</span><span lang="en">Some chains only answer Israeli connections</span></span></li>
+      <li><b><span lang="he">5 GB פנויים</span><span lang="en">5 GB free</span></b><span><span lang="he">רק הסניפים באזור שלכם</span><span lang="en">Only the stores in your area</span></span></li>
+      <li><b><span lang="he">מחשב דולק</span><span lang="en">The computer on</span></b><span><span lang="he">המחירים מתעדכנים כל 6 שעות</span><span lang="en">Prices update every 6 hours</span></span></li>
+      <li><b dir="ltr">Windows 10+ · macOS 11+ · Linux</b><span><span lang="he">בלי הרשאות מנהל</span><span lang="en">No admin rights</span></span></li>
+    </ul>
+  </section>
 
-  <div class="oses" role="radiogroup" aria-label="Computer / מחשב">
-    <button type="button" role="radio" data-os="windows">Windows</button>
-    <button type="button" role="radio" data-os="mac">Mac</button>
-    <button type="button" role="radio" data-os="linux">Linux</button>
-  </div>
-
-  <!-- One card for every computer: each step (and the line under them) is one slot holding all three versions
-       stacked in the same place, only the chosen one visible (download.js sets body[data-os]). A slot is as tall as
-       its tallest version, so switching computers never moves anything. -->
-  <section class="card" id="steps">
-    <ol class="how">
-      <li><div class="v">
-        <div data-os="windows"><b><span lang="he">מורידים את ההתקנה</span><span lang="en">Download the installer</span></b>
-          <a class="btn primary" href="/download/Sal-Kal-Setup.cmd" download><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M10 3v9M6 8.5 10 12.5 14 8.5M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Sal-Kal-Setup.cmd</a></div>
-        <div data-os="mac"><b><span lang="he">פותחים את Terminal</span><span lang="en">Open Terminal</span></b>
-          <p class="keys"><kbd>⌘</kbd> <kbd><span lang="he">רווח</span><span lang="en">Space</span></kbd> › <kbd>Terminal</kbd> › <kbd>Return</kbd></p></div>
-        <div data-os="linux"><b><span lang="he">פותחים טרמינל</span><span lang="en">Open a terminal</span></b>
-          <p class="keys"><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>T</kbd></p></div>
-      </div></li>
-      <li><div class="v">
-        <div data-os="windows"><b><span lang="he">פותחים את הקובץ שירד</span><span lang="en">Open the downloaded file</span></b>
-          <p class="note"><span lang="he">אם מופיע ״Windows הגן על המחשב״: ״מידע נוסף״ › ״הפעל בכל זאת״.</span><span lang="en">If “Windows protected your PC” appears: More info › Run anyway.</span></p></div>
-        <div data-os="mac"><b><span lang="he">מדביקים את השורה ולוחצים Return</span><span lang="en">Paste this line and press Return</span></b>
-          <div class="cmd"><code data-cmd="sh"></code><button class="btn copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></div>
-        <div data-os="linux"><b><span lang="he">מדביקים את השורה ולוחצים Enter</span><span lang="en">Paste this line and press Enter</span></b>
-          <div class="cmd"><code data-cmd="sh"></code><button class="btn copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></div>
-      </div></li>
-      <li><div class="v">
-        <div data-os="windows"><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
-          <p class="note"><span lang="he">כמה דקות. אחר כך: הסמל Sal-Kal בשולחן העבודה.</span><span lang="en">A few minutes. Afterwards: the Sal-Kal icon on your desktop.</span></p></div>
-        <div data-os="mac"><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
-          <p class="note"><span lang="he">כמה דקות. אחר כך: Sal-Kal ב־Launchpad.</span><span lang="en">A few minutes. Afterwards: Sal-Kal in Launchpad.</span></p></div>
-        <div data-os="linux"><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
-          <p class="note"><span lang="he">כמה דקות. אחר כך: Sal-Kal בתפריט היישומים.</span><span lang="en">A few minutes. Afterwards: Sal-Kal in the apps menu.</span></p></div>
-      </div></li>
-    </ol>
-    <div class="v other">
-      <div data-os="windows"><h2><span lang="he">דרך אחרת: PowerShell, בלי להוריד קובץ</span><span lang="en">Another way: PowerShell, without downloading a file</span></h2>
-        <ol class="sub">
-          <li><p><span lang="he">פותחים את PowerShell:</span><span lang="en">Open PowerShell:</span> <span class="keys"><kbd><span lang="he">התחל</span><span lang="en">Start</span></kbd> › <kbd>PowerShell</kbd> › <kbd>Enter</kbd></span></p></li>
-          <li><p><span lang="he">מדביקים את השורה ולוחצים Enter:</span><span lang="en">Paste this line and press Enter:</span></p>
-            <div class="cmd"><code data-cmd="ps"></code><button class="btn copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></li>
-        </ol></div>
-      <div data-os="mac"><h2><span lang="he">דרך אחרת: קובץ התקנה, בלי Terminal</span><span lang="en">Another way: an installer file, without Terminal</span></h2>
-        <ol class="sub">
-          <li><p><span lang="he">מורידים את</span><span lang="en">Download</span> <a href="/download/Sal-Kal-Mac.zip" download>Sal-Kal-Mac.zip</a></p></li>
-          <li><p><span lang="he">פותחים אותו ולוחצים פעמיים על ״Install Sal-Kal״.</span><span lang="en">Open it and double-click “Install Sal-Kal”.</span></p></li>
-          <li><p><span lang="he">בפעם הראשונה macOS חוסם אותו: פותחים הגדרות המערכת › פרטיות ואבטחה, לוחצים ״פתח בכל זאת״ ואז ״פתח״.</span><span lang="en">The first time, macOS blocks it: open System Settings › Privacy &amp; Security, click Open Anyway, then Open.</span></p></li>
-        </ol></div>
-      <div data-os="linux"><h2><span lang="he">דרך אחרת: הורדת קובץ ההתקנה</span><span lang="en">Another way: download the install script</span></h2>
-        <ol class="sub">
-          <li><p><span lang="he">מורידים את</span><span lang="en">Download</span> <a href="/install.sh" download>install.sh</a></p></li>
-          <li><p><span lang="he">מריצים אותו בטרמינל:</span><span lang="en">Run it in a terminal:</span></p>
-            <div class="cmd"><code>bash ~/Downloads/install.sh</code><button class="btn copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></li>
-        </ol></div>
+  <section class="dl-sec" id="install" aria-labelledby="install-h">
+    <h2 id="install-h"><span lang="he">התקנה</span><span lang="en">Install</span></h2>
+    <div class="oses" role="radiogroup" aria-label="Computer / מחשב">
+      <button type="button" role="radio" data-os="windows">Windows</button>
+      <button type="button" role="radio" data-os="mac">Mac</button>
+      <button type="button" role="radio" data-os="linux">Linux</button>
+    </div>
+    <!-- Each step (and the parts under them) is one slot holding all three computers' versions stacked in the same
+         place, only the chosen one visible (download.js sets body[data-os]). A slot is as tall as its tallest
+         version, so switching computers never moves anything. -->
+    <div class="card" id="steps">
+      <ol class="how">
+        <li><div class="v">
+          <div data-os="windows"><b><span lang="he">מורידים את ההתקנה</span><span lang="en">Download the installer</span></b>
+            <a class="btn primary" href="/download/Sal-Kal-Setup.cmd" download><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M10 3v9M6 8.5 10 12.5 14 8.5M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Sal-Kal-Setup.cmd</a></div>
+          <div data-os="mac"><b><span lang="he">פותחים את Terminal</span><span lang="en">Open Terminal</span></b>
+            <p class="keys"><kbd>⌘</kbd> <kbd><span lang="he">רווח</span><span lang="en">Space</span></kbd> › <kbd>Terminal</kbd> › <kbd>Return</kbd></p></div>
+          <div data-os="linux"><b><span lang="he">פותחים טרמינל</span><span lang="en">Open a terminal</span></b>
+            <p class="keys"><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>T</kbd></p></div>
+        </div></li>
+        <li><div class="v">
+          <div data-os="windows"><b><span lang="he">פותחים את הקובץ שירד</span><span lang="en">Open the downloaded file</span></b>
+            <p class="note"><span lang="he">אם מופיע ״Windows הגן על המחשב״: ״מידע נוסף״ › ״הפעל בכל זאת״.</span><span lang="en">If “Windows protected your PC” appears: More info › Run anyway.</span></p></div>
+          <div data-os="mac"><b><span lang="he">מדביקים את השורה ולוחצים Return</span><span lang="en">Paste this line and press Return</span></b>
+            <div class="cmd"><code data-cmd="sh"></code><button type="button" class="copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></div>
+          <div data-os="linux"><b><span lang="he">מדביקים את השורה ולוחצים Enter</span><span lang="en">Paste this line and press Enter</span></b>
+            <div class="cmd"><code data-cmd="sh"></code><button type="button" class="copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></div>
+        </div></li>
+        <li><div class="v">
+          <div data-os="windows"><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
+            <p class="note"><span lang="he">כמה דקות: בוחרים כתובת ומרחק, והמחירים של הסניפים באזור יורדים.</span><span lang="en">A few minutes: pick your address and distance, and the prices of the stores around it download.</span></p></div>
+          <div data-os="mac"><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
+            <p class="note"><span lang="he">כמה דקות: בוחרים כתובת ומרחק, והמחירים של הסניפים באזור יורדים.</span><span lang="en">A few minutes: pick your address and distance, and the prices of the stores around it download.</span></p></div>
+          <div data-os="linux"><b><span lang="he">דף ההתקנה נפתח בדפדפן</span><span lang="en">The setup page opens in your browser</span></b>
+            <p class="note"><span lang="he">כמה דקות: בוחרים כתובת ומרחק, והמחירים של הסניפים באזור יורדים.</span><span lang="en">A few minutes: pick your address and distance, and the prices of the stores around it download.</span></p></div>
+        </div></li>
+      </ol>
+      <div class="v other">
+        <div data-os="windows"><h3><span lang="he">דרך אחרת: PowerShell, בלי להוריד קובץ</span><span lang="en">Another way: PowerShell, without downloading a file</span></h3>
+          <ol class="sub">
+            <li><p><span lang="he">פותחים את PowerShell:</span><span lang="en">Open PowerShell:</span> <span class="keys"><kbd><span lang="he">התחל</span><span lang="en">Start</span></kbd> › <kbd>PowerShell</kbd> › <kbd>Enter</kbd></span></p></li>
+            <li><p><span lang="he">מדביקים את השורה ולוחצים Enter:</span><span lang="en">Paste this line and press Enter:</span></p>
+              <div class="cmd"><code data-cmd="ps"></code><button type="button" class="copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></li>
+          </ol></div>
+        <div data-os="mac"><h3><span lang="he">דרך אחרת: קובץ התקנה, בלי Terminal</span><span lang="en">Another way: an installer file, without Terminal</span></h3>
+          <ol class="sub">
+            <li><p><span lang="he">מורידים את</span><span lang="en">Download</span> <a href="/download/Sal-Kal-Mac.zip" download>Sal-Kal-Mac.zip</a></p></li>
+            <li><p><span lang="he">פותחים אותו ולוחצים פעמיים על ״Install Sal-Kal״.</span><span lang="en">Open it and double-click “Install Sal-Kal”.</span></p></li>
+            <li><p><span lang="he">בפעם הראשונה macOS חוסם אותו: פותחים הגדרות המערכת › פרטיות ואבטחה, לוחצים ״פתח בכל זאת״ ואז ״פתח״.</span><span lang="en">The first time, macOS blocks it: open System Settings › Privacy &amp; Security, click Open Anyway, then Open.</span></p></li>
+          </ol></div>
+        <div data-os="linux"><h3><span lang="he">דרך אחרת: הורדת קובץ ההתקנה</span><span lang="en">Another way: download the install script</span></h3>
+          <ol class="sub">
+            <li><p><span lang="he">מורידים את</span><span lang="en">Download</span> <a href="/install.sh" download>install.sh</a></p></li>
+            <li><p><span lang="he">מריצים אותו בטרמינל:</span><span lang="en">Run it in a terminal:</span></p>
+              <div class="cmd"><code>bash ~/Downloads/install.sh</code><button type="button" class="copy"><span lang="he">העתקה</span><span lang="en">Copy</span></button></div></li>
+          </ol></div>
+      </div>
     </div>
   </section>
 
-  <div class="need">
-    <div><b><span lang="he">חיבור אינטרנט בישראל</span><span lang="en">An internet connection in Israel</span></b><span><span lang="he">חלק מהרשתות עונות רק לחיבור מישראל</span><span lang="en">Some chains only answer Israeli connections</span></span></div>
-    <div><b><span lang="he">5 GB פנויים</span><span lang="en">5 GB free</span></b><span><span lang="he">רק הסניפים באזור שלכם</span><span lang="en">Only the stores in your area</span></span></div>
-    <div><b><span lang="he">מחשב דולק</span><span lang="en">The computer on</span></b><span><span lang="he">המחירים מתעדכנים כל 6 שעות</span><span lang="en">Prices update every 6 hours</span></span></div>
-    <div><b dir="ltr">Windows 10+ · macOS 11+ · Linux</b><span><span lang="he">בלי הרשאות מנהל</span><span lang="en">No admin rights</span></span></div>
-  </div>
-  <p class="alt"><a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener"><span lang="he">הקוד ב־GitHub</span><span lang="en">The code on GitHub</span></a></p>
+  <section class="dl-sec" id="after" aria-labelledby="after-h">
+    <h2 id="after-h"><span lang="he">אחרי ההתקנה</span><span lang="en">After installing</span></h2>
+    <dl class="after">
+      <div><dt><span lang="he">פותחים</span><span lang="en">Open it</span></dt>
+        <dd><div class="v">
+          <span data-os="windows"><span lang="he">הסמל Sal-Kal בשולחן העבודה או בתפריט התחל</span><span lang="en">The Sal-Kal icon on the desktop or in the Start menu</span></span>
+          <span data-os="mac"><span lang="he">Sal-Kal ב־Launchpad</span><span lang="en">Sal-Kal in Launchpad</span></span>
+          <span data-os="linux"><span lang="he">Sal-Kal בתפריט היישומים</span><span lang="en">Sal-Kal in the apps menu</span></span>
+        </div><span class="url" dir="ltr">http://localhost:8080</span></dd></div>
+      <div><dt><span lang="he">הגדרות</span><span lang="en">Settings</span></dt>
+        <dd><span lang="he">הפעלה עם המחשב, שימוש מהטלפון באותה רשת Wi‑Fi, עדכון מחירים עכשיו, הסרה</span><span lang="en">Start at sign-in, use from your phone on the same Wi‑Fi, update prices now, remove</span>
+          <span class="url" dir="ltr">http://localhost:8080/setup</span></dd></div>
+      <div><dt><span lang="he">עדכון</span><span lang="en">Update</span></dt>
+        <dd><span lang="he">מריצים את ההתקנה שוב. הסלים וההגדרות נשארים.</span><span lang="en">Run the installer again. Your carts and settings stay.</span></dd></div>
+      <div><dt><span lang="he">התיקייה</span><span lang="en">Its folder</span></dt>
+        <dd><div class="v">
+          <code data-os="windows" dir="ltr">%LOCALAPPDATA%\Sal-Kal</code>
+          <code data-os="mac" dir="ltr">~/Library/Application Support/Sal-Kal</code>
+          <code data-os="linux" dir="ltr">~/.local/share/sal-kal</code>
+        </div></dd></div>
+    </dl>
+  </section>
+
+  <section class="dl-sec" id="private" aria-labelledby="private-h">
+    <h2 id="private-h"><span lang="he">מה נשאר אצלכם, ומה יוצא</span><span lang="en">What stays with you, and what goes out</span></h2>
+    <div class="priv">
+      <div class="priv-card stays">
+        <h3><span lang="he">נשמר במחשב שלכם</span><span lang="en">Kept on your computer</span></h3>
+        <ul class="ticks">
+          <li><span lang="he">הסלים, המקומות וההגדרות</span><span lang="en">Your carts, places and settings</span></li>
+          <li><span lang="he">המחירים, שיורדים ונבדקים במחשב</span><span lang="en">The prices, downloaded and checked on your computer</span></li>
+          <li><span lang="he">מה שחיפשתם ופתחתם</span><span lang="en">What you search for and open</span></li>
+          <li><span lang="he">בלי חשבון ובלי כניסה. אחרי ההתקנה שום דבר לא נשלח לסל קל.</span><span lang="en">No account and no sign-in. Once installed, nothing is sent to Sal-Kal.</span></li>
+        </ul>
+      </div>
+      <div class="priv-card out">
+        <h3><span lang="he">יוצא מהמחשב, ולאן</span><span lang="en">What goes out, and where</span></h3>
+        <ul class="outs">
+          <li><b><span lang="he">אתרי המחירים של הרשתות</span><span lang="en">The chains' price sites</span></b>
+            <span><span lang="he">בקשות לקבצי המחירים של הסניפים באזור שלכם. כמו כל מבקר, הם רואים את כתובת האינטרנט שלכם.</span><span lang="en">Requests for the price files of the stores in your area. Like any visitor, they see your internet address.</span></span></li>
+          <li><b>OpenStreetMap (Nominatim)</b>
+            <span><span lang="he">הכתובת שבחרתם, פעם אחת, כדי למקם אותה במפה</span><span lang="en">The address you pick, once, to put it on the map</span></span></li>
+          <li><b>OSRM</b>
+            <span><span lang="he">נקודות במפה, למסלולים ולזמני נסיעה</span><span lang="en">Points on the map, for routes and drive times</span></span></li>
+          <li><b dir="ltr">OpenFreeMap · Overpass</b>
+            <span><span lang="he">אריחי המפה, ושעות הפתיחה של סניפים באזור</span><span lang="en">Map tiles, and the opening hours of stores in your area</span></span></li>
+          <li><b><span lang="he">אתרי תמונות מוצרים</span><span lang="en">Product photo sites</span></b>
+            <span><span lang="he">הברקוד של מוצר שפתחתם, כדי להביא את התמונה שלו</span><span lang="en">The barcode of a product you open, to fetch its photo</span></span></li>
+          <li><b>data.gov.il</b>
+            <span><span lang="he">הורדת רשימות היישובים והרחובות הרשמיות</span><span lang="en">Downloads of the official town and street lists</span></span></li>
+        </ul>
+        <p class="fine-print"><span lang="he">ההתקנה עצמה מורידה את uv ואת Python 3.12 מ־GitHub, את הקוד של סל קל מ־GitHub, את הרכיבים מ־PyPI ואת Chromium מ־Playwright.</span><span lang="en">Installing downloads uv and Python 3.12 (GitHub), Sal-Kal's code (GitHub), its components (PyPI) and Chromium (Playwright).</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="dl-sec code" aria-labelledby="code-h">
+    <h2 id="code-h" class="sr-only"><span lang="he">הקוד</span><span lang="en">The code</span></h2>
+    <p><span lang="he">הקוד של סל קל פתוח ב־GitHub ברישיון MIT. המחירים יורדים בעזרת <a href="https://github.com/OpenIsraeliSupermarkets/israeli-supermarket-scarpers" target="_blank" rel="noopener">כלי ההורדה של Sefi Erlich</a> (בשינויים שלנו), שמותר לשימוש שאינו מסחרי.</span><span lang="en">Sal-Kal's code is open on GitHub under the MIT license. Prices are downloaded with <a href="https://github.com/OpenIsraeliSupermarkets/israeli-supermarket-scarpers" target="_blank" rel="noopener">Sefi Erlich's downloader</a> (with our changes), which is free for non-commercial use.</span></p>
+    <a class="gh" href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><span lang="he">הקוד ב־GitHub</span><span lang="en">Code on GitHub</span></a>
+  </section>
 </main>
+
+<footer class="foot">
+  <div class="foot-in">
+    <p class="credit"><span lang="he">נבנה על ידי</span><span lang="en">Built by</span>
+      <a href="https://www.linkedin.com/in/roman-grinevich/" target="_blank" rel="noopener">Roman Grinevich</a></p>
+    <nav class="foot-links">
+      <a href="https://github.com/rg1989/sal-kal" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
+      <a href="https://www.linkedin.com/in/roman-grinevich/" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M0 1.15C0 .52.52 0 1.17 0h13.66C15.48 0 16 .52 16 1.15v13.7c0 .63-.52 1.15-1.17 1.15H1.17C.52 16 0 15.48 0 14.85V1.15zm4.94 12.24V6.17H2.54v7.22h2.4zM3.74 5.18c.84 0 1.36-.55 1.36-1.25-.02-.71-.52-1.25-1.34-1.25-.82 0-1.36.54-1.36 1.25 0 .7.52 1.25 1.33 1.25h.01zm4.91 8.21V9.36c0-.22.02-.43.08-.59.17-.43.57-.88 1.23-.88.87 0 1.21.66 1.21 1.63v3.87h2.4V9.25c0-2.22-1.18-3.25-2.76-3.25-1.28 0-1.84.7-2.16 1.2v.03h-.02l.02-.03V6.17h-2.4c.03.68 0 7.22 0 7.22h2.4z"/></svg>LinkedIn</a>
+      <a href="/prices"><span lang="he">מעקב מחירים</span><span lang="en">Price Watch</span></a>
+      <a href="/download" aria-current="page"><span lang="he">הריצו בעצמכם</span><span lang="en">Run it yourself</span></a>
+      <a href="/privacy"><span lang="he">פרטיות</span><span lang="en">Privacy</span></a>
+      <a href="/data-deletion"><span lang="he">מחיקת המידע</span><span lang="en">Deleting your data</span></a>
+    </nav>
+    <p class="fine"><span lang="he">המחירים: קבצי שקיפות המחירים של הרשתות. המפות: © OpenStreetMap.</span>
+      <span lang="en">Prices: the chains' price-transparency files. Maps: © OpenStreetMap.</span></p>
+  </div>
+</footer>
+<script src="/static/usage.js"></script>
+<script src="/static/site.js"></script>
 <script src="/static/download.js"></script>
 </body>
 </html>

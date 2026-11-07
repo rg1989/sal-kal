@@ -29,11 +29,11 @@ estimate. The price files don't bind the till price; the shelf tag does.
 Price history and price changes from before Sal-Kal recorded them (weekly from October 2025, daily from
 29 October 2026; the archive goes back to October 2024) come from Sefi Erlich's daily archive of the same files
 ([OpenIsraeliSupermarkets on Kaggle](https://www.kaggle.com/datasets/erlichsefi/israeli-supermarkets-2024),
-CC BY-NC-SA 3.0 IGO), loaded with `python -m app.backfill` under the same rules; the charts and the Price Board
+CC BY-NC-SA 3.0 IGO), loaded with `python -m app.backfill` under the same rules; the charts and Price Watch
 that show them name the source.
 
 On the server, `sal-backfill.timer` runs `python -m app.backfill auto` again a minute after each run ends (as
-`sal`, nice 19, two processes at most, 3 GB at most): each run adds the one day right before the first daily archive
+`sal`, nice 19, two processes at most, 5 GB at most): each run adds the one day right before the first daily archive
 day, and downloads the next older days while it builds, so daily coverage grows back from today one day at a time
 until the archive's first day (22 Oct 2024), replacing the weekly samples; each day's price changes reach the Price
 Watch at its next build. Check it with `systemctl list-timers sal-backfill.timer` and
@@ -55,9 +55,16 @@ Watch at its next build. Check it with `systemctl list-timers sal-backfill.timer
 - **Price history** per product and per cart, kept daily since 2026-11-05 (earlier days from the OpenIsraeliSupermarkets archive).
 - **Deals**: biggest savings near you, deals that started this week, deals ending soon. Club prices only if you ask.
 - **Delivery**: online-store totals with each chain's delivery fee, ranked only for chains you say deliver to you.
+- **Price Watch** ([sal-kal.com/prices](https://sal-kal.com/prices)): where a weekly basket of 19 staples costs least
+  (each chain's cheapest branch that has them all, for 1–6 people). With a free sign-in: every chain's basket, every
+  product's price at every chain, which chains raised and cut prices, how fast each chain's prices move, and where
+  each chain stands against the typical price. A change counts as the chain's only when 3 or more of its branches
+  made it on the same day.
 - Hebrew by default, with a mirrored right-to-left layout, and English.
 - Sign in with Google. Your address is picked from the official town and street lists (data.gov.il), never typed free-form.
-- Built for phones: bottom sheets, haptics, skeleton loading, and an installable app (PWA, no app store).
+- Built for phones: bottom sheets, haptics, skeleton loading, and an installable app (PWA, no app store). The
+  Install button shows only on a phone browser that can add it to the home screen: Android browsers, and Safari,
+  Chrome or Edge on iPhone (iOS 16.4 or later for Chrome and Edge). Not on computers, tablets or in-app browsers.
 
 ## Privacy
 No ads. Usage statistics are first-party, hold no IP addresses, and are kept 180 days. Carts and settings are never
@@ -69,7 +76,8 @@ Python 3.12, FastAPI and SQLite (FTS5) on the server. The frontend is vanilla JS
 OpenFreeMap tiles, Nominatim and OSRM. It runs on a server in Israel in a systemd sandbox behind a Cloudflare Tunnel;
 see `deploy/`.
 
-### Install it on your own computer (Mac, Windows, Linux)
+### Run it yourself, on your own computer (Mac, Windows, Linux)
+The same app with no account and no sign-in: your carts, places and prices stay on your computer.
 No programming needed and no admin rights. The installer sets everything up in one folder. It then opens a setup page
 in your browser, which downloads the store lists, asks for your address and fetches prices for the stores near it
 only. After that, Sal-Kal runs at **http://localhost:8080** and refreshes prices every 6 hours while the computer is
@@ -86,7 +94,17 @@ on.
   ```
 - **Linux:** the same line in a terminal.
 
-The download page [sal-kal.com/download](https://sal-kal.com/download) shows the same steps for your computer.
+The **Run it yourself** page, [sal-kal.com/download](https://sal-kal.com/download) (linked from the landing page),
+shows the same steps for your computer, and what goes out of it:
+- the chains' price sites: the price files for the stores in your area (they see your internet address, as for any
+  visitor);
+- OpenStreetMap's Nominatim: the address you pick, once, to put it on the map; OSRM: map points, for routes and drive
+  times; OpenFreeMap: map tiles; Overpass: opening hours in your area;
+- product photo sites: the barcode of a product you open, for its photo; data.gov.il: the official town and street
+  lists.
+
+Installing downloads uv and Python 3.12 (GitHub), this repository's main branch (GitHub), its packages (PyPI) and
+Chromium (Playwright). After that, nothing is sent to sal-kal.com.
 
 You need an internet connection in Israel (some chains only answer Israeli addresses) and about 5 GB of free space.
 To open it later: Sal-Kal in Launchpad (Mac), on the desktop or in the Start menu (Windows), or in the apps menu
