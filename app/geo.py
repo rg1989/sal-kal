@@ -497,6 +497,13 @@ def parse_hours(s):
     return week if seen else None
 
 
+def drive_known(home, dests, key=None):
+    """Every drive time from home to dests is cached: drive_minutes() would ask no outside service."""
+    live, now = bool(key), time.time()
+    hk = (round(home[0], 5), round(home[1], 5))
+    return all((hit := _drive_cache.get((live, hk, d))) and hit[1] > now for d in dests)
+
+
 def drive_minutes(home, dests, key=None):
     """Minutes by car from home to each (lat, lon). Live traffic with a Google key, else typical times."""
     live, now = bool(key), time.time()

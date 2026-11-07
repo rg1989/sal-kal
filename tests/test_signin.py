@@ -81,6 +81,57 @@ assert st == 303 and h["location"] == "/app#/signin?signin=failed", h["location"
 st, h, _ = call("/auth/google/callback?error=access_denied", internet=True)
 assert h["location"] == "/app#/signin?signin=cancelled"
 
+# the provider's page sending the browser back a second time, a second after it signed in (seen on phones): the first
+# answer used the state cookie up, and this browser is signed in now, so into the app with no failure recorded
+c = server.con()
+uid = auth.sign_in(c, "google", "sub-twice", "twice@example.com", True, "Twice", None)
+signed = f"{auth.SESSION_COOKIE}={auth.new_session(c, uid)}"
+def fails():
+    server.stats.flush()
+    return server.stats.reader().execute("SELECT count(*) FROM events WHERE kind='signin_fail'").fetchone()[0]
+before = fails()
+st, h, _ = call("/auth/google/callback?code=c&state=s", internet=True, cookie=signed)
+assert st == 303 and h["location"] == "/#/", (st, h.get("location"))
+assert fails() == before
+st, h, _ = call("/auth/google/callback?code=c&state=s", internet=True)  # not signed in: still says it failed
+assert h["location"] == "/app#/signin?signin=failed" and fails() == before + 1
+
+# HEAD on pages (link checkers, crawlers, uptime monitors) answers like GET, without the body; /api stays GET-only
+def body_of(path, method):
+    p, _, q = path.partition("?")
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method, "scheme": "http",
+             "path": p, "raw_path": p.encode(), "query_string": q.encode(), "root_path": "",
+             "headers": [(b"host", b"sal-kal.com"), (b"user-agent", b"test")], "client": ("10.0.0.5", 5555),
+             "server": ("sal-kal.com", 80)}
+    out, sent = [], [False]
+
+    async def receive():
+        if not sent[0]:
+            sent[0] = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await asyncio.Event().wait()
+
+    async def send(m):
+        out.append(m)
+    asyncio.run(server.app(scope, receive, send))
+    start = next(m for m in out if m["type"] == "http.response.start")
+    return start["status"], {k.decode(): v.decode() for k, v in start["headers"]}, b"".join(m.get("body", b"") for m in out if m["type"] == "http.response.body")
+
+
+for path in ("/", "/about", "/app", "/robots.txt", "/favicon.ico"):
+    gs, gh, gb = body_of(path, "GET")
+    hs, hh, hb = body_of(path, "HEAD")
+    assert gs == hs == 200 and gb and hb == b"", (path, gs, hs, len(hb))
+    assert hh.get("content-type") == gh.get("content-type") and hh.get("content-length") == gh.get("content-length"), path
+assert body_of("/api/status", "HEAD")[0] == 405
+
+# what browsers and crawlers ask for at the root on their own
+st, h, b = body_of("/apple-touch-icon.png", "GET")
+assert st == 200 and h["content-type"] == "image/png" and b[:4] == b"\x89PNG"
+assert body_of("/apple-touch-icon-precomposed.png", "GET")[0] == 200
+st, h, b = body_of("/robots.txt", "GET")
+assert st == 200 and b"Sitemap: https://sal-kal.com/sitemap.xml" in b and b"Disallow: /api/" in b
+
 # without a base address (local test servers) nothing moves
 setup({"google": {"client_id": "id", "client_secret": "s"}})
 assert call("/app", host="127.0.0.1:8766")[0] == 200

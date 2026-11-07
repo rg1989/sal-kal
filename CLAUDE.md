@@ -377,6 +377,16 @@ Tabs: overview (KPIs vs the period before, visitors/day, new-browser funnel, wee
 people get stuck, usage, audience, users (+ per-user timeline, carts, visits), server, price data.
 Tests: tests/test_admin.py (drives the ASGI app directly; httpx isn't installed). City needs Cloudflare's "Add visitor
 location headers" managed transform.
+Failed requests (2026-11-07, per user, live 13:59): every cart change re-rendered checkout and the side-by-side table,
+each asking /api/drive again (49 calls for 12 quick + taps; one user got 14×429). app.js driveTimes() now keeps
+times per place+branch for 10 min (1 min for none; 30 s rest after a refusal), and the server's 40/min limit applies
+only when geo.drive_known() says the routing service must be asked. Status 0 (no answer) is reported, and the compare
+error toast shown, only if the page is still in front 1.5 s later (Usage.stayed): following a link or switching apps
+makes browsers drop pending requests, Safari before pagehide; a compare lost that way runs again when the page is back.
+A second callback a second after a successful sign-in (seen on phones) goes into the app, not "Couldn't sign you in".
+HEAD on pages answers as GET without the body (HeadAsGet); /favicon.ico, /apple-touch-icon(-precomposed).png and
+/robots.txt are served (Cloudflare prepends its managed robots lines). Rage clicks skip − / + steppers. Most "(unmatched)"
+404s in /admin are vulnerability scanners with browser User-Agents.
 Reports to sell (2026-11-05, per user: the data is the monetizable part): /admin#reports, `app/reports.py` +
 app/admin/{reports.js,reports.css}, GET /api/admin/reports (what we hold) and /api/admin/reports/{name} (JSON, or
 ?format=csv[&part=] with a BOM for Excel; print view for PDF). Built ONLY from the public price layer (price_last,

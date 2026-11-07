@@ -41,7 +41,7 @@ async function api(path, opts = {}) {
         body: opts.body ? JSON.stringify(opts.body) : undefined,
         credentials: 'same-origin',
       });
-    } catch (e) { Usage.apiFail(path, 0); throw e; }  // offline, or the server is down
+    } catch (e) { Usage.apiFail(path, 0); e.noAnswer = true; throw e; }  // offline, the server down, or the page being left
     if (r.status === 401 && !opts.noAuth) { signedOut(); throw new Error('signed out'); }
     if (!r.ok) { Usage.apiFail(path, r.status); throw new Error(`${r.status} ${path}`); }
     return await r.json();
@@ -1610,7 +1610,11 @@ async function compareNow() {
     renderStoreCard(false);
     loadTrend();
     if (document.body.dataset.view === 'basket') compared(r);
-  } catch (e) { if (my === compareSeq && e.message !== 'signed out') toast(t("Couldn't compare prices — is the server up?"), null, null, 'error'); }
+  } catch (e) {
+    const say = () => { if (my === compareSeq) toast(t("Couldn't compare prices — is the server up?"), null, null, 'error'); };
+    // no answer while the page was being left (a link, the app switcher): no error; compared again once it's back
+    if (my === compareSeq && e.message !== 'signed out') e.noAnswer ? Usage.stayed(say, () => { if (my === compareSeq) compareSoon(); }) : say();
+  }
   finally {
     if (my === compareSeq) {
       S.comparing = false;
@@ -1657,20 +1661,41 @@ function storePlace(v) {
 const place = v => delivery() ? `${t('Online store')} · ${bdi(storeName(v))}` : storePlace(v);
 const driveSlot = v => S.prefs.home && !onWay() && v.precision !== 'town' ? `<span class="drive" data-sk="${esc(v.chain_id)}:${v.store_id}"></span>` : '';  // on my way: what a stop adds, in the plan
 
+// Drive times, kept per place and branch: every cart change draws the store lists again (checkout, the side-by-side
+// table), and asking each time used up the account's routing lookups (429) after a minute of quick − / + taps.
+// Ten minutes (live traffic changes; the server keeps typical times a week), one minute for a branch with no time.
+const driveKnown = new Map(), driveAsked = new Map();  // `lat,lon|chain:store` -> {m, live, until} / the request on its way
+let driveRest = 0;  // after a refused or failed lookup: no new ones until then
+async function driveTimes(sks) {
+  const h = S.prefs.home, at = `${h.lat},${h.lon}|`, now = Date.now();
+  const ask = sks.filter(k => !(driveKnown.get(at + k)?.until > now) && !driveAsked.has(at + k));
+  for (let i = 0; i < ask.length && now >= driveRest; i += 60) {  // the server reads 60 branches a request
+    const part = ask.slice(i, i + 60);
+    const stores = part.map(k => [k.slice(0, k.lastIndexOf(':')), +k.slice(k.lastIndexOf(':') + 1)]);
+    const p = api('/api/drive', { method: 'POST', body: { home: h, stores }, quiet: true })
+      .then(r => part.forEach(k => {
+        const m = r.times[k] ?? null;
+        driveKnown.set(at + k, { m, live: r.live, until: Date.now() + (m == null ? 60e3 : 600e3) });
+      }))
+      .catch(() => { driveRest = Date.now() + 30e3; })
+      .finally(() => part.forEach(k => driveAsked.delete(at + k)));
+    part.forEach(k => driveAsked.set(at + k, p));
+  }
+  await Promise.all(new Set(sks.map(k => driveAsked.get(at + k)).filter(Boolean)));
+  return Object.fromEntries(sks.map(k => [k, driveKnown.get(at + k)]).filter(([, x]) => x?.m != null));
+}
 // drive times load after the results so pricing never waits on the routing service
 async function fillDrive(root = $('#results')) {
   const els = [...root.querySelectorAll('.drive[data-sk]')];
-  if (!els.length) return;
+  if (!els.length || !S.prefs.home) return;
   const my = root._driveSeq = (root._driveSeq || 0) + 1;
-  const stores = [...new Set(els.map(e => e.dataset.sk))].map(k => [k.slice(0, k.lastIndexOf(':')), +k.slice(k.lastIndexOf(':') + 1)]);
-  let r;
-  try { r = await api('/api/drive', { method: 'POST', body: { home: S.prefs.home, stores }, quiet: true }); } catch { return; }
+  const times = await driveTimes([...new Set(els.map(e => e.dataset.sk))]);
   if (my !== root._driveSeq) return;
   els.forEach(e => {
-    const m = r.times[e.dataset.sk];
-    if (m == null) return;
-    e.textContent = ' · ' + t(r.live ? '{n} min drive now' : '{n} min drive', { n: m < 1 ? '<1' : m });
-    e.title = r.live ? t('Driving time in current traffic (Google Maps)') : t('Typical driving time, without live traffic');
+    const x = times[e.dataset.sk];
+    if (!x) return;
+    e.textContent = ' · ' + t(x.live ? '{n} min drive now' : '{n} min drive', { n: x.m < 1 ? '<1' : x.m });
+    e.title = x.live ? t('Driving time in current traffic (Google Maps)') : t('Typical driving time, without live traffic');
   });
 }
 

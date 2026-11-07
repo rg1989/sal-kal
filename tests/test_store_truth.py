@@ -182,6 +182,20 @@ assert len(routes) == n and card["address"] == "" and card["brand"] == "נטו �
 # drive times only to branches at their own address
 r = server.drive({"home": HOME, "stores": [[SAPIR, 190], [SAPIR, 22]]})
 assert r["times"] == {f"{SAPIR}:190": 4} and asked == [(32.01, 34.78)], (r, asked)
+# the per-account limit guards the routing service only: times it already has never run out (each cart change asks
+# again; quick − / + taps made 40+ calls a minute and got 429)
+known, server.geo.drive_known = server.geo.drive_known, lambda home, dests, key=None: True
+for _ in range(60):
+    assert server.drive({"home": HOME, "stores": [[SAPIR, 190]]})["times"] == {f"{SAPIR}:190": 4}
+server.geo.drive_known = lambda home, dests, key=None: False
+try:
+    for _ in range(60):
+        server.drive({"home": HOME, "stores": [[SAPIR, 190]]})
+    raise AssertionError("no limit on routing lookups")
+except server.HTTPException as e:
+    assert e.status_code == 429
+server.geo.drive_known = known
+server._limits.clear()
 # opening hours: only for a branch at its own address that no other branch of its chain shares (its Wolt listing at
 # the same address is the same shop); never for a town-level point
 h = server.store_hours(SAPIR, 190)

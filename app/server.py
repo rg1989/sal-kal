@@ -287,6 +287,29 @@ async def _metered(request, call_next, u, heavy):
         return _busy(503, "busy, try again in a moment", 5)
 
 
+class HeadAsGet:
+    """HEAD on a page answered as its GET without the body: link checkers, crawlers and uptime monitors ask with HEAD,
+    and FastAPI's GET routes said 405. /static and /photos answer HEAD themselves; /api and /auth stay as they are."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (scope["type"] != "http" or scope["method"] != "HEAD"
+                or scope["path"].startswith(("/api/", "/auth/", "/static/", "/photos/"))):
+            return await self.app(scope, receive, send)
+
+        async def no_body(msg):
+            if msg["type"] == "http.response.body":
+                if msg.get("more_body"):
+                    return
+                msg = {"type": "http.response.body", "body": b"", "more_body": False}
+            await send(msg)
+        # a copy: the server's own scope keeps HEAD, so it sends no body either
+        await self.app({**scope, "method": "GET"}, receive, no_body)
+
+
+app.add_middleware(HeadAsGet)
 app.add_middleware(guard.Door)  # outermost: counts and reads the request before anything else runs
 
 
@@ -520,6 +543,29 @@ def setup_mac():
 def service_worker():
     """The service worker (installable app, offline start) sits at the root so that it covers the whole site."""
     return FileResponse(os.path.join(STATIC, "sw.js"), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
+# Asked for at the root without any page naming them: browsers' /favicon.ico, iPhones' touch icons (sharing, bookmarks,
+# the home screen) and crawlers' /robots.txt. They were 404s.
+_ICON = {"Cache-Control": "public, max-age=604800"}
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(os.path.join(STATIC, "pwa-192.png"), media_type="image/png", headers=_ICON)
+
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def touch_icon():
+    return FileResponse(os.path.join(STATIC, "apple-touch-icon.png"), media_type="image/png", headers=_ICON)
+
+
+@app.get("/robots.txt")
+def robots():
+    # Cloudflare serves its own managed lines (content signals, AI crawlers) before these
+    return Response(f"User-agent: *\nDisallow: /api/\nDisallow: /auth/\n\nSitemap: {_site()}/sitemap.xml\n",
+                    media_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=86400"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -1429,7 +1475,6 @@ def drive(body: dict = Body(...)):
     if not isinstance(home, dict) or "lat" not in home:
         return {"times": {}, "live": False}
     home = _clean_home(home)
-    limit("drive", 40, 60)
     c = con()
     exact = geo.exact_stores(c)  # a branch at its town's point has no drive time to give
     coords = {sk: ll for sk, ll in geo.store_coords(c).items() if sk in exact}
@@ -1441,6 +1486,8 @@ def drive(body: dict = Body(...)):
             continue
     pts = {k: coords[k] for k in want if k in coords}
     key = engine.get_setting(c, "maps_key", None)
+    if not geo.drive_known((home["lat"], home["lon"]), list(pts.values()), key):  # the limit guards the routing service
+        limit("drive", 40, 60)
     mins = geo.drive_minutes((home["lat"], home["lon"]), list(pts.values()), key)
     return {"times": {f"{k[0]}:{k[1]}": mins.get(p) for k, p in pts.items()}, "live": bool(key)}
 
@@ -2039,6 +2086,12 @@ def _back(why=None):
     return resp
 
 
+def _back_in():
+    resp = RedirectResponse("/#/", status_code=303)
+    resp.delete_cookie(auth.STATE_COOKIE, path="/auth")
+    return resp
+
+
 def _start(provider, request, lang, v, who=""):
     """The provider's sign-in address and the response that sets the one-time state cookie."""
     url, state = auth.start(provider, f"{_base(request)}/auth/{provider}/callback", who=who if provider == "dev" else None)
@@ -2103,6 +2156,10 @@ def auth_callback(provider: str, request: Request, code: str = "", state: str = 
     fail = lambda why, back: (_ev("signin_fail", a=provider, b=why, vid=vid, sid=sid), _back(back))[1]
     if error:
         return fail(f"cancelled ({error[:40]})", "cancelled")
+    if not st and me():
+        # the provider's page sent this browser back a second time, a second after the first signed it in (that
+        # answer used the state cookie up): it is signed in, so into the app, not "Couldn't sign you in"
+        return _back_in()
     if not st:  # no sign-in cookie: often an in-app browser that opened the provider in another browser
         return fail("no state cookie", "failed")
     if st.get("p") != provider or not code or not hmac.compare_digest(str(st.get("s", "")), state):

@@ -107,6 +107,32 @@ const Usage = (() => {
   });
   addEventListener('pagehide', () => { endSearch(); endView(); send(true); });
 
+  // When the page was last hidden or left. Following a link or switching apps makes the browser drop the requests the
+  // page was still waiting for (status 0, often just before pagehide): the page going away, not a failure.
+  let away = 0;
+  const gone = () => { away = Date.now(); };
+  addEventListener('pagehide', gone);
+  addEventListener('beforeunload', gone);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') gone(); });
+  const leftSince = at => document.visibilityState === 'hidden' || away >= at;
+  // fn() if the page is still in front a moment from now; else back() once it is shown again
+  function stayed(fn, back) {
+    const at = Date.now() - 1000;
+    const later = () => {
+      if (!leftSince(at)) return fn();
+      if (!back) return;
+      const shown = () => {
+        if (document.visibilityState !== 'visible') return;
+        document.removeEventListener('visibilitychange', shown);
+        removeEventListener('pageshow', shown);
+        back();
+      };
+      document.addEventListener('visibilitychange', shown);
+      addEventListener('pageshow', shown);
+    };
+    if (leftSince(at)) later(); else setTimeout(later, 1500);
+  }
+
   // ---------------------------------------------------------------- searches: one event per settled query, with what came of it
   let srch = null, settle = null, prevQ = null;
   function results(terms, total, cat) {
@@ -134,6 +160,7 @@ const Usage = (() => {
 
   // ---------------------------------------------------------------- clicks: what's tapped, rage clicks, dead clicks
   const CONTROL = 'a,button,input,select,textarea,label,summary,[role=button],[role=tab],[role=switch],[role=menuitem],[role=option],[data-add],[data-ckey],[data-term],[data-size]';
+  const STEPPER = '[data-cstep],[data-step],[data-num]';
   const SKIP_DATA = new Set(['data-i18n', 'data-i18n-title', 'data-i18n-aria', 'data-i18n-ph', 'data-tip']);
   const digits = s => s.replace(/[\d₪.,:%  ]*\d[\d₪.,:%  ]*/g, ' # ').replace(/\s+/g, ' ').trim();
   function label(el) {
@@ -164,11 +191,11 @@ const Usage = (() => {
     const ctl = t.closest(CONTROL);
     const p = page();
     if (ctl) ev('click', { p, a: label(ctl), b: zone(ctl) });
-    // rage: 3+ taps within a second on about the same spot
+    // rage: 3+ taps within a second on about the same spot (not on a − / + stepper: quick taps are how it's used)
     const now = Date.now();
     taps = taps.filter(x => now - x.t < 1000 && Math.hypot(x.x - e.clientX, x.y - e.clientY) < 40);
     taps.push({ t: now, x: e.clientX, y: e.clientY });
-    if (taps.length === 3) ev('rage', { p, a: label(ctl || t), b: zone(ctl || t), n: 3 });
+    if (taps.length === 3 && !ctl?.matches(STEPPER)) ev('rage', { p, a: label(ctl || t), b: zone(ctl || t), n: 3 });
     if (!ctl) deadCheck(t, p);
   }, true);
 
@@ -217,7 +244,8 @@ const Usage = (() => {
   function apiFail(path, status) {
     path = String(path).split('?')[0].replace(/\/\d+(?=\/|$)/g, '/{id}').slice(0, 80);
     if (status === 401) return;
-    ev('api_fail', { a: path, n: status });
+    if (status === 0) stayed(() => ev('api_fail', { a: path, n: 0 }));  // no answer: counted unless the page was being left
+    else ev('api_fail', { a: path, n: status });
   }
 
   // ---------------------------------------------------------------- load speed (once per page load)
@@ -242,7 +270,7 @@ const Usage = (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', landing); else landing();
 
   return {
-    ev, view, results, add, apiFail, send,
+    ev, view, results, add, apiFail, send, stayed,
     ids: () => `${vid}.${visit()}`,                 // sent with API calls, so the server's own events join this visit
     reset() {  // account deleted: a new browser id and visit
       clearTimeout(settle); srch = null; cur = null; q = [];

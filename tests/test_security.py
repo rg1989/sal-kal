@@ -236,6 +236,10 @@ guard.OUTSIDE["google"] = (0, 86400, 2)  # the day's live-traffic lookups are us
 calls = []
 geo._osrm = lambda home, dests: calls.append(len(dests)) or [7] * len(dests)
 assert geo.drive_minutes((32.08, 34.78), [(32.1, 34.8)], key="billed-key") == {(32.1, 34.8): 7} and calls == [1]
+# drive_known: what drive_minutes would answer from its cache, asking no service (the server's limit skips those)
+assert geo.drive_known((32.08, 34.78), [(32.1, 34.8)], key="billed-key")
+assert not geo.drive_known((32.08, 34.78), [(32.1, 34.8), (32.2, 34.9)], key="billed-key")
+assert not geo.drive_known((32.08, 34.78), [(32.1, 34.8)])  # typical times are cached apart from live ones
 guard.OUTSIDE.update(saved_out)
 guard.reset()
 
