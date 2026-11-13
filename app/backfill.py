@@ -702,10 +702,11 @@ def load_block(s, chain, store, ts, prices):
     return moves
 
 
-def build_day(s, rules, day, blocks, names, at=None, moves_on=True, bridge_from=None):
+def build_day(s, rules, day, blocks, names, at=None, moves_on=True, bridge_from=None, doomed=None):
     """One day: load the branches' files, then judge every barcode with the live rules and write history rows and
     branch price changes. blocks: [(chain, store, ts, prices)] (each branch's last file that day); names:
-    [(chain, key, ts, name)]."""
+    [(chain, key, ts, name)]. doomed(chain, last_day): the chain has no current file on any of the BRIDGE_DAYS days
+    after last_day (auto knows the days after its block; a straight build finds out on the last of them)."""
     raw = {}  # key -> [(chain, store, was, now, ts)]
     for chain, store, ts, prices in sorted(blocks, key=lambda b: b[2]):
         for key, was, now, _was_ts in load_block(s, chain, store, ts, prices):
@@ -772,7 +773,7 @@ def build_day(s, rules, day, blocks, names, at=None, moves_on=True, bridge_from=
     # (dated the chain's first day without one)
     last_seen = dict(s.execute("SELECT chain_id, day FROM chain_seen"))
     since = next_day(day, -BRIDGE_DAYS) if bridge_from is None else bridge_from
-    held = {c for c, d in last_seen.items() if c not in observed and d >= since}
+    held = {c for c, d in last_seen.items() if c not in observed and d >= since and not (doomed and doomed(c, d))}
     ended = [(k, c) for k, c in s.execute("SELECT key, chain_id FROM hl WHERE seen < ?", (day,)) if c not in held]
     s.executemany("INSERT OR REPLACE INTO out_h VALUES(?,?,?,NULL,NULL,0)",
                   [(k, c, day if c in observed or not moves_on else min(day, next_day(last_seen.get(c, day))))
@@ -787,7 +788,7 @@ def build_day(s, rules, day, blocks, names, at=None, moves_on=True, bridge_from=
     return len(fresh), len(hist), len(ended), len(moves)
 
 
-def build(work, live_path=None, until=None, force=False):
+def build(work, live_path=None, until=None, force=False, doomed=None):
     """Replay every fetched day not built yet, in order (a day with nothing fetched still ends or holds series)."""
     s = stage(work)
     live = sqlite3.connect(f"file:{os.path.abspath(live_path or dbmod.DB_PATH)}?mode=ro", uri=True, timeout=60)
@@ -830,7 +831,7 @@ def build(work, live_path=None, until=None, force=False):
                         blocks.append((ch, st, ts, prices))
                 else:
                     names.append(rec[1:])
-        fresh, rows, ended, moves = build_day(s, rules, day, blocks, names)
+        fresh, rows, ended, moves = build_day(s, rules, day, blocks, names, doomed=doomed)
         log.info("%d: %d branch files, %d current branches, %d history rows, %d ended, %d price changes (%.0fs)",
                  day, len(blocks), fresh, rows, ended, moves, time.time() - t0)
         day = next_day(day)
@@ -1022,16 +1023,22 @@ def source(c):
 # before the first daily archive day (settings backfill.daily_from), so daily coverage grows back from today one day
 # at a time in one unbroken stretch, replacing the weekly samples there, and each day is live (history, and the Price
 # Watch's changes at its next build) as soon as its run ends. Each run builds its days in a stage of its own
-# (work/auto), starting one day early so the first day's price changes can be dated, and stitches them into
-# price_history so that every series reads the same on each side: the day before the block keeps its value, the
-# block's first day carries the full state, and the day after it gets a row wherever the new chain ends on another
-# value than the old one showed. Price changes (price_moves) are added for the block and for the day after it (which
-# now has a day before it). The downloaded versions the next run needs stay in work/auto/parts, and while a run
-# builds, the next run's versions are downloaded beside it (PREFETCH, a process of its own): a run then costs about
-# its build. Resumable (a stopped run finds its files in work/auto and goes on); done once ARCHIVE_START is reached.
+# (work/auto), starting at the newest version published before its first day (usually the day before; further back
+# where the archive skipped days, or where a chain is missing that day) so the first day's state and price changes
+# are whole, and stitches them into price_history: the day before the block keeps its value, the block's first day
+# carries the full state, and the day after it (built here too) gets rows for what changed from the block's last day.
+# A chain with no file for longer than BRIDGE_DAYS ends where a straight build ends it (doomed(), from the indexes of
+# the versions after the block, kept in work/metas). Price changes (price_moves) are written for the block and added
+# for the day after it. The downloaded versions the next run needs stay in work/auto/parts, and while a run builds,
+# the next run's versions are downloaded beside it (PREFETCH, a process of its own): a run then costs about its build.
+# Resumable (a stopped run finds its files in work/auto and goes on); done once ARCHIVE_START is reached. `redo`
+# builds days again (newest first, then it goes on); a failed run makes the next ones wait (auto-failed.json).
 ARCHIVE_START = 20241022   # the archive's first version with every chain (FIRST_VERSION)
 AUTO_DAYS = 1              # days a run adds (~15-20 minutes each on one core of the server)
 PREFETCH = 2               # older versions downloaded during a run, for the next one
+WARMUP_DAYS = 14           # how far back a block looks for the version its build starts from (past archive gaps)
+FAIL_WAIT = 600            # after a failed run the next waits 10 min, doubling with each failure in a row ...
+FAIL_WAIT_MAX = 6 * 3600   # ... up to 6 h
 
 
 def versions_for(lo, hi, cache):
@@ -1052,11 +1059,36 @@ def versions_for(lo, hi, cache):
     return sorted(out)
 
 
-def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=None, fetcher=None):
-    """One run of the gap filler. versions(lo, hi) and fetcher(v, parts) are for tests (default: Kaggle).
-    Returns the days added (0 when there is nothing to do)."""
-    path = os.path.abspath(db_path or dbmod.DB_PATH)
+def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=None, fetcher=None, now=None):
+    """One run of the gap filler. versions(lo, hi) -> {version: day published} and fetcher(v, parts) are for tests
+    (default: Kaggle). Returns the days added (0 when there is nothing to do, or while it waits after a failure).
+    A failed run makes the next ones wait (FAIL_WAIT, doubling up to FAIL_WAIT_MAX): the timer starts a run a minute
+    after the last one ends, and a block that couldn't be built was tried ~5,500 times (2026-11-09..13)."""
     work = work_dir(work)
+    os.makedirs(work, exist_ok=True)
+    now = now or time.time()
+    failed = os.path.join(work, "auto-failed.json")
+    f = json.load(open(failed)) if os.path.exists(failed) else None
+    if f and now < f["next"]:
+        log.info("auto: waiting until %s after %d failed run(s): %s", time.strftime("%Y-%m-%d %H:%M", time.localtime(
+            f["next"])), f["count"], f["error"])
+        return 0
+    try:
+        n = _auto(db_path, work, days, start, versions, fetcher)
+    except Exception as e:
+        count = (f or {}).get("count", 0) + 1
+        nxt = now + min(FAIL_WAIT * 2 ** (count - 1), FAIL_WAIT_MAX)
+        with open(failed + ".tmp", "w") as fh:
+            json.dump({"count": count, "next": nxt, "error": f"{type(e).__name__}: {e}"[:300]}, fh)
+        os.replace(failed + ".tmp", failed)
+        raise
+    if f:
+        os.remove(failed)
+    return n
+
+
+def _auto(db_path, work, days, start, versions, fetcher):
+    path = os.path.abspath(db_path or dbmod.DB_PATH)
     live = dbmod.connect(path)
     live.row_factory = None
     b = get_setting(live, "backfill")
@@ -1064,7 +1096,7 @@ def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=
         log.info("auto: nothing backfilled yet (run fetch/build/apply first)")
         return 0
     b = json.loads(b)
-    hi_day = b.get("daily_from") or (b.get("history") or [None])[0]
+    hi_day = b.get("redo") or b.get("daily_from") or (b.get("history") or [None])[0]
     if not hi_day or hi_day <= start:
         log.info("auto: every day back to %d is in", start)
         return 0
@@ -1074,27 +1106,70 @@ def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=
     target = os.path.join(run, "target.json")
     cache_path = os.path.join(work, "versions.json")
     cache = json.load(open(cache_path)) if os.path.exists(cache_path) else {}
-    vs = versions(next_day(A, -1), next_day(B, 1)) if versions else versions_for(next_day(A, -1), next_day(B, 1), cache)
-    os.makedirs(work, exist_ok=True)
+    lo, hi = next_day(A, -WARMUP_DAYS), next_day(B, BRIDGE_DAYS + 1)  # hi: for doomed(), the days after the block
+    found = versions(lo, hi) if versions else {v: version_day(v, cache) for v in versions_for(lo, hi, cache)}
+    # The block's build starts at the newest version published before A (the warm-up): A's state and its price
+    # changes need the files before it. Usually that's the day before A; where the archive skipped days (none
+    # published 2026-07-30..08-01, 08-03..04, 08-12..13, ...) it's further back, and the days between are built with
+    # no files (a chain's series held up to BRIDGE_DAYS, as for a chain missing a day). Without it the build began
+    # after A: every series ended on A, and a block with nothing up to B stopped the gap filler (2026-11-09).
+    before = [d for d in found.values() if d < A]
+    warm = max(before) if before else None
+    vs = sorted(v for v, d in found.items() if (warm or A) <= d <= next_day(B))
+    hole = not any(d <= B for v, d in found.items() if v in vs)  # nothing in the archive from WARMUP_DAYS before A to B
+    if hole:
+        vs = []
     with open(cache_path, "w") as f:
         json.dump(cache, f)
     if not os.path.exists(target) or json.load(open(target)) != [A, B]:
-        _clear_run(run, keep=set(vs))  # another block's stage: gone; of its downloads, the ones this block needs stay
+        # another block's stage: gone; of its downloads, the ones this block may need stay
+        _clear_run(run, keep=set(vs) | {v for v, d in found.items() if next_day(A, -BRIDGE_DAYS - 1) <= d < A})
     os.makedirs(parts, exist_ok=True)
     with open(target, "w") as f:
         json.dump([A, B], f)
-    log.info("auto: %d..%d from %d versions", A, B, len(vs))
+    log.info("auto: %d..%d from %d versions%s", A, B, len(vs),
+             f" (from {warm}: the archive has no version from {next_day(warm)} to {next_day(A, -1)})"
+             if warm and warm < next_day(A, -1) else
+             f" (the archive has no version from {next_day(A, -WARMUP_DAYS)} to {B}: no data for these days)"
+             if hole else "")
     early = os.path.join(work, "auto-ahead")  # downloaded during the last run, kept apart so its build never saw them
-    for v in vs:
+
+    kept = os.path.join(work, "metas")  # every fetched version's index, kept for doomed() (~100 KB each)
+    os.makedirs(kept, exist_ok=True)
+
+    def get(v):
         if os.path.exists(os.path.join(early, f"v{v}.json")) and not os.path.exists(os.path.join(parts, f"v{v}.json")):
             os.replace(os.path.join(early, f"v{v}.gz"), os.path.join(parts, f"v{v}.gz"))
             os.replace(os.path.join(early, f"v{v}.json"), os.path.join(parts, f"v{v}.json"))
+        (fetcher or (lambda v_, p_: fetch_version(v_, p_)))(v, parts)
+        if not os.path.exists(os.path.join(kept, f"v{v}.json")):
+            shutil.copyfile(os.path.join(parts, f"v{v}.json"), os.path.join(kept, f"v{v}.json"))
+
+    def chains(vv):
+        out = set()
+        for v in vv:
+            with open(os.path.join(parts, f"v{v}.json")) as fh:
+                out |= {b[0] for b in json.load(fh)["blocks"]}
+        return out
     for f in os.listdir(early) if os.path.isdir(early) else []:  # older ones wait for the next runs; newer are done with
         base = f.split(".")[0]
         if f.startswith(".") or not (base[1:].isdigit() and int(base[1:]) < min(vs or [0])):
             os.remove(os.path.join(early, f))
     for v in vs:
-        (fetcher or (lambda v_, p_: fetch_version(v_, p_)))(v, parts)
+        get(v)
+    if warm:
+        # a chain with files later in the block but none on the warm-up day (missing from the archive that day) would
+        # end on A, where a straight build holds it (BRIDGE_DAYS): start at an older version that has it, up to that
+        lost = chains([v for v in vs if found[v] > warm]) - chains([v for v in vs if found[v] <= warm])
+        for d in sorted({d for d in found.values() if next_day(A, -BRIDGE_DAYS - 1) <= d < warm}, reverse=True):
+            if not lost:
+                break
+            add = sorted(v for v, dd in found.items() if dd == d)
+            for v in add:
+                get(v)
+            log.info("auto: %d chain(s) missing on %d: starting at %d", len(lost), warm, d)
+            vs, warm = sorted(vs + add), d
+            lost -= chains(add)
     ahead = None
     if fetcher is None and vs and A > start:  # the next run's older versions, downloaded while this one builds
         nxt = [v for v in range(min(vs) - 1, min(vs) - 1 - PREFETCH, -1) if v >= FIRST_VERSION]
@@ -1102,8 +1177,9 @@ def auto(db_path=None, work=None, days=AUTO_DAYS, start=ARCHIVE_START, versions=
             ahead = subprocess.Popen([sys.executable, "-m", "app.backfill", "prefetch", "--work", early,
                                       "--versions", ",".join(map(str, nxt))],
                                      cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    doomed = _doomed(found, [kept, parts, early, os.path.join(work, "parts")])
     try:
-        return _auto_block(live, path, run, A, B, start)
+        return _auto_block(live, path, run, A, B, start, hole, doomed)
     finally:
         if ahead:
             try:
@@ -1127,19 +1203,60 @@ def _clear_run(run, keep):
             os.remove(os.path.join(parts, f))
 
 
-def _auto_block(live, path, run, A, B, start):
+def _doomed(found, dirs):
+    """doomed(chain, last_day) for build_day: True when the archive's versions ({version: day}) have no current file
+    of that chain on any of the BRIDGE_DAYS days after last_day, so its series end the day after it, as a straight
+    build ends them once it gets there; False when it has one, or when a version that could hold one isn't known
+    (its index isn't in `dirs`): then the series is held, as before."""
+    by_day, files, memo = {}, {}, {}
+    for v, d in found.items():
+        by_day.setdefault(d, []).append(v)
+
+    def chain_files(v):  # {chain: [time of each branch file, YYYYMMDDHHMM]}, None when not fetched
+        if v not in files:
+            files[v] = None
+            for d in dirs:
+                p = os.path.join(d, f"v{v}.json")
+                if os.path.exists(p):
+                    with open(p) as fh:
+                        out = {}
+                        for ch, _st, ts in json.load(fh)["blocks"]:
+                            out.setdefault(ch, []).append(int(ts))
+                    files[v] = out
+                    break
+        return files[v]
+
+    def seen(chain, day):  # a file current at the day's end (trust.FRESH_HOURS) is in a version of day-1..day+1
+        end = day * 10000 + 2359
+        cut = trust.fresh_cutoff(_day_end(day))  # as build_day judges the branches' files
+        ms = [chain_files(v) for d in (next_day(day, -1), day, next_day(day)) for v in by_day.get(d, [])]
+        if any(m is None for m in ms):
+            return None
+        return any(cut <= t <= end for m in ms for t in m.get(chain, ()))
+
+    def doomed(chain, last):
+        k = (chain, last)
+        if k not in memo:
+            memo[k] = all(seen(chain, next_day(last, i)) is False for i in range(1, BRIDGE_DAYS + 1))
+        return memo[k]
+    return doomed
+
+
+def _auto_block(live, path, run, A, B, start, hole=False, doomed=None):
+    """Build A..B in run/stage.db and apply it. hole: the archive has nothing for these days (nor WARMUP_DAYS
+    before), so nothing is built: every series open before A ends on A and the newer ones start again on B."""
     s = stage(run)
     snap = """CREATE TABLE IF NOT EXISTS {t} AS SELECT h.key, h.chain_id, h.mn, h.mx,
                 (SELECT o.n FROM out_h o WHERE o.key=h.key AND o.chain_id=h.chain_id AND o.day <= ? AND o.mn IS NOT NULL
                  ORDER BY o.day DESC LIMIT 1) n FROM hl h"""
-    for until, table in ((A, "state_a"), (next_day(B, -1), "state_b"), (B, None)):
-        build(run, path, until=until, force=True)
-        if table:
-            s.execute(snap.format(t=table), (until,))
-            s.commit()
-    if s.execute("SELECT max(day) FROM done").fetchone()[0] != B:
+    for until, table in ((A, "state_a"), (next_day(B, -1), "state_b"), (B, "state_c")):
+        if not hole:
+            build(run, path, until=until, force=True, doomed=doomed)
+        s.execute(snap.format(t=table), (until,))
+        s.commit()
+    if not hole and s.execute("SELECT max(day) FROM done").fetchone()[0] != B:
         raise RuntimeError(f"auto: the build stopped before {B}")
-    for table in ("state_a", "state_b"):  # looked up by (key, chain_id) in the apply, under the lock: indexed first
+    for table in ("state_a", "state_b", "state_c"):  # looked up by (key, chain_id) in the apply, under the lock
         s.execute(f"CREATE INDEX IF NOT EXISTS {table}_k ON {table}(key, chain_id)")
     s.commit()
     s.close()
@@ -1161,20 +1278,14 @@ def _auto_block(live, path, run, A, B, start):
 
 
 def _prepare_block(c, A, B):
-    """What each series showed entering the block (bef) and on the day after it (aft, atb: the pairs with a row
-    that day), into temp tables of this connection."""
-    last_row = """CREATE TEMP TABLE {t} AS SELECT key, chain_id, mn, mx, n FROM (SELECT key, chain_id, mn, mx, n,
-                  row_number() OVER (PARTITION BY key, chain_id ORDER BY day DESC) r FROM price_history WHERE day {op} ?)
-                  WHERE r = 1"""
-    for t in ("bef", "aft", "atb"):
-        c.execute(f"DROP TABLE IF EXISTS temp.{t}")
-    c.execute(last_row.format(t="bef", op="<"), (A,))
-    c.execute(last_row.format(t="aft", op="<="), (B,))
-    c.execute("CREATE TEMP TABLE atb AS SELECT key, chain_id FROM price_history WHERE day = ?", (B,))
+    """What each series showed entering the block (bef), into a temp table of this connection."""
+    c.execute("DROP TABLE IF EXISTS temp.bef")
+    c.execute("""CREATE TEMP TABLE bef AS SELECT key, chain_id, mn, mx, n FROM (SELECT key, chain_id, mn, mx, n,
+                 row_number() OVER (PARTITION BY key, chain_id ORDER BY day DESC) r FROM price_history WHERE day < ?)
+                 WHERE r = 1""", (A,))
     # the apply looks rows up by (key, chain_id) in NOT EXISTS subqueries, which SQLite won't index on its own: without
-    # these a real day (~1M rows against ~635k) scanned for hours while holding the indexer's lock (2026-11-07)
-    for t in ("bef", "aft", "atb"):
-        c.execute(f"CREATE INDEX temp.{t}_k ON {t}(key, chain_id)")
+    # this a real day (~1M rows against ~635k) scanned for hours while holding the indexer's lock (2026-11-07)
+    c.execute("CREATE INDEX temp.bef_k ON bef(key, chain_id)")
     c.commit()
 
 
@@ -1184,7 +1295,7 @@ def _apply_block(c, run, A, B):
     c.executescript(PRICE_MOVES)
     c.execute("ATTACH DATABASE ? AS bf", (os.path.join(run, "stage.db"),))
     with c:
-        gone = c.execute("DELETE FROM price_history WHERE day >= ? AND day < ?", (A, B)).rowcount
+        gone = c.execute("DELETE FROM price_history WHERE day >= ? AND day <= ?", (A, B)).rowcount
         n = c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
                          SELECT a.key, a.chain_id, ?, a.mn, a.mx, coalesce(a.n, 0) FROM bf.state_a a
                          LEFT JOIN bef b ON b.key=a.key AND b.chain_id=a.chain_id
@@ -1195,25 +1306,33 @@ def _apply_block(c, run, A, B):
         n += c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
                           SELECT key, chain_id, day, mn, mx, n FROM bf.out_h WHERE day > ? AND day < ?""",
                        (A, B)).rowcount
-        # the day after the block: a row wherever the old chain showed another value there than the new one ends on
-        n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
-                          SELECT f.key, f.chain_id, ?, f.mn, f.mx, f.n FROM aft f
-                          LEFT JOIN bf.state_b s ON s.key=f.key AND s.chain_id=f.chain_id
-                          WHERE f.mn IS NOT NULL AND NOT EXISTS (SELECT 1 FROM atb t WHERE t.key=f.key AND t.chain_id=f.chain_id)
-                            AND (s.key IS NULL OR abs(s.mn - f.mn) >= 0.005 OR abs(s.mx - f.mx) >= 0.005)""",
+        # B, the newer block's first day: this block built it too (state_c), so B's rows are its own, as changes from
+        # B-1. Not stitched to what the older rows showed on B: an earlier auto left whole days with every series
+        # ended (2026-08-04, 08-13, 10-25), and that showed on later days that had no row of their own.
+        n += c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
+                          SELECT s.key, s.chain_id, ?, s.mn, s.mx, coalesce(s.n, 0) FROM bf.state_c s
+                          LEFT JOIN bf.state_b b ON b.key=s.key AND b.chain_id=s.chain_id
+                          WHERE b.mn IS NULL OR abs(b.mn - s.mn) >= 0.005 OR abs(b.mx - s.mx) >= 0.005""",
                        (B,)).rowcount
         n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
-                          SELECT s.key, s.chain_id, ?, NULL, NULL, 0 FROM bf.state_b s
-                          LEFT JOIN aft f ON f.key=s.key AND f.chain_id=s.chain_id
-                          WHERE f.mn IS NULL AND NOT EXISTS (SELECT 1 FROM atb t WHERE t.key=s.key AND t.chain_id=s.chain_id)""",
+                          SELECT b.key, b.chain_id, ?, NULL, NULL, 0 FROM bf.state_b b WHERE b.mn IS NOT NULL AND
+                          NOT EXISTS (SELECT 1 FROM bf.state_c s WHERE s.key=b.key AND s.chain_id=b.chain_id)""",
                        (B,)).rowcount
+        # A's changes are this block's (a block run again replaces them); B's were the newer block's, and are only
+        # added to (a newer block without a warm-up day had none)
+        c.execute("DELETE FROM price_moves WHERE day = ? AND day < ?", (A, m_since))
         m = c.execute("""INSERT OR IGNORE INTO price_moves(key, chain_id, day, was, now, stores, ts)
                          SELECT key, chain_id, day, was, now, stores, ts FROM bf.out_m
                          WHERE day >= ? AND day <= ? AND day < ?""", (A, B, m_since)).rowcount
         mf, mt = c.execute("SELECT min(day), max(day) FROM bf.out_m WHERE day >= ? AND day <= ? AND day < ?",
                            (A, B, m_since)).fetchone()
         d = json.loads(get_setting(c, "backfill"))
-        d["daily_from"] = A
+        if d.get("redo") == B:  # a day built again (redo): done once it reaches the first daily day
+            if A > (d.get("daily_from") or A):
+                d["redo"] = A
+            else:
+                d.pop("redo")
+        d["daily_from"] = min(d.get("daily_from") or A, A)
         d["history"] = [min(x for x in ((d.get("history") or [A])[0], A) if x), (d.get("history") or [None, B])[1]]
         if mf:
             old = d.get("moves") or [None, None]
@@ -1233,6 +1352,22 @@ def _apply_block(c, run, A, B):
              time.time() - t0)
 
 
+def redo(newest, db_path=None):
+    """Have auto build the days from `newest` back to the first daily day again, a day a run, before it goes on to
+    older days: for days an earlier version built wrong (it replaces each day's history rows and price changes)."""
+    c = dbmod.connect(os.path.abspath(db_path or dbmod.DB_PATH))
+    c.row_factory = None
+    d = json.loads(get_setting(c, "backfill") or "{}")
+    if not d.get("daily_from") or newest < d["daily_from"] or newest >= (d.get("until") or 0):
+        raise SystemExit(f"redo: {newest} must be from the first daily day ({d.get('daily_from')}) to the day before "
+                         f"the live history ({d.get('until')})")
+    d["redo"] = next_day(newest)
+    with c:
+        put_setting(c, "backfill", json.dumps(d))
+    log.info("redo: auto builds %d back to %d again, then goes on", newest, d["daily_from"])
+    return d["redo"]
+
+
 def status(work):
     ms = metas(work)
     out = {"versions": len(ms), "first": ms[0]["version"] if ms else None, "last": ms[-1]["version"] if ms else None,
@@ -1248,13 +1383,14 @@ def status(work):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("step", choices=("fetch", "build", "apply", "remove", "status", "auto", "prefetch"))
+    ap.add_argument("step", choices=("fetch", "build", "apply", "remove", "status", "auto", "prefetch", "redo"))
     ap.add_argument("--work", default=None, help="folder for downloads and stage.db (default <data>/backfill)")
     ap.add_argument("--db", default=None, help="the live DB (default $BASKET_DB)")
     ap.add_argument("--from", dest="first", type=int, default=FIRST_VERSION, help="first Kaggle version")
     ap.add_argument("--to", dest="last", type=int, default=None, help="last Kaggle version (default the newest)")
     ap.add_argument("--jobs", type=int, default=2, help="versions downloaded at once (one process each)")
-    ap.add_argument("--until", type=int, default=None, help="build: last day (YYYYMMDD)")
+    ap.add_argument("--until", type=int, default=None,
+                    help="build: last day (YYYYMMDD); redo: the newest day auto builds again")
     ap.add_argument("--weekly-from", type=int, default=None,
                     help="fetch: one version a week, published this day (YYYYMMDD) and every 7 days before it")
     ap.add_argument("--weeks", type=int, default=52, help="fetch --weekly-from: how many")
@@ -1280,6 +1416,10 @@ def main():
             fetch_version(v, work)
     elif a.step == "remove":
         print(remove(a.db))
+    elif a.step == "redo":
+        if not a.until:
+            raise SystemExit("redo needs --until YYYYMMDD")
+        redo(a.until, a.db)
     else:
         print(json.dumps(status(work), indent=1))
 

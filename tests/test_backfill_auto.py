@@ -1,7 +1,10 @@
 """Run: .venv/bin/python tests/test_backfill_auto.py
 The gap filler (backfill.auto): weekly samples + a few daily days are applied, then auto fills the skipped days in
 blocks, newest first. Afterwards every series must read, day by day, exactly as a straight daily build of the same
-days reads, and the price changes must be the same ones."""
+days reads, and the price changes must be the same ones. Run twice: with a version every day, and with none published
+for three days in a row (as the real archive on 2026-07-30..08-01, where auto stopped for 4 days). Then two days are
+damaged as an earlier auto left them (every series ended, no price changes) and `redo` must rebuild them; a failed run
+makes the next ones wait."""
 import contextlib
 import csv
 import io
@@ -93,78 +96,137 @@ def series(con, table, days_to):
 
 
 # ---------------------------------------------------------------- the reference: every day, built straight through
-REF = os.path.join(TMP, "ref")
-for d in E[1:12]:
-    fetch(d, os.path.join(REF, "parts"))
-live = dbmod.connect()
-live.commit()
-backfill.build(REF, os.environ["BASKET_DB"], until=E[10])
-ref = sqlite3.connect(os.path.join(REF, "stage.db"))
-ref_h = series(ref, "out_h", E[10])
-ref_m = {tuple(r) for r in ref.execute("SELECT key, chain_id, day, was, now, stores FROM out_m WHERE day <= ?",
-                                       (E[10],))}
-assert ref_m, "the fixture has price changes"
-
-# ---------------------------------------------------------------- weekly samples E1, E8 + daily E9, E10, applied
-WORK = os.path.join(TMP, "work")
-fetch(E[1], os.path.join(WORK, "parts"), True, 1)
-fetch(E[8], os.path.join(WORK, "parts"), True, 8)
-for d in (E[9], E[10], E[11]):
-    fetch(d, os.path.join(WORK, "parts"))
-with open(os.path.join(WORK, "plan.json"), "w") as f:
-    json.dump({"samples": [[E[1], 1], [E[8], 8]]}, f)
-backfill.build(WORK, os.environ["BASKET_DB"], until=E[10])
-live.execute("INSERT INTO u.settings VALUES('history_since', ?)", (str(E[11]),))
-live.execute("INSERT INTO u.settings VALUES('moves_since', ?)", (str(E[11]),))
-live.commit()
-backfill.apply(WORK, os.environ["BASKET_DB"])
-live = dbmod.connect()
-src = backfill.source(live)
-assert src["weekly"] == [E[1], E[8]] and src["daily_from"] == E[9], src
-
-# ---------------------------------------------------------------- the gap filler: a block of 4 days, then day by day
-AUTO = os.path.join(TMP, "auto-work")
-versions = lambda lo, hi: [1000 + d % 100 for d in E[1:12] if lo <= d <= hi]
-fetched = []
-fetcher = lambda v, parts: (os.path.exists(os.path.join(parts, f"v{v}.json")) or fetched.append(v)) and None or \
-    fetch(20241200 + v - 1000, parts, v=v)
-run = lambda days: backfill.auto(os.environ["BASKET_DB"], AUTO, days=days, start=E[1], versions=versions,
-                                 fetcher=fetcher)
-assert run(4) == 4                     # E5..E8
-live = dbmod.connect()
-src = backfill.source(live)
-assert src["daily_from"] == E[5] and src["weekly"] == [E[1], E[1]], src
-parts = os.path.join(AUTO, "auto", "parts")
-assert os.listdir(parts) and not os.path.exists(os.path.join(AUTO, "auto", "stage.db"))  # downloads kept, stage gone
-for want in (E[4], E[3], E[2], E[1]):  # then one day a run, each live when its run ends
-    assert run(1) == 1
+def scenario(missing=()):
+    """missing: days the archive published no version for."""
+    for f in os.listdir(TMP):
+        if f.startswith(("basket.db", "user.db")):
+            os.remove(os.path.join(TMP, f))
+    avail = [d for d in E[1:12] if d not in missing]
+    tag = "gap" if missing else "daily"
+    REF = os.path.join(TMP, "ref-" + tag)
+    for d in avail:
+        fetch(d, os.path.join(REF, "parts"))
     live = dbmod.connect()
-    assert backfill.source(live)["daily_from"] == want
-    kept = sorted(int(f[1:-5]) for f in os.listdir(parts) if f.endswith(".json")) if want > E[1] else []
-    assert all(1000 + want % 100 - 1 <= v <= 1000 + want % 100 + 2 for v in kept), (want, kept)  # only what's near
-assert run(1) == 0                     # every day is in
-assert len(fetched) == len(set(fetched)), fetched  # a version is downloaded once, however many runs use it
-live = dbmod.connect()
-src = backfill.source(live)
-assert src["daily_from"] == E[1] and src["weekly"] is None and src["history"][0] == E[1], src
-assert not os.path.exists(os.path.join(AUTO, "auto"))                 # its files are gone
+    live.commit()
+    backfill.build(REF, os.environ["BASKET_DB"], until=E[10], force=True)
+    ref = sqlite3.connect(os.path.join(REF, "stage.db"))
+    ref_h = series(ref, "out_h", E[10])
+    ref_m = {tuple(r) for r in ref.execute("SELECT key, chain_id, day, was, now, stores FROM out_m WHERE day <= ?",
+                                           (E[10],))}
+    assert ref_m, "the fixture has price changes"
 
-# every series, every day, reads as the straight daily build does
-got = series(live, "price_history", E[10])
-for pair in set(ref_h) | set(got):
-    for d in E[1:11]:
-        assert on(ref_h.get(pair, []), d) == on(got.get(pair, []), d), (pair, d, ref_h.get(pair), got.get(pair))
-got_m = {tuple(r) for r in live.execute("SELECT key, chain_id, day, was, now, stores FROM price_moves")}
-assert got_m == ref_m, (got_m ^ ref_m)
+    def same_as_ref():
+        live = dbmod.connect()
+        got = series(live, "price_history", E[10])
+        for pair in set(ref_h) | set(got):
+            for d in E[1:11]:
+                assert on(ref_h.get(pair, []), d) == on(got.get(pair, []), d), \
+                    (tag, pair, d, ref_h.get(pair), got.get(pair))
+        got_m = {tuple(r) for r in live.execute("SELECT key, chain_id, day, was, now, stores FROM price_moves")}
+        assert got_m == ref_m, (tag, got_m ^ ref_m)
 
-# the one-off apply would take the filled days out again: it refuses
-try:
+    # ------------------------------------------------------------ weekly samples E1, E8 + daily E9, E10, applied
+    WORK = os.path.join(TMP, "work-" + tag)
+    fetch(E[1], os.path.join(WORK, "parts"), True, 1)
+    fetch(E[8], os.path.join(WORK, "parts"), True, 8)
+    for d in (E[9], E[10], E[11]):
+        fetch(d, os.path.join(WORK, "parts"))
+    with open(os.path.join(WORK, "plan.json"), "w") as f:
+        json.dump({"samples": [[E[1], 1], [E[8], 8]]}, f)
+    backfill.build(WORK, os.environ["BASKET_DB"], until=E[10])
+    live.execute("INSERT INTO u.settings VALUES('history_since', ?)", (str(E[11]),))
+    live.execute("INSERT INTO u.settings VALUES('moves_since', ?)", (str(E[11]),))
+    live.commit()
     backfill.apply(WORK, os.environ["BASKET_DB"])
-    raise AssertionError("apply after auto must refuse")
-except SystemExit:
-    pass
+    live = dbmod.connect()
+    src = backfill.source(live)
+    assert src["weekly"] == [E[1], E[8]] and src["daily_from"] == E[9], src
 
-# a stopped run resumes: its downloaded files are kept until the block is applied
-backfill.remove(os.environ["BASKET_DB"])
-shutil.rmtree(AUTO, ignore_errors=True)
+    # ------------------------------------------------------------ the gap filler: a block of 4 days, then day by day
+    AUTO = os.path.join(TMP, "auto-" + tag)
+    versions = lambda lo, hi: {1000 + d % 100: d for d in avail if lo <= d <= hi}
+    fetched = []
+    fetcher = lambda v, parts: (os.path.exists(os.path.join(parts, f"v{v}.json")) or fetched.append(v)) and None or \
+        fetch(20241200 + v - 1000, parts, v=v)
+    run = lambda days, **kw: backfill.auto(os.environ["BASKET_DB"], AUTO, days=days, start=E[1], versions=versions,
+                                           fetcher=kw.get("fetcher", fetcher), now=kw.get("now"))
+    assert run(4) == 4                     # E5..E8
+    live = dbmod.connect()
+    src = backfill.source(live)
+    assert src["daily_from"] == E[5] and src["weekly"] == [E[1], E[1]], src
+    parts = os.path.join(AUTO, "auto", "parts")
+    assert os.listdir(parts) and not os.path.exists(os.path.join(AUTO, "auto", "stage.db"))  # downloads kept, stage gone
+    for want in (E[4], E[3], E[2], E[1]):  # then one day a run, each live when its run ends
+        assert run(1) == 1
+        live = dbmod.connect()
+        assert backfill.source(live)["daily_from"] == want
+        kept = sorted(int(f[1:-5]) for f in os.listdir(parts) if f.endswith(".json")) if want > E[1] else []
+        warm = max([d for d in avail if d < want], default=want)  # only what's near: its warm-up version on
+        assert all(1000 + warm % 100 <= v <= 1000 + want % 100 + 2 for v in kept), (tag, want, kept)
+    assert run(1) == 0                     # every day is in
+    assert len(fetched) == len(set(fetched)), fetched  # a version is downloaded once, however many runs use it
+    live = dbmod.connect()
+    src = backfill.source(live)
+    assert src["daily_from"] == E[1] and src["weekly"] is None and src["history"][0] == E[1], src
+    assert not os.path.exists(os.path.join(AUTO, "auto"))                 # its files are gone
+    same_as_ref()                          # every series, every day, reads as the straight daily build does
+
+    # ------------------------------------------------------------ redo: two days damaged as an older auto left them
+    for day in (E[6], E[3]):
+        live.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
+                        SELECT key, chain_id, ?, NULL, NULL, 0 FROM price_history GROUP BY key, chain_id""", (day,))
+        live.execute("DELETE FROM price_moves WHERE day = ?", (day,))
+    live.commit()
+    try:
+        same_as_ref()
+        raise AssertionError("the damage shows")
+    except AssertionError as e:
+        assert e.args and e.args[0] != "the damage shows", e
+    try:
+        backfill.redo(E[11], os.environ["BASKET_DB"])  # the live history's first day isn't the archive's to redo
+        raise AssertionError("redo of a live day must refuse")
+    except SystemExit:
+        pass
+    assert backfill.redo(E[7], os.environ["BASKET_DB"]) == E[8]
+    days = 0
+    while run(1):
+        days += 1
+    assert days == 7, days                 # E7 back to E1, then nothing (the first daily day was E1)
+    live = dbmod.connect()
+    src = backfill.source(live)
+    assert src["daily_from"] == E[1] and "redo" not in json.loads(backfill.get_setting(live, "backfill")), src
+    same_as_ref()
+
+    # ------------------------------------------------------------ a failed run: the next ones wait, doubling
+    backfill.redo(E[2], os.environ["BASKET_DB"])
+    shutil.rmtree(os.path.join(AUTO, "auto"), ignore_errors=True)
+
+    def broken(v, parts):
+        raise OSError("Kaggle is down")
+    t = 1_900_000_000
+    for n, wait in ((1, 600), (2, 1200)):
+        try:
+            run(1, fetcher=broken, now=t)
+            raise AssertionError("the failure is raised")
+        except OSError:
+            pass
+        f = json.load(open(os.path.join(AUTO, "auto-failed.json")))
+        assert f["count"] == n and f["next"] == t + wait and "Kaggle is down" in f["error"], f
+        assert run(1, fetcher=broken, now=t + wait - 1) == 0  # waiting: not even tried
+        t += wait
+    assert run(1, now=t) == 1 and not os.path.exists(os.path.join(AUTO, "auto-failed.json"))  # works again: no wait
+    same_as_ref()
+
+    # the one-off apply would take the filled days out again: it refuses
+    try:
+        backfill.apply(WORK, os.environ["BASKET_DB"])
+        raise AssertionError("apply after auto must refuse")
+    except SystemExit:
+        pass
+    backfill.remove(os.environ["BASKET_DB"])
+    shutil.rmtree(AUTO, ignore_errors=True)
+
+
+scenario()
+scenario(missing=(E[3], E[4], E[5]))      # three days with no version: the block E4 has nothing up to its last day
 print("backfill auto ok")

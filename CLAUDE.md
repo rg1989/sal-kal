@@ -553,7 +553,7 @@ from the public price layer, never user data. A deploy that changes prices.* sho
 hand). Tests: tests/test_board.py.
 Archive history (2026-11-06, per user: trends from before Sal-Kal started, weekly for a year now, every day later on
 its own): `app/backfill.py` loads the chains' own past price files from Sefi Erlich's OpenIsraeliSupermarkets archive
-on Kaggle (erlichsefi/israeli-supermarkets-2024, a version per day from 2024-10-22, public, no account; CC BY-NC-SA
+on Kaggle (erlichsefi/israeli-supermarkets-2024, about a version per day from 2024-10-22, public, no account; CC BY-NC-SA
 3.0 IGO: credit + not for profit + share alike) under the live rules (fetch → build in its own stage.db → apply under
 the indexer's lock; never a row the indexer wrote). Live: weekly samples from 2025-10-30 (history-chart points only:
 a week apart can't date a change) and daily from 2026-10-29 (history + the Price Watch's store-level changes).
@@ -563,7 +563,21 @@ as its run ends) right before settings backfill.daily_from, newest first, so dai
 without a gap, replacing weekly samples, until ARCHIVE_START (2024-10-22). A run builds 3 days (the warm-up day, the
 new day, the day after it, ~6 min each) and meanwhile a `prefetch` process downloads the next PREFETCH (2) older
 versions into work/auto-ahead; work/auto/parts keeps the versions the next run needs, so each version is downloaded
-once. ~20 min a day: about 70 days of daily history a day. Pages credit the archive's range from backfill.source() (charts, Price Watch, README). Check:
+once. ~50 min a run (2026-11-14: each day's build 10-17 min, a run builds 3+): about 30 days of daily history a day.
+Pages credit the archive's range from backfill.source() (charts, Price Watch, README).
+Archive gaps (2026-11-13, per user): the archive skips days (no version 2026-07-30..08-01, 08-03..04, 08-08, 08-12..13,
+08-24, 08-26, 10-17, 10-22, 10-25, 10-28; a version holds its own day's and the day before's files). Auto assumed one a
+day: from 11-09 it retried 07-31..08-01 every minute (~5,500 failed runs, ~14 s CPU each) and earlier runs had ended
+every series on 08-04 and 08-13 and left 08-02, 08-05, 08-12..15 without price changes. 10-24/25 are partial in the
+archive itself (files for 18 branches on 10-24, ~1,860 of ~2,300 on 10-25), so ~200k series end on 10-25 by the
+rules, rebuilt or not. Now a run's warm-up is
+the newest version before its day (WARMUP_DAYS 14; nothing at all = a hole: series end), further back while a chain
+in the block is missing on it (up to BRIDGE_DAYS); the day after the block takes the run's own build, not the older
+rows; a chain absent longer than BRIDGE_DAYS ends where a straight build ends it (doomed(), from every fetched
+version's index kept in work/metas); a failed run makes the next wait 10 min, doubling to 6 h (work/auto-failed.json).
+`python -m app.backfill redo --until <day>` rebuilds from that day back to daily_from (settings backfill.redo), then
+auto goes on: started 2026-11-13 21:08 from 10-28 (~90 runs, ~3 days) to rebuild every day the old auto made; then
+~3 weeks more back to 2024-10-22. Check:
 `systemctl list-timers sal-backfill.timer`, `journalctl -u sal-backfill`, progress `sudo -u sal sqlite3
 /srv/sal/data/user.db "select value from settings where key='backfill'"`. Stop: `sudo systemctl disable --now
 sal-backfill.timer`; take every archive row out: `... -m app.backfill remove`. Tests: tests/test_backfill.py,
