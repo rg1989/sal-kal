@@ -1115,8 +1115,12 @@ def _auto(db_path, work, days, start, versions, fetcher):
     # after A: every series ended on A, and a block with nothing up to B stopped the gap filler (2026-11-09).
     before = [d for d in found.values() if d < A]
     warm = max(before) if before else None
-    vs = sorted(v for v, d in found.items() if (warm or A) <= d <= next_day(B))
-    hole = not any(d <= B for v, d in found.items() if v in vs)  # nothing in the archive from WARMUP_DAYS before A to B
+    # B's rows and price changes are the newer block's: built here too only where an older auto made B (the first
+    # day of a redo), or where no block did (the first run: B is the one-off build's first day, without its changes)
+    own_b = b.get("redo_first") == B or not b.get("auto")
+    last = B if own_b else next_day(B, -1)  # the last day built; its late files are in the next day's versions
+    vs = sorted(v for v, d in found.items() if (warm or A) <= d <= next_day(last))
+    hole = not any(d <= last for v, d in found.items() if v in vs)  # nothing from WARMUP_DAYS before A to `last`
     if hole:
         vs = []
     with open(cache_path, "w") as f:
@@ -1179,7 +1183,7 @@ def _auto(db_path, work, days, start, versions, fetcher):
                                      cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     doomed = _doomed(found, [kept, parts, early, os.path.join(work, "parts")])
     try:
-        return _auto_block(live, path, run, A, B, start, hole, doomed)
+        return _auto_block(live, path, run, A, B, start, hole, doomed, own_b)
     finally:
         if ahead:
             try:
@@ -1242,29 +1246,33 @@ def _doomed(found, dirs):
     return doomed
 
 
-def _auto_block(live, path, run, A, B, start, hole=False, doomed=None):
-    """Build A..B in run/stage.db and apply it. hole: the archive has nothing for these days (nor WARMUP_DAYS
+def _auto_block(live, path, run, A, B, start, hole=False, doomed=None, own_b=False):
+    """Build A..B-1 in run/stage.db and apply it. B, the newer block's first day, was built by that block: its
+    rows and price changes stay, stitched to this block's last day. own_b: build B too and replace its rows (the first
+    day of a redo, whose B an older auto built). hole: the archive has nothing for these days (nor WARMUP_DAYS
     before), so nothing is built: every series open before A ends on A and the newer ones start again on B."""
     s = stage(run)
     snap = """CREATE TABLE IF NOT EXISTS {t} AS SELECT h.key, h.chain_id, h.mn, h.mx,
                 (SELECT o.n FROM out_h o WHERE o.key=h.key AND o.chain_id=h.chain_id AND o.day <= ? AND o.mn IS NOT NULL
                  ORDER BY o.day DESC LIMIT 1) n FROM hl h"""
-    for until, table in ((A, "state_a"), (next_day(B, -1), "state_b"), (B, "state_c")):
+    steps = [(A, "state_a"), (next_day(B, -1), "state_b")] + ([(B, "state_c")] if own_b else [])
+    for until, table in steps:
         if not hole:
             build(run, path, until=until, force=True, doomed=doomed)
         s.execute(snap.format(t=table), (until,))
         s.commit()
-    if not hole and s.execute("SELECT max(day) FROM done").fetchone()[0] != B:
-        raise RuntimeError(f"auto: the build stopped before {B}")
-    for table in ("state_a", "state_b", "state_c"):  # looked up by (key, chain_id) in the apply, under the lock
+    last = steps[-1][0]
+    if not hole and s.execute("SELECT max(day) FROM done").fetchone()[0] != last:
+        raise RuntimeError(f"auto: the build stopped before {last}")
+    for _, table in steps:  # looked up by (key, chain_id) in the apply, under the lock
         s.execute(f"CREATE INDEX IF NOT EXISTS {table}_k ON {table}(key, chain_id)")
     s.commit()
     s.close()
-    _prepare_block(live, A, B)  # reads only days the indexer never writes again: outside its lock
+    _prepare_block(live, A, B, own_b)  # reads only days the indexer never writes again: outside its lock
     for _ in range(60):
         with indexer.run_lock(path) as ok:
             if ok:
-                _apply_block(live, run, A, B)
+                _apply_block(live, run, A, B, own_b)
                 break
         time.sleep(30)
     else:
@@ -1277,25 +1285,36 @@ def _auto_block(live, path, run, A, B, start, hole=False, doomed=None):
     return (_date(B) - _date(A)).days
 
 
-def _prepare_block(c, A, B):
-    """What each series showed entering the block (bef), into a temp table of this connection."""
-    c.execute("DROP TABLE IF EXISTS temp.bef")
-    c.execute("""CREATE TEMP TABLE bef AS SELECT key, chain_id, mn, mx, n FROM (SELECT key, chain_id, mn, mx, n,
-                 row_number() OVER (PARTITION BY key, chain_id ORDER BY day DESC) r FROM price_history WHERE day < ?)
-                 WHERE r = 1""", (A,))
+def _prepare_block(c, A, B, own_b=False):
+    """What each series showed entering the block (bef) and, unless own_b, on B (aft; atb: the pairs with a row on
+    B), into temp tables of this connection."""
+    # each pair's last row before a day: max(day) per (key, chain_id) in primary-key order, its other columns from that
+    # row (SQLite's bare columns): 5 s over 21M rows, where a window function took 28 s (2026-11-14)
+    last_row = """CREATE TEMP TABLE {t} AS SELECT key, chain_id, mn, mx, n FROM (SELECT key, chain_id, mn, mx, n,
+                  max(day) FROM price_history WHERE day {op} ? GROUP BY key, chain_id)"""
+    for t in ("bef", "aft", "atb"):
+        c.execute(f"DROP TABLE IF EXISTS temp.{t}")
+    c.execute(last_row.format(t="bef", op="<"), (A,))
+    made = ["bef"]
+    if not own_b:
+        c.execute(last_row.format(t="aft", op="<="), (B,))
+        c.execute("CREATE TEMP TABLE atb AS SELECT key, chain_id FROM price_history WHERE day = ?", (B,))
+        made += ["aft", "atb"]
     # the apply looks rows up by (key, chain_id) in NOT EXISTS subqueries, which SQLite won't index on its own: without
-    # this a real day (~1M rows against ~635k) scanned for hours while holding the indexer's lock (2026-11-07)
-    c.execute("CREATE INDEX temp.bef_k ON bef(key, chain_id)")
+    # these a real day (~1M rows against ~635k) scanned for hours while holding the indexer's lock (2026-11-07)
+    for t in made:
+        c.execute(f"CREATE INDEX temp.{t}_k ON {t}(key, chain_id)")
     c.commit()
 
 
-def _apply_block(c, run, A, B):
+def _apply_block(c, run, A, B, own_b=False):
     t0 = time.time()
     h_since, m_since = live_bounds(c)
     c.executescript(PRICE_MOVES)
     c.execute("ATTACH DATABASE ? AS bf", (os.path.join(run, "stage.db"),))
     with c:
-        gone = c.execute("DELETE FROM price_history WHERE day >= ? AND day <= ?", (A, B)).rowcount
+        gone = c.execute("DELETE FROM price_history WHERE day >= ? AND day <= ?", (A, B if own_b else next_day(B, -1))
+                         ).rowcount
         n = c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
                          SELECT a.key, a.chain_id, ?, a.mn, a.mx, coalesce(a.n, 0) FROM bf.state_a a
                          LEFT JOIN bef b ON b.key=a.key AND b.chain_id=a.chain_id
@@ -1306,18 +1325,33 @@ def _apply_block(c, run, A, B):
         n += c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
                           SELECT key, chain_id, day, mn, mx, n FROM bf.out_h WHERE day > ? AND day < ?""",
                        (A, B)).rowcount
-        # B, the newer block's first day: this block built it too (state_c), so B's rows are its own, as changes from
-        # B-1. Not stitched to what the older rows showed on B: an earlier auto left whole days with every series
-        # ended (2026-08-04, 08-13, 10-25), and that showed on later days that had no row of their own.
-        n += c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
-                          SELECT s.key, s.chain_id, ?, s.mn, s.mx, coalesce(s.n, 0) FROM bf.state_c s
-                          LEFT JOIN bf.state_b b ON b.key=s.key AND b.chain_id=s.chain_id
-                          WHERE b.mn IS NULL OR abs(b.mn - s.mn) >= 0.005 OR abs(b.mx - s.mx) >= 0.005""",
-                       (B,)).rowcount
-        n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
-                          SELECT b.key, b.chain_id, ?, NULL, NULL, 0 FROM bf.state_b b WHERE b.mn IS NOT NULL AND
-                          NOT EXISTS (SELECT 1 FROM bf.state_c s WHERE s.key=b.key AND s.chain_id=b.chain_id)""",
-                       (B,)).rowcount
+        if own_b:
+            # B built here too (state_c): its rows are this block's, as changes from B-1, not stitched to what the
+            # older rows showed on B (an older auto left whole days with every series ended: 2026-08-04, 08-13)
+            n += c.execute("""INSERT OR REPLACE INTO price_history(key, chain_id, day, mn, mx, n)
+                              SELECT s.key, s.chain_id, ?, s.mn, s.mx, coalesce(s.n, 0) FROM bf.state_c s
+                              LEFT JOIN bf.state_b b ON b.key=s.key AND b.chain_id=s.chain_id
+                              WHERE b.mn IS NULL OR abs(b.mn - s.mn) >= 0.005 OR abs(b.mx - s.mx) >= 0.005""",
+                           (B,)).rowcount
+            n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
+                              SELECT b.key, b.chain_id, ?, NULL, NULL, 0 FROM bf.state_b b WHERE b.mn IS NOT NULL AND
+                              NOT EXISTS (SELECT 1 FROM bf.state_c s WHERE s.key=b.key AND s.chain_id=b.chain_id)""",
+                           (B,)).rowcount
+        else:
+            # B as the newer block left it: a row wherever it shows another value than this block ends on
+            n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
+                              SELECT f.key, f.chain_id, ?, f.mn, f.mx, f.n FROM aft f
+                              LEFT JOIN bf.state_b s ON s.key=f.key AND s.chain_id=f.chain_id
+                              WHERE f.mn IS NOT NULL
+                                AND NOT EXISTS (SELECT 1 FROM atb t WHERE t.key=f.key AND t.chain_id=f.chain_id)
+                                AND (s.key IS NULL OR abs(s.mn - f.mn) >= 0.005 OR abs(s.mx - f.mx) >= 0.005)""",
+                           (B,)).rowcount
+            n += c.execute("""INSERT OR IGNORE INTO price_history(key, chain_id, day, mn, mx, n)
+                              SELECT s.key, s.chain_id, ?, NULL, NULL, 0 FROM bf.state_b s
+                              LEFT JOIN aft f ON f.key=s.key AND f.chain_id=s.chain_id
+                              WHERE f.mn IS NULL
+                                AND NOT EXISTS (SELECT 1 FROM atb t WHERE t.key=s.key AND t.chain_id=s.chain_id)""",
+                           (B,)).rowcount
         # A's changes are this block's (a block run again replaces them); B's were the newer block's, and are only
         # added to (a newer block without a warm-up day had none)
         c.execute("DELETE FROM price_moves WHERE day = ? AND day < ?", (A, m_since))
@@ -1328,6 +1362,7 @@ def _apply_block(c, run, A, B):
                            (A, B, m_since)).fetchone()
         d = json.loads(get_setting(c, "backfill"))
         if d.get("redo") == B:  # a day built again (redo): done once it reaches the first daily day
+            d.pop("redo_first", None)
             if A > (d.get("daily_from") or A):
                 d["redo"] = A
             else:
@@ -1361,7 +1396,7 @@ def redo(newest, db_path=None):
     if not d.get("daily_from") or newest < d["daily_from"] or newest >= (d.get("until") or 0):
         raise SystemExit(f"redo: {newest} must be from the first daily day ({d.get('daily_from')}) to the day before "
                          f"the live history ({d.get('until')})")
-    d["redo"] = next_day(newest)
+    d["redo"] = d["redo_first"] = next_day(newest)  # the first block builds its day after too: an older auto made it
     with c:
         put_setting(c, "backfill", json.dumps(d))
     log.info("redo: auto builds %d back to %d again, then goes on", newest, d["daily_from"])

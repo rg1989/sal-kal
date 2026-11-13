@@ -560,10 +560,12 @@ a week apart can't date a change) and daily from 2026-10-29 (history + the Price
 `sal-backfill.timer` (Oracle, the next run a minute after each ends, as sal, Nice 19, idle IO, CPUQuota 200%,
 MemoryMax 3G) runs `app.backfill auto`: each run adds AUTO_DAYS (1, per user 2026-11-06: one day at a time, each live
 as its run ends) right before settings backfill.daily_from, newest first, so daily coverage grows back from today
-without a gap, replacing weekly samples, until ARCHIVE_START (2024-10-22). A run builds 3 days (the warm-up day, the
-new day, the day after it, ~6 min each) and meanwhile a `prefetch` process downloads the next PREFETCH (2) older
+without a gap, replacing weekly samples, until ARCHIVE_START (2024-10-22). A run builds 2 days (the warm-up day and
+the new day; 2026-11-14, per user: cheaper runs, the day after was built again by every run) and keeps the day after
+as the newer run left it, stitched to the new day; it builds that day too only on a redo's first run (an older auto
+made it) and the very first run. Meanwhile a `prefetch` process downloads the next PREFETCH (2) older
 versions into work/auto-ahead; work/auto/parts keeps the versions the next run needs, so each version is downloaded
-once. ~50 min a run (2026-11-14: each day's build 10-17 min, a run builds 3+): about 30 days of daily history a day.
+once. Each day's build takes 10-17 min: ~50 min a run when it built 3 days (~30 days of history a day).
 Pages credit the archive's range from backfill.source() (charts, Price Watch, README).
 Archive gaps (2026-11-13, per user): the archive skips days (no version 2026-07-30..08-01, 08-03..04, 08-08, 08-12..13,
 08-24, 08-26, 10-17, 10-22, 10-25, 10-28; a version holds its own day's and the day before's files). Auto assumed one a
