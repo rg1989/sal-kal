@@ -565,7 +565,8 @@ the new day; 2026-11-14, per user: cheaper runs, the day after was built again b
 as the newer run left it, stitched to the new day; it builds that day too only on a redo's first run (an older auto
 made it) and the very first run. Meanwhile a `prefetch` process downloads the next PREFETCH (2) older
 versions into work/auto-ahead; work/auto/parts keeps the versions the next run needs, so each version is downloaded
-once. Each day's build takes 10-17 min: ~50 min a run when it built 3 days (~30 days of history a day).
+once. Each day's build takes 6-15 min: a run took ~50 min with 3 days, 24 min with 2 (2026-11-14 02:23, the apply
+47 s, was ~6 min): about 60 days of history a day.
 Pages credit the archive's range from backfill.source() (charts, Price Watch, README).
 Archive gaps (2026-11-13, per user): the archive skips days (no version 2026-07-30..08-01, 08-03..04, 08-08, 08-12..13,
 08-24, 08-26, 10-17, 10-22, 10-25, 10-28; a version holds its own day's and the day before's files). Auto assumed one a
